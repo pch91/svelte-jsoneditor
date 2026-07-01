@@ -1,1007 +1,549 @@
 <script lang="ts">
   import {
-    type Content,
-    type ContextMenuItem,
-    createAjvValidator,
-    createValueSelection,
-    EditableValue,
-    isJSONContent,
-    isTextContent,
-    javascriptQueryLanguage,
-    jmespathQueryLanguage,
-    jsonQueryLanguage,
-    jsonpathQueryLanguage,
-    JSONEditor,
-    type JSONEditorSelection,
-    type JSONParser,
-    lodashQueryLanguage,
-    type MenuItem,
-    Mode,
-    type OnChangeStatus,
-    ReadonlyValue,
-    type RenderMenuContext,
-    renderValue,
-    type RenderValueComponentDescription,
-    SelectionType,
-    toJSONContent,
-    type RenderValueProps
+    type Content, type ContextMenuItem, createAjvValidator, EditableValue,
+    isJSONContent, isTextContent, javascriptQueryLanguage, jmespathQueryLanguage,
+    jsonQueryLanguage, jsonpathQueryLanguage, JSONEditor, type JSONEditorSelection,
+    type JSONParser, lodashQueryLanguage, type MenuItem, Mode, type OnChangeStatus,
+    ReadonlyValue, type RenderMenuContext, renderValue,
+    type RenderValueComponentDescription, type RenderValueProps
   } from 'svelte-jsoneditor'
   import { useLocalStorage } from '$lib/utils/localStorageUtils.js'
   import { range } from 'lodash-es'
-  import { mount, flushSync } from 'svelte'
+  import { mount } from 'svelte'
   import { parse, stringify } from 'lossless-json'
-  import { truncate } from '$lib/utils/stringUtils.js'
   import { parseJSONPath, stringifyJSONPath } from '$lib/utils/pathUtils.js'
-  import { compileJSONPointer, isJSONObject, parseJSONPointer } from 'immutable-json-patch'
+  import { compileJSONPointer, parseJSONPointer } from 'immutable-json-patch'
 
-  const LosslessJSON = {
-    parse,
-    stringify
-  }
+  // ============================================================
+  const LosslessJSON = { parse, stringify }
 
-  let content: Content = {
-    text: `{
+  const defaultJson = `{
   "boolean": true,
   "color": "#82b92c",
-  "html_code": "&quot;",
-  "html_characters<a>": "<a>",
-  "escaped_unicode": "\\u260e",
-  "long": 9223372036854775807,
-  "float": 4.0,
-  "big": 1e500,
-  "unicode": "😀,💩",
-  "escaped double quote": "\\"abc\\"",
-  "unicode double quote": "\\u0022abc\\u0022",
-  "return": "\\n",
   "null": null,
   "number": 123,
-  "object": {
-    "a": "b",
-    "c": "d"
-  },
-  "string": "Greeting!",
-  "stringContainingNumber": "1234",
-  "multi\\nline    text": "Hello\\nWorld    text",
-  "tab": "Hello\\tTab",
-  "backslash": "back\\\\slash",
-  "forwardslash": "forward\\/slash",
-  "quote": "quote\\"",
-  "timestamp": 1534952749890,
-  "url": "https://jsoneditoronline.org",
-  "array": [
-    1,
-    2,
-    [
-      3,
-      4,
-      5
-    ],
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10
-  ],
-  "xss?": "<button onclick=alert('oopsie!!!')>test xss</button>",
-  "xss array": [
-    {
-      "<button onclick=alert('oopsie!!!')>test xss</button>": "xss?"
-    }
-  ],
-  "large string": "[32] Sed ut perspiciatis, unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam eaque ipsa, quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt, explicabo. Nemo enim ipsam voluptatem, quia voluptas sit, aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos, qui ratione voluptatem sequi nesciunt, neque porro quisquam est, qui dolorem ipsum, quia dolor sit amet consectetur adipisci[ng] velit, sed quia non numquam [do] eius modi tempora inci[di]dunt, ut labore et dolore magnam aliquam quaerat voluptatem. Ut enim ad minima veniam, quis nostrum[d] exercitationem ullam corporis suscipit laboriosam, nisi ut aliquid ex ea commodi consequatur? [D]Quis autem vel eum i[r]ure reprehenderit, qui in ea voluptate velit esse, quam nihil molestiae consequatur, vel illum, qui dolorem eum fugiat, quo voluptas nulla pariatur?\\n[33] At vero eos et accusamus et iusto odio dignissimos ducimus, qui blanditiis praesentium voluptatum deleniti atque corrupti, quos dolores et quas molestias excepturi sint, obcaecati cupiditate non provident, similique sunt in culpa, qui officia deserunt mollitia animi, id est laborum et dolorum fuga. Et harum quidem reru[d]um facilis est e[r]t expedita distinctio. Nam libero tempore, cum soluta nobis est eligendi optio, cumque nihil impedit, quo minus id, quod maxime placeat facere possimus, omnis voluptas assumenda est, omnis dolor repellend[a]us. Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet, ut et voluptates repudiandae sint et molestiae non recusandae. Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis doloribus asperiores repellat."
-}`,
-    json: undefined
-  }
-
-  let selectionTree: JSONEditorSelection | undefined
-  let selectionText: JSONEditorSelection | undefined
-
-  const schema = {
-    title: 'Employee',
-    description: 'Object containing employee details',
-    type: 'object',
-    properties: {
-      boolean: {
-        title: 'A boolean',
-        type: 'boolean'
-      },
-      array: {
-        type: 'array',
-        items: {
-          type: 'number',
-          minimum: 10
-        }
-      }
-    },
-    required: ['foo']
-  }
-
-  const arraySchema = {
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: {
-        id: {
-          type: 'number'
-        },
-        random: {
-          type: 'number',
-          minimum: 0
-        },
-        array: {
-          type: 'array',
-          items: {
-            type: 'number'
-          }
-        },
-        name: {
-          type: 'string'
-        },
-        long: {
-          type: 'number'
-        },
-        'nested object': {
-          type: 'object',
-          properties: {
-            value: { type: 'number' }
-          }
-        }
-      },
-      required: ['id', 'name', 'random', 'array'],
-      additionalProperties: false
-    },
-    minItems: 1001
-  }
+  "object": { "a": "b", "c": "d" },
+  "string": "Hello World",
+  "array": [1, 2, [3, 4], 5],
+  "url": "https://jsoneditoronline.org"
+}`
 
   const themes = [
-    { value: 'jse-theme-default', label: 'default' },
-    { value: 'jse-theme-dark', label: 'dark' },
-    { value: 'jse-theme-big', label: 'big' },
-    { value: 'jse-theme-custom-contents', label: 'custom-contents' }
+    { value: 'jse-theme-default', label: 'Default' },
+    { value: 'jse-theme-dark', label: 'Dark' },
+    { value: 'jse-theme-big', label: 'Big' },
+    { value: 'jse-theme-custom-contents', label: 'Custom' }
   ]
-
   const indentations = [
-    { value: 2, label: '2 spaces' },
-    { value: 3, label: '3 spaces' },
-    { value: '    ', label: '4 spaces' }, // equivalent to value: 4
-    { value: 6, label: '6 spaces' },
-    { value: 8, label: '8 spaces' },
-    { value: '\t', label: '1 tab' }
+    { value: 2, label: '2' }, { value: 4, label: '4' }, { value: '\t', label: 'Tab' }
   ]
-
-  interface ParserOption {
-    id: string
-    value: JSONParser
-    label: string
-  }
-
+  interface ParserOption { id: string; value: JSONParser; label: string }
   const parsers: ParserOption[] = [
-    {
-      id: 'JSON',
-      value: JSON,
-      label: 'JSON'
-    },
-    {
-      id: 'LosslessJSON',
-      value: LosslessJSON,
-      label: 'LosslessJSON'
-    }
+    { id: 'JSON', value: JSON, label: 'JSON' },
+    { id: 'LosslessJSON', value: LosslessJSON, label: 'LosslessJSON' }
   ]
-
   const pathParsers = [
-    {
-      id: 'JSONPath',
-      value: {
-        parse: parseJSONPath,
-        stringify: stringifyJSONPath
-      },
-      label: 'JSONPath'
-    },
-    {
-      id: 'JSONPointer',
-      value: {
-        parse: parseJSONPointer,
-        stringify: compileJSONPointer
-      },
-      label: 'JSONPointer'
-    },
-    {
-      id: 'JSON',
-      value: JSON,
-      label: 'JSON'
-    }
+    { id: 'JSONPath', value: { parse: parseJSONPath, stringify: stringifyJSONPath }, label: 'JSONPath' },
+    { id: 'JSONPointer', value: { parse: parseJSONPointer, stringify: compileJSONPointer }, label: 'JSONPointer' }
   ]
-
+  const schema = {
+    title: 'Employee', type: 'object',
+    properties: { boolean: { type: 'boolean' }, array: { type: 'array', items: { type: 'number', minimum: 10 } } },
+    required: ['foo']
+  }
   const validator = createAjvValidator({ schema })
-  const arrayValidator = createAjvValidator({ schema: arraySchema })
 
-  let refTreeEditor: JSONEditor | undefined
-  let refTextEditor: JSONEditor | undefined
-
-  // for debugging
-  $: if (typeof window !== 'undefined') {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    window.refTreeEditor = refTreeEditor
+  // ============================================================
+  // TAB + PANE STATE
+  // ============================================================
+  interface EditorTab {
+    id: number; title: string; content: Content; mode: Mode
+    selection: JSONEditorSelection | undefined; ref: JSONEditor | undefined
+    revision: number
   }
-  $: if (typeof window !== 'undefined') {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    window.refTextEditor = refTextEditor
+  interface Pane {
+    id: number; activeTabId: number
   }
 
-  const showTreeEditor = useLocalStorage('svelte-jsoneditor-demo-showTreeEditor', true)
-  const showTextEditor = useLocalStorage('svelte-jsoneditor-demo-showTextEditor', true)
-  const showRawContents = useLocalStorage('svelte-jsoneditor-demo-showRawContents', false)
-  const showSelection = useLocalStorage('svelte-jsoneditor-demo-showSelection', false)
-  let height = '440px'
-  const validate = useLocalStorage('svelte-jsoneditor-demo-validate', false)
-  const validateArray = useLocalStorage('svelte-jsoneditor-demo-validate-array', false)
+  let tabIdCounter = 0
+  let paneIdCounter = 0
+
+  let tabs: EditorTab[] = [{
+    id: tabIdCounter++, title: 'Editor 1',
+    content: { text: defaultJson, json: undefined },
+    mode: Mode.tree, selection: undefined, ref: undefined, revision: 0
+  }]
+  let panes: Pane[] = [{ id: paneIdCounter++, activeTabId: tabs[0].id }]
+  let splitDir: 'vertical' | 'horizontal' = 'vertical'
+
+  function getTab(id: number) { return tabs.find(t => t.id === id)! }
+
+  // ---- Pane operations ----
+  function addPane() {
+    if (panes.length >= 4) return
+    // Find a tab not currently active in any pane
+    const usedIds = new Set(panes.map(p => p.activeTabId))
+    const nextTab = tabs.find(t => !usedIds.has(t.id))
+    const activeTabId = nextTab
+      ? nextTab.id
+      : (() => { // Create new empty tab
+          const t: EditorTab = {
+            id: tabIdCounter++, title: `Editor ${tabs.length + 1}`,
+            content: { text: '{}', json: undefined },
+            mode: Mode.tree, selection: undefined, ref: undefined, revision: 0
+          }
+          tabs = [...tabs, t]
+          return t.id
+        })()
+    panes = [...panes, { id: paneIdCounter++, activeTabId }]
+  }
+
+  function removeLastPane() {
+    if (panes.length <= 1) return
+    panes = panes.slice(0, -1)
+  }
+
+  function toggleSplitDir() {
+    splitDir = splitDir === 'vertical' ? 'horizontal' : 'vertical'
+  }
+
+  // ---- Tab operations ----
+  function addTab() {
+    const t: EditorTab = {
+      id: tabIdCounter++, title: `Editor ${tabs.length + 1}`,
+      content: { text: '{}', json: undefined },
+      mode: Mode.tree, selection: undefined, ref: undefined, revision: 0
+    }
+    tabs = [...tabs, t]
+    // Make it active in the first pane
+    panes[0].activeTabId = t.id
+    panes = [...panes]
+  }
+
+  function closeTab(tabId: number) {
+    if (tabs.length <= 1) return
+    const idx = tabs.findIndex(t => t.id === tabId)
+    tabs = tabs.filter(t => t.id !== tabId)
+    // Update any pane that had this tab active
+    panes = panes.map(p => {
+      if (p.activeTabId === tabId) {
+        // Find another tab (prefer adjacent)
+        const newIdx = Math.min(idx, tabs.length - 1)
+        return { ...p, activeTabId: tabs[newIdx]?.id ?? p.activeTabId }
+      }
+      return p
+    })
+  }
+
+  function renameTab(id: number, title: string) {
+    tabs = tabs.map(t => t.id === id ? { ...t, title } : t)
+  }
+
+  // ---- Drag tab between panes ----
+  function onTabDragStart(e: DragEvent, tabId: number) {
+    e.dataTransfer!.setData('text/plain', String(tabId))
+    e.dataTransfer!.effectAllowed = 'move'
+  }
+
+  function onPaneDragOver(e: DragEvent) {
+    e.preventDefault()
+    e.dataTransfer!.dropEffect = 'move'
+  }
+
+  function onPaneDrop(e: DragEvent, paneId: number) {
+    e.preventDefault()
+    const tabId = Number(e.dataTransfer!.getData('text/plain'))
+    if (!tabId || !tabs.find(t => t.id === tabId)) return
+    panes = panes.map(p => p.id === paneId ? { ...p, activeTabId: tabId } : p)
+  }
+
+  // ---- Settings ----
+  const showSidebar = useLocalStorage('svelte-jsoneditor-demo-sidebar', true)
+  const selectedTheme = useLocalStorage('svelte-jsoneditor-demo-theme', themes[0].value)
+  const selectedIndent = useLocalStorage('svelte-jsoneditor-demo-indentation', indentations[0].value)
+  const selectedParserId = useLocalStorage('svelte-jsoneditor-demo-parser', parsers[0].id)
+  const selectedPathId = useLocalStorage('svelte-jsoneditor-demo-path-parser', pathParsers[0].id)
+  const tabSz = useLocalStorage('svelte-jsoneditor-demo-tabSize', 4)
   const readOnly = useLocalStorage('svelte-jsoneditor-demo-readOnly', false)
   const mainMenuBar = useLocalStorage('svelte-jsoneditor-demo-mainMenuBar', true)
   const navigationBar = useLocalStorage('svelte-jsoneditor-demo-navigationBar', true)
   const statusBar = useLocalStorage('svelte-jsoneditor-demo-statusBar', true)
   const askToFormat = useLocalStorage('svelte-jsoneditor-demo-askToFormat', true)
-  const escapeControlCharacters = useLocalStorage(
-    'svelte-jsoneditor-demo-escapeControlCharacters',
-    false
-  )
-  const escapeUnicodeCharacters = useLocalStorage(
-    'svelte-jsoneditor-demo-escapeUnicodeCharacters',
-    false
-  )
-  const flattenColumns = useLocalStorage('svelte-jsoneditor-demo-flattenColumns', false)
-  const useCustomValueRenderer = useLocalStorage(
-    'svelte-jsoneditor-demo-useCustomValueRenderer',
-    false
-  )
-  const multipleQueryLanguages = useLocalStorage(
-    'svelte-jsoneditor-demo-multipleQueryLanguages',
-    true
-  )
-  const selectedTheme = useLocalStorage('svelte-jsoneditor-demo-theme', themes[0].value)
-  const selectedIndentation = useLocalStorage(
-    'svelte-jsoneditor-demo-indentation',
-    indentations[0].value
-  )
-  const selectedParserId = useLocalStorage('svelte-jsoneditor-demo-parser', parsers[1].id)
-  const selectedPathParserId = useLocalStorage(
-    'svelte-jsoneditor-demo-path-parser',
-    pathParsers[0].id
-  )
-  const tabSize = useLocalStorage('svelte-jsoneditor-demo-tabSize', indentations[0].value)
-  const truncateTextSize = useLocalStorage('svelte-jsoneditor-demo-truncateTextSize', 1000)
-  let leftEditorMode: Mode = Mode.tree
+  const escapeCtrl = useLocalStorage('svelte-jsoneditor-demo-escapeControlCharacters', false)
+  const escapeUni = useLocalStorage('svelte-jsoneditor-demo-escapeUnicodeCharacters', false)
+  const flatten = useLocalStorage('svelte-jsoneditor-demo-flattenColumns', false)
+  const validateDoc = useLocalStorage('svelte-jsoneditor-demo-validate', false)
+  const customRenderer = useLocalStorage('svelte-jsoneditor-demo-useCustomValueRenderer', false)
+  const multiQuery = useLocalStorage('svelte-jsoneditor-demo-multipleQueryLanguages', true)
 
-  $: queryLanguages = $multipleQueryLanguages
-    ? [
-        jsonQueryLanguage,
-        jmespathQueryLanguage,
-        jsonpathQueryLanguage,
-        javascriptQueryLanguage,
-        lodashQueryLanguage
-      ]
+  $: queryLangs = $multiQuery
+    ? [jsonQueryLanguage, jmespathQueryLanguage, jsonpathQueryLanguage, javascriptQueryLanguage, lodashQueryLanguage]
     : [jsonQueryLanguage]
-  let queryLanguageId = jsonQueryLanguage.id // TODO: store in local storage
+  let queryLangId = jsonQueryLanguage.id
+  $: selParser = parsers.find(p => p.id === $selectedParserId)?.value ?? JSON
+  $: selPath = pathParsers.find(p => p.id === $selectedPathId)?.value ?? pathParsers[0].value
+  $: selValidator = $validateDoc ? validator : undefined
 
-  let selectedParser: JSONParser
-  $: selectedParser =
-    parsers.find((parser) => parser.id === $selectedParserId)?.value || parsers[0].value
-  $: selectedPathParser =
-    pathParsers.find((parser) => parser.id === $selectedPathParserId)?.value || pathParsers[0].value
+  function refresh() { tabs.forEach(t => t.ref?.refresh()) }
 
-  $: selectedValidator = $validate ? validator : $validateArray ? arrayValidator : undefined
-
-  // only editable/readonly div, no color picker, boolean toggle, timestamp
   function customRenderValue(props: RenderValueProps): RenderValueComponentDescription[] {
-    return props.isEditing
-      ? [{ component: EditableValue, props }]
-      : [{ component: ReadonlyValue, props }]
+    return props.isEditing ? [{ component: EditableValue, props }] : [{ component: ReadonlyValue, props }]
   }
 
-  function onRenderMenu(items: MenuItem[], { mode }: RenderMenuContext) {
-    if (!import.meta.env.SSR) {
-      console.log('onRenderMenu', mode, items)
-    }
+  function onRenderMenu(items: MenuItem[]) { return items }
+  function onRenderContextMenu(items: ContextMenuItem[]) { return items }
+  function onChangeQueryLang(id: string) { queryLangId = id }
 
-    return items
+  // ---- Diff / Compare ----
+  let diffMode = false
+
+  function bumpRevision(tabId: number) {
+    tabs = tabs.map(t => t.id === tabId ? { ...t, revision: t.revision + 1 } : t)
   }
 
-  function onChangeTree(
-    content: Content,
-    previousContent: Content,
-    { contentErrors, patchResult }: OnChangeStatus
-  ) {
-    console.log('onChangeTree', {
-      content,
-      previousContent,
-      contentErrors,
-      patchResult
-    })
+  function touched(tabId: number): number {
+    return tabs.find(t => t.id === tabId)?.revision ?? 0
   }
 
-  function onChangeText(
-    content: Content,
-    previousContent: Content,
-    { contentErrors, patchResult }: OnChangeStatus
-  ) {
-    console.log('onChangeText', {
-      content,
-      previousContent,
-      contentErrors,
-      patchResult
-    })
-  }
+  $: diffPaths = diffMode && panes.length >= 2 ? computeDiff(
+    getTab(panes[0].activeTabId)?.content,
+    getTab(panes[1].activeTabId)?.content,
+    touched(panes[0].activeTabId) + touched(panes[1].activeTabId)
+  ) : new Set<string>()
 
-  function onSelectTree(selection: JSONEditorSelection | undefined) {
-    console.log('onSelectTree', selection)
-  }
-
-  function onSelectText(selection: JSONEditorSelection | undefined) {
-    console.log('onSelectText', selection)
-  }
-
-  function onChangeMode(mode: Mode) {
-    console.log('onChangeMode', mode)
-  }
-
-  function onChangeQueryLanguage(newQueryLanguageId: string) {
-    console.log('onChangeQueryLanguage', newQueryLanguageId)
-    queryLanguageId = newQueryLanguageId
-  }
-
-  function onRenderContextMenu(items: ContextMenuItem[], context: RenderMenuContext) {
-    console.log('onRenderContextMenu', items, context)
-    return items
-  }
-
-  function openInWindow() {
-    const popupWindow = window.open(
-      '',
-      '_blank',
-      `location=no,toolbar=no,menubar=no,status=no,directories=no,width=${500},height=${600},left=${0},top=${0},editorWind=yes`
-    )
-    if (!popupWindow) {
-      return
-    }
-
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    window.popupEditor = mount(JSONEditor, {
-      target: popupWindow.document.body,
-      props: {}
-    })
-  }
-
-  function refresh() {
-    if (refTreeEditor) {
-      refTreeEditor.refresh()
-    }
-    if (refTextEditor) {
-      refTextEditor.refresh()
+  // Auto-switch to tree mode when comparing (so highlights are visible)
+  $: if (diffMode && panes.length >= 2) {
+    const t0 = getTab(panes[0].activeTabId)
+    const t1 = getTab(panes[1].activeTabId)
+    if (t0?.mode === Mode.text || t1?.mode === Mode.text) {
+      tabs = tabs.map(t => {
+        if ((t.id === t0?.id || t.id === t1?.id) && t.mode === Mode.text) {
+          return { ...t, mode: Mode.tree }
+        }
+        return t
+      })
     }
   }
 
-  function generateLongArray() {
-    return [...new Array(1000)].map((value, index) => {
-      const random = Math.round(Math.random() * 1000)
-      const item: Record<string, unknown> = {
-        id: index,
-        name: 'Item ' + index,
-        random,
-        'nested object': {
-          value: random
-        },
-        array: [index, 1, 7, 3],
-        long:
-          selectedParser.stringify === stringify
-            ? 9223372000000000000n + BigInt(random)
-            : Number(9223372000000000000n + BigInt(random))
-      }
-
-      // introduce some validation issues
-      if (index === 3) {
-        const array = item.array as Array<string | null>
-        array[2] = 'oopsie'
-        array[3] = null
-        delete item['id']
-      }
-      if (index === 4) {
-        item.random = -1
-      }
-      if (index === 7 || index === 802) {
-        item.random = String(item.random)
-        item.long = String(item.long)
-      }
-      if (index === 9) {
-        item.unknownProp = 'other'
-      }
-
-      return item
-    })
+  function computeDiff(a: Content | undefined, b: Content | undefined): Set<string> {
+    const paths = new Set<string>()
+    if (!a || !b) return paths
+    const ja = isJSONContent(a) ? a.json : (() => { try { return JSON.parse(a.text ?? '') } catch { return a.text } })()
+    const jb = isJSONContent(b) ? b.json : (() => { try { return JSON.parse(b.text ?? '') } catch { return b.text } })()
+    diffObjects(ja, jb, '', paths)
+    return paths
   }
 
+  function diffObjects(a: unknown, b: unknown, prefix: string, paths: Set<string>) {
+    if (a === b) return
+    if (a === undefined || b === undefined) { paths.add(prefix); return }
+    if (typeof a !== typeof b) { paths.add(prefix); return }
+    if (typeof a !== 'object' || a === null || b === null) { paths.add(prefix); return }
+    if (Array.isArray(a) !== Array.isArray(b)) { paths.add(prefix); return }
+
+    const aObj = a as Record<string, unknown>
+    const bObj = b as Record<string, unknown>
+    const allKeys = new Set([...Object.keys(aObj), ...Object.keys(bObj)])
+
+    for (const key of allKeys) {
+      const childPath = prefix ? `${prefix}/${key}` : `/${key}`
+      if (!(key in aObj)) { paths.add(childPath); continue }
+      if (!(key in bObj)) { paths.add(childPath); continue }
+      diffObjects(aObj[key], bObj[key], childPath, paths)
+    }
+  }
+
+  function onClassNameDiff(path: JSONPath, _value: unknown): string | undefined {
+    if (!diffMode || diffPaths.size === 0) return undefined
+    const pathStr = '/' + path.map(p => String(p).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')
+    // Check exact path and parent paths
+    for (const dp of diffPaths) {
+      if (pathStr === dp || pathStr.startsWith(dp + '/') || dp.startsWith(pathStr + '/')) {
+        return 'jse-diff-changed'
+      }
+    }
+    return undefined
+  }
+
+  // ---- File operations ----
   function handleOpenFile(event: Event) {
-    const target = event.target as HTMLInputElement
-
-    console.log('loadFile', target.files)
-    console.time('load file')
-
-    const reader = new window.FileReader()
-    const file = target.files?.[0]
-    if (!file) {
-      return
-    }
-
-    reader.onload = function (event: ProgressEvent<FileReader>) {
-      console.timeEnd('load file')
-
-      if (!event.target) {
-        return
-      }
-
-      console.time('parse and render')
-
-      content = {
-        text: String(event.target?.result),
-        json: undefined
-      }
-
-      flushSync()
-      console.timeEnd('parse and render')
+    const file = (event.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = e => {
+      if (!e.target) return
+      const tab = getTab(panes[0].activeTabId)
+      tab.content = { text: String(e.target.result), json: undefined }
+      tabs = [...tabs]
     }
     reader.readAsText(file)
   }
+
+  function downloadJson() {
+    const tab = getTab(panes[0].activeTabId)
+    const text = isJSONContent(tab.content)
+      ? (selParser.stringify(tab.content.json, null, $selectedIndent as number) ?? '')
+      : tab.content.text ?? ''
+    const blob = new Blob([text], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `${tab.title.replace(/\s+/g, '_')}.json`
+    a.click(); URL.revokeObjectURL(url)
+  }
+
+  function openInWindow() {
+    const tab = getTab(panes[0].activeTabId)
+    const w = window.open('', '_blank', 'width=900,height=700,left=100,top=50')
+    if (!w) return
+    w.document.title = `${tab.title} — JSON Editor`
+
+    // Copy all stylesheets and styles from main document to popup
+    const mainDoc = document
+    for (const node of mainDoc.querySelectorAll('link[rel="stylesheet"], style')) {
+      w.document.head.appendChild(node.cloneNode(true))
+    }
+    // Ensure body fills viewport
+    w.document.body.className = $selectedTheme
+    const style = w.document.createElement('style')
+    style.textContent = 'body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden}'
+    w.document.head.appendChild(style)
+
+    mount(JSONEditor, {
+      target: w.document.body,
+      props: {
+        content: tab.content,
+        mode: tab.mode,
+        mainMenuBar: true, navigationBar: true, statusBar: true
+      }
+    })
+  }
+
+  // ---- Samples ----
+  function loadSample(name: string) {
+    const samples: Record<string, Content> = {
+      array: { json: [1, 2, 3, 4, 5], text: undefined },
+      object: { json: { name: 'John', age: 30, city: 'NYC' }, text: undefined },
+      long: { json: range(0, 500), text: undefined },
+      empty: { text: '', json: undefined },
+      invalid: { text: '[1,2,3', json: undefined }
+    }
+    const s = samples[name]
+    if (!s) return
+    const tab = getTab(panes[0].activeTabId)
+    tab.content = s; tabs = [...tabs]
+  }
 </script>
 
-<svelte:head>
-  <title>development application | svelte-jsoneditor</title>
-</svelte:head>
+<svelte:head><title>JSON Editor — Dev</title></svelte:head>
 
-<div class="demo-app {$selectedTheme}">
-  <h1>svelte-jsoneditor development application</h1>
-  <p>
-    <label>
-      Indentation: <select bind:value={$selectedIndentation}>
-        {#each indentations as indentation}
-          <option value={indentation.value}>{indentation.label}</option>
-        {/each}
-      </select>
-    </label>
-    <label>
-      tabSize: <input type="number" bind:value={$tabSize} />
-    </label>
-    <label>
-      truncateTextSize: <input type="number" bind:value={$truncateTextSize} />
-    </label>
-    <label>
-      Height: <input type="text" bind:value={height} />
-    </label>
-    <label>
-      Theme: <select bind:value={$selectedTheme} on:change={refresh}>
-        {#each themes as theme}
-          <option value={theme.value}>{theme.label}</option>
-        {/each}
-      </select>
-    </label>
-  </p>
-  <p>
-    <label>
-      <input type="checkbox" bind:checked={$validate} /> validate
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$validateArray} /> validate array
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$mainMenuBar} /> mainMenuBar
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$navigationBar} /> navigationBar
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$statusBar} /> statusBar
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$askToFormat} /> askToFormat
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$escapeControlCharacters} /> escapeControlCharacters
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$escapeUnicodeCharacters} /> escapeUnicodeCharacters
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$flattenColumns} /> flattenColumns
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$readOnly} /> readOnly
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$useCustomValueRenderer} /> Custom onRenderValue
-    </label>
-  </p>
-  <p>
-    <label>
-      <input type="checkbox" bind:checked={$multipleQueryLanguages} /> Multiple query languages
-    </label>
-    {#if $multipleQueryLanguages}
-      . Selected query language:
-      <select bind:value={queryLanguageId}>
-        {#each queryLanguages as queryLanguage}
-          <option value={queryLanguage.id}>{queryLanguage.name}</option>
-        {/each}
-      </select>
-    {/if}
-  </p>
-
-  <p>
-    JSON Parser: <select bind:value={$selectedParserId}>
-      {#each parsers as parser}
-        <option value={parser.id}>{parser.label}</option>
-      {/each}
-    </select>
-
-    Path Parser:
-    <select bind:value={$selectedPathParserId}>
-      {#each pathParsers as pathParser}
-        <option value={pathParser.id}>{pathParser.label}</option>
-      {/each}
-    </select>
-  </p>
-
-  <p class="buttons">
-    <button
-      on:click={() => {
-        content = {
-          json: [1, 2, 3, 4, 5]
-        }
-      }}
-    >
-      Update json
-    </button>
-    <button
-      on:click={() => {
-        content = {
-          text: '[1, 2, 3, 4]',
-          json: undefined
-        }
-      }}
-    >
-      Update text
-    </button>
-    <button
-      on:click={() => {
-        content = {
-          text: '',
-          json: undefined
-        }
-      }}
-    >
-      Set empty text
-    </button>
-    <button
-      on:click={() => {
-        content = {
-          text: undefined,
-          json: ''
-        }
-      }}
-    >
-      Set empty string
-    </button>
-    <button
-      on:click={() => {
-        content = {
-          text: undefined,
-          json: range(0, 999)
-        }
-      }}
-    >
-      Set long array
-    </button>
-    <button
-      on:click={() => {
-        content = {
-          text: undefined,
-          json: generateLongArray()
-        }
-      }}
-    >
-      Set long array with objects
-    </button>
-    <button
-      on:click={() => {
-        content = {
-          text: '[1,2,3',
-          json: undefined
-        }
-      }}
-    >
-      Set repairable text
-    </button>
-    <button
-      on:click={() => {
-        content = {
-          text: '[1, 2, 3] [',
-          json: undefined
-        }
-      }}
-    >
-      Set unrepairable text
-    </button>
-    <button
-      on:click={() => {
-        refTreeEditor?.scrollTo(['669', 'array'])
-      }}
-    >
-      Scroll to ['669', 'array']
-    </button>
-    <button
-      on:click={() => {
-        selectionTree = createValueSelection(['object', 'a'])
-        refTreeEditor?.focus()
-      }}
-    >
-      Select ['object', 'a']
-    </button>
-    <button
-      on:click={() => {
-        refTreeEditor?.select(createValueSelection(['669', 'name']))
-        refTreeEditor?.focus()
-      }}
-    >
-      Select ['669', 'name']
-    </button>
-    <button
-      on:click={() => {
-        if (!refTextEditor) {
-          alert('Open the text editor first (right panel)')
-          return
-        }
-        refTextEditor.select({
-          type: SelectionType.text,
-          ranges: [{ anchor: 5, head: 12 }],
-          main: 0
-        })
-        refTextEditor.focus()
-      }}
-    >
-      Select char 5 to 12
-    </button>
-    <button
-      on:click={() => {
-        refTreeEditor?.select(undefined)
-        refTextEditor?.select(undefined)
-      }}
-    >
-      Select nothing
-    </button>
-  </p>
-  <p class="buttons">
-    <button
-      on:click={() => {
-        refTreeEditor?.patch([{ op: 'add', path: '/updated', value: '2022-09-01T10:13:44Z' }])
-      }}
-    >
-      Patch json in tree editor
-    </button>
-    <button
-      on:click={() => {
-        if (!refTreeEditor) {
-          return
-        }
-
-        const content = toJSONContent(refTreeEditor.get(), LosslessJSON)
-        if (isJSONObject(content.json)) {
-          const updatedContent = {
-            json: { ...content.json, updated: '2022-09-01T10:13:44Z' }
-          }
-          refTreeEditor.update(updatedContent)
-        }
-      }}
-    >
-      Update json in tree editor
-    </button>
-    <button on:click={openInWindow}>Open editor in new window</button>
-    <input type="file" on:change={handleOpenFile} />
-  </p>
-
-  <p>
-    <label>
-      <input type="checkbox" bind:checked={$showRawContents} /> Show raw contents (at the bottom)
-    </label>
-    <label>
-      <input type="checkbox" bind:checked={$showSelection} /> Show selection (at the bottom)
-    </label>
-  </p>
-
-  <div class="columns">
-    <div class="left">
-      <p>
-        <label>
-          <input type="checkbox" bind:checked={$showTreeEditor} /> Show tree editor
-        </label>
-        <select class="mode-toggle" bind:value={leftEditorMode}>
-          <option value="tree">tree</option>
-          <option value="text">text</option>
-          <option value="table">table</option>
-        </select>
-      </p>
-      <div class="tree-editor" style="height: {height}">
-        {#if $showTreeEditor}
-          <form novalidate action="/">
-            <JSONEditor
-              bind:this={refTreeEditor}
-              bind:content
-              bind:selection={selectionTree}
-              bind:mode={leftEditorMode}
-              mainMenuBar={$mainMenuBar}
-              navigationBar={$navigationBar}
-              statusBar={$statusBar}
-              askToFormat={$askToFormat}
-              escapeControlCharacters={$escapeControlCharacters}
-              escapeUnicodeCharacters={$escapeUnicodeCharacters}
-              flattenColumns={$flattenColumns}
-              readOnly={$readOnly}
-              indentation={$selectedIndentation}
-              tabSize={$tabSize}
-              truncateTextSize={$truncateTextSize}
-              parser={selectedParser}
-              pathParser={selectedPathParser}
-              validator={selectedValidator}
-              {queryLanguages}
-              bind:queryLanguageId
-              {onRenderMenu}
-              onChange={onChangeTree}
-              onSelect={onSelectTree}
-              onRenderValue={$useCustomValueRenderer ? customRenderValue : renderValue}
-              {onRenderContextMenu}
-              {onChangeMode}
-              onFocus={() => console.log('onFocus tree')}
-              onBlur={() => console.log('onBlur tree', { content: refTreeEditor?.get() })}
-            />
-          </form>
-        {/if}
-      </div>
-
-      {#if $showSelection}
-        <div class="data">
-          selection:
-          <pre><code>{JSON.stringify(selectionTree, null, 2)}</code></pre>
-        </div>
-      {/if}
-
-      {#if $showRawContents}
-        <div class="data">
-          json contents:
-          <pre>
-            <code>
-            {isJSONContent(content)
-                ? truncate(selectedParser.stringify(content.json, null, 2) ?? '', 1e5)
-                : 'undefined'}
-            </code>
-          </pre>
-        </div>
-      {/if}
+<div class="app-shell {$selectedTheme}">
+  <!-- TOOLBAR -->
+  <header class="toolbar">
+    <button class="tb-btn" on:click={() => ($showSidebar = !$showSidebar)} title="Sidebar">☰</button>
+    <span class="tb-brand">JSON Editor</span>
+    <div class="tb-group">
+      <label class="tb-label">Theme</label>
+      <select class="tb-select" bind:value={$selectedTheme} on:change={refresh}>{#each themes as t}<option value={t.value}>{t.label}</option>{/each}</select>
     </div>
-    <div class="right">
-      <p>
-        <label>
-          <input type="checkbox" bind:checked={$showTextEditor} /> Show text editor
-        </label>
-      </p>
+    <div class="tb-group">
+      <label class="tb-label">Indent</label>
+      <select class="tb-select" bind:value={$selectedIndent}>{#each indentations as i}<option value={i.value}>{i.label}</option>{/each}</select>
+    </div>
+    <div class="tb-group">
+      <label class="tb-label">Parser</label>
+      <select class="tb-select" bind:value={$selectedParserId}>{#each parsers as p}<option value={p.id}>{p.label}</option>{/each}</select>
+    </div>
+    <div class="tb-spacer" />
+    <div class="tb-group">
+      <button class="tb-btn" on:click={addPane} title="Split pane">▦{panes.length}</button>
+      <button class="tb-btn" on:click={removeLastPane} title="Remove split">◫</button>
+      <button class="tb-btn" on:click={toggleSplitDir} title="Toggle direction">{splitDir === 'vertical' ? '⬍' : '⬌'}</button>
+    </div>
+    <button class="tb-btn" on:click={openInWindow} title="Popout">↗</button>
+    <button class="tb-btn" on:click={downloadJson} title="Download JSON">⬇</button>
+    <label class="tb-btn" title="Open file">📂<input type="file" on:change={handleOpenFile} style="display:none" /></label>
+  </header>
 
-      <div class="text-editor" style="height: {height}">
-        {#if $showTextEditor}
-          <form novalidate action="/">
-            <JSONEditor
-              bind:this={refTextEditor}
-              mode={Mode.text}
-              bind:content
-              bind:selection={selectionText}
-              mainMenuBar={$mainMenuBar}
-              navigationBar={$navigationBar}
-              statusBar={$statusBar}
-              askToFormat={$askToFormat}
-              escapeControlCharacters={$escapeControlCharacters}
-              escapeUnicodeCharacters={$escapeUnicodeCharacters}
-              flattenColumns={$flattenColumns}
-              readOnly={$readOnly}
-              indentation={$selectedIndentation}
-              tabSize={$tabSize}
-              truncateTextSize={$truncateTextSize}
-              parser={selectedParser}
-              pathParser={selectedPathParser}
-              validator={selectedValidator}
-              {queryLanguages}
-              {queryLanguageId}
-              {onChangeQueryLanguage}
-              {onRenderMenu}
-              onChange={onChangeText}
-              onSelect={onSelectText}
-              onRenderValue={$useCustomValueRenderer ? customRenderValue : renderValue}
-              {onChangeMode}
-              onFocus={() => console.log('onFocus text')}
-              onBlur={() => console.log('onBlur text', { content: refTextEditor?.get() })}
-            />
-          </form>
-        {/if}
+  <!-- MAIN -->
+  <div class="main-area">
+    {#if $showSidebar}
+      <aside class="sidebar">
+        <section class="sb-section">
+          <h3 class="sb-title">Editor</h3>
+          <label class="sb-check"><input type="checkbox" bind:checked={$readOnly} /> Read only</label>
+          <label class="sb-check"><input type="checkbox" bind:checked={$mainMenuBar} /> Main menu</label>
+          <label class="sb-check"><input type="checkbox" bind:checked={$navigationBar} /> Navigation</label>
+          <label class="sb-check"><input type="checkbox" bind:checked={$statusBar} /> Status bar</label>
+          <label class="sb-check"><input type="checkbox" bind:checked={$askToFormat} /> Ask to format</label>
+        </section>
+        <section class="sb-section">
+          <h3 class="sb-title">Validation</h3>
+          <label class="sb-check"><input type="checkbox" bind:checked={$validateDoc} /> JSON Schema</label>
+          <label class="sb-check"><input type="checkbox" bind:checked={$customRenderer} /> Custom renderer</label>
+          <label class="sb-check"><input type="checkbox" bind:checked={diffMode} /> Compare panes (diff)</label>
+        </section>
+        <section class="sb-section">
+          <h3 class="sb-title">Text</h3>
+          <label class="sb-check"><input type="checkbox" bind:checked={$escapeCtrl} /> Escape ctrl</label>
+          <label class="sb-check"><input type="checkbox" bind:checked={$escapeUni} /> Escape unicode</label>
+          <label class="sb-check"><input type="checkbox" bind:checked={$flatten} /> Flatten cols</label>
+          <div class="sb-row"><label>Tab size</label><input class="sb-input" type="number" bind:value={$tabSz} min="1" max="8" /></div>
+          <div class="sb-row" style="margin-top:4px"><label>Multi query</label><input type="checkbox" bind:checked={$multiQuery} /></div>
+        </section>
+        <section class="sb-section">
+          <h3 class="sb-title">Load Sample</h3>
+          <button class="sb-btn" on:click={() => loadSample('array')}>Array</button>
+          <button class="sb-btn" on:click={() => loadSample('object')}>Object</button>
+          <button class="sb-btn" on:click={() => loadSample('long')}>Long Array</button>
+          <button class="sb-btn" on:click={() => loadSample('empty')}>Empty Text</button>
+          <button class="sb-btn" on:click={() => loadSample('invalid')}>Invalid JSON</button>
+        </section>
+      </aside>
+    {/if}
+
+    <div class="editor-area">
+      <!-- TAB BAR -->
+      <nav class="tab-bar">
+        {#each tabs as tab}
+          <button
+            class="tab" class:active={panes.some(p => p.activeTabId === tab.id)}
+            on:click={() => { panes = panes.map((p, i) => i === 0 ? { ...p, activeTabId: tab.id } : p) }}
+            on:dblclick={() => { const n = prompt('Rename:', tab.title); if (n) renameTab(tab.id, n) }}
+            draggable="true"
+            on:dragstart={(e) => onTabDragStart(e, tab.id)}
+          >
+            <span class="tab-label">{tab.title}</span>
+            {#if tabs.length > 1}
+              <span class="tab-close" on:click|stopPropagation={() => closeTab(tab.id)}>×</span>
+            {/if}
+          </button>
+        {/each}
+        <button class="tab tab-add" on:click={addTab} title="New tab">+</button>
+        <div class="tab-mode">
+          {#each Object.values(Mode) as m}
+            {@const active = getTab(panes[0].activeTabId)}
+            <button class="mode-btn" class:active={active?.mode === m}
+              on:click={() => { if (active) { tabs = tabs.map(t => t.id === active.id ? { ...t, mode: m } : t) } }}>{m}</button>
+          {/each}
+        </div>
+      </nav>
+
+      <!-- PANES -->
+      <div class="editor-panes" class:split-h={splitDir === 'horizontal' && panes.length > 1} class:split-v={splitDir === 'vertical' && panes.length > 1}>
+        {#each panes as pane (pane.id)}
+          {@const tab = getTab(pane.activeTabId)}
+          <div class="editor-pane"
+            on:dragover={onPaneDragOver}
+            on:drop={(e) => onPaneDrop(e, pane.id)}
+          >
+            {#if panes.length > 1}
+              <div class="pane-tab-strip">
+                {#each tabs as t}
+                  <button class="pane-tab" class:active={t.id === pane.activeTabId}
+                    on:click={() => { panes = panes.map(p => p.id === pane.id ? { ...p, activeTabId: t.id } : p) }}
+                  >{t.title}</button>
+                {/each}
+              </div>
+            {/if}
+            <div class="editor-wrapper">
+              {#if tab}
+                <form novalidate action="/" class="editor-form">
+                  <JSONEditor
+                    bind:this={tab.ref} bind:content={tab.content}
+                    bind:selection={tab.selection} mode={tab.mode}
+                    mainMenuBar={$mainMenuBar} navigationBar={$navigationBar}
+                    statusBar={$statusBar} askToFormat={$askToFormat}
+                    escapeControlCharacters={$escapeCtrl}
+                    escapeUnicodeCharacters={$escapeUni}
+                    flattenColumns={$flatten} readOnly={$readOnly}
+                    indentation={$selectedIndent} tabSize={$tabSz}
+                    parser={selParser} pathParser={selPath}
+                    validator={selValidator}
+                    {queryLangs} bind:queryLanguageId={queryLangId}
+                    onRenderValue={$customRenderer ? customRenderValue : renderValue}
+                    onClassName={diffMode ? onClassNameDiff : undefined}
+                    onChange={() => bumpRevision(tab.id)}
+                    onChangeMode={(m: Mode) => { tabs = tabs.map(t => t.id === tab.id ? { ...t, mode: m } : t) }}
+                    {onRenderMenu} {onRenderContextMenu} {onChangeQueryLang}
+                  />
+                </form>
+              {/if}
+            </div>
+          </div>
+        {/each}
       </div>
 
-      {#if $showSelection}
-        <div class="data">
-          selection:
-          <pre><code>{JSON.stringify(selectionText, null, 2)}</code></pre>
-        </div>
-      {/if}
-
-      {#if $showRawContents}
-        <div class="data">
-          text contents:
-          <pre>
-            <code>
-              {isTextContent(content) ? truncate(content.text, 1e5) : undefined}
-            </code>
-          </pre>
-        </div>
-      {/if}
+      <!-- STATUS -->
+      <footer class="status-bar">
+        <span>{getTab(panes[0].activeTabId)?.mode ?? '—'}</span>
+        <span>{queryLangId}</span>
+        <span class="sb-spacer" />
+        <span>Tabs: {tabs.length} · Panes: {panes.length}</span>
+      </footer>
     </div>
   </div>
 </div>
 
-<!--
-Workaround for the console warning:
-
- <Development> received an unexpected slot "default".
-
-See https://github.com/sveltejs/kit/issues/981
--->
-{#if false}
-  <slot />
-{/if}
+{#if false}<slot />{/if}
 
 <style lang="scss">
-  @use 'sass:color';
   @import '../../lib/themes/jse-theme-dark.css';
   @import '../themes/jse-theme-big.css';
 
-  .demo-app {
-    margin: -10px; // compensate for the padding of the root element
-    padding: 10px;
-    height: 100%;
-    overflow: auto;
+  $bg: #1e1e1e; $bg2: #252526; $bg3: #323233; $b: #3e3e42;
+  $t: #cccccc; $td: #888; $ac: #0078d4;
 
-    &.jse-theme-dark {
-      background: #4d4d4d;
-      color: #fff;
-    }
+  .app-shell { position:fixed;inset:0;display:flex;flex-direction:column;background:$bg;color:$t;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;overflow:hidden; }
 
-    &.jse-theme-big {
-      background: #ffe2d8;
-    }
+  .toolbar { display:flex;align-items:center;gap:6px;padding:4px 8px;background:$bg3;border-bottom:1px solid $b;flex-shrink:0;height:36px;user-select:none; }
+  .tb-brand { font-weight:700;font-size:13px;color:#fff;margin-right:12px;letter-spacing:-0.3px; }
+  .tb-group { display:flex;align-items:center;gap:3px; }
+  .tb-label { font-size:10px;color:$td;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap; }
+  .tb-select { padding:1px 4px;font-size:11px;background:$bg;color:$t;border:1px solid $b;border-radius:3px;outline:none;&:focus{border-color:$ac;} }
+  .tb-btn { display:flex;align-items:center;justify-content:center;width:28px;height:26px;border:none;background:transparent;color:$t;font-size:14px;cursor:pointer;border-radius:3px;&:hover{background:rgba(255,255,255,0.08);} }
+  .tb-spacer { flex:1; }
 
-    &.jse-theme-custom-contents {
-      $background-color: hsl(76, 52%, 70%);
+  .main-area { flex:1;display:flex;overflow:hidden;min-height:0; }
+  .sidebar { width:190px;flex-shrink:0;background:$bg2;border-right:1px solid $b;overflow-y:auto;padding:8px 0;&::-webkit-scrollbar{width:6px;}&::-webkit-scrollbar-thumb{background:#555;border-radius:3px;} }
+  .sb-section { padding:6px 12px;border-bottom:1px solid rgba(255,255,255,0.04);&:last-child{border-bottom:none;} }
+  .sb-title { font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:$td;margin:0 0 6px 0;font-weight:600; }
+  .sb-check { display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px;cursor:pointer;input{accent-color:$ac;} }
+  .sb-row { display:flex;align-items:center;justify-content:space-between;padding:2px 0;font-size:12px;gap:6px; }
+  .sb-input { width:50px;padding:2px 4px;font-size:11px;background:$bg;color:$t;border:1px solid $b;border-radius:3px;text-align:center; }
+  .sb-btn { display:block;width:100%;padding:3px 8px;margin:2px 0;font-size:11px;background:transparent;color:$t;border:1px solid $b;border-radius:3px;cursor:pointer;text-align:left;&:hover{background:rgba(255,255,255,0.06);} }
 
-      --jse-contents-background-color: #{$background-color};
-      --jse-selection-background-color: #{color.adjust(
-          $background-color,
-          $lightness: -10%,
-          $saturation: -20%
-        )};
-      --jse-selection-background-inactive-color: #{color.adjust(
-          $background-color,
-          $lightness: -5%,
-          $saturation: -10%
-        )};
-      --jse-hover-background-color: #{color.adjust(
-          $background-color,
-          $lightness: -5%,
-          $saturation: -10%
-        )};
+  .editor-area { flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0; }
 
-      --jse-context-menu-pointer-hover-background: #{color.adjust(
-          $background-color,
-          $lightness: -20%,
-          $saturation: -20%
-        )};
-      --jse-context-menu-pointer-background-highlight: #{color.adjust(
-          $background-color,
-          $lightness: -30%,
-          $saturation: -30%
-        )};
-      --jse-context-menu-pointer-background: #{color.adjust(
-          $background-color,
-          $lightness: -40%,
-          $saturation: -40%
-        )};
-
-      --jse-collapsed-items-background-color: #{color.adjust(
-          $background-color,
-          $lightness: -5%,
-          $saturation: -10%
-        )};
-      --jse-collapsed-items-selected-background-color: #{color.adjust(
-          $background-color,
-          $lightness: -20%,
-          $saturation: -20%
-        )};
-    }
+  .tab-bar { display:flex;align-items:center;background:$bg2;border-bottom:1px solid $b;flex-shrink:0;height:34px;overflow-x:auto;user-select:none;&::-webkit-scrollbar{height:3px;}&::-webkit-scrollbar-thumb{background:#555;} }
+  .tab { display:flex;align-items:center;gap:4px;padding:0 12px;height:100%;border:none;background:#2d2d2d;color:$td;font-size:12px;cursor:pointer;border-right:1px solid $b;white-space:nowrap;flex-shrink:0;transition:background 0.1s;
+    &.active { background:#1e1e1e;color:#fff;border-bottom:2px solid $ac; }
+    &:hover:not(.active) { background:#353535; }
+  }
+  .tab-label { max-width:140px;overflow:hidden;text-overflow:ellipsis; }
+  .tab-close { font-size:14px;opacity:0.4;width:16px;text-align:center;border-radius:2px;&:hover{opacity:1;background:rgba(255,255,255,0.1);} }
+  .tab-add { font-size:16px;padding:0 10px;color:$td;&:hover{color:#fff;} }
+  .tab-mode { display:flex;margin-left:auto;padding-right:8px;gap:1px;flex-shrink:0; }
+  .mode-btn { padding:2px 8px;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid $b;background:transparent;color:$td;cursor:pointer;border-radius:2px;&:first-child{border-radius:3px 0 0 3px;}&:last-child{border-radius:0 3px 3px 0;}
+    &.active { background:$ac;color:#fff;border-color:$ac; }
+    &:hover:not(.active) { background:rgba(255,255,255,0.05); }
   }
 
-  .columns {
-    display: flex;
-    gap: 20px;
-    width: 100%;
-    max-width: 1200px;
+  .editor-panes { flex:1;display:flex;overflow:hidden;min-height:0;&.split-h{flex-direction:row;}&.split-v{flex-direction:column;} }
+  .editor-pane { flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid $b;&:last-child{border-right:none;} }
+  .pane-tab-strip { display:flex;background:#1a1a1a;border-bottom:1px solid $b;flex-shrink:0;height:28px;overflow-x:auto;&::-webkit-scrollbar{height:2px;} }
+  .pane-tab { padding:0 10px;height:100%;border:none;background:transparent;color:$td;font-size:11px;cursor:pointer;border-right:1px solid $b;white-space:nowrap;flex-shrink:0;
+    &.active { background:$bg;color:#fff; }
+    &:hover:not(.active) { background:rgba(255,255,255,0.04); }
   }
+  .editor-wrapper { flex:1;display:flex;min-width:0;min-height:0; }
+  .editor-form { flex:1;display:flex;min-width:0;min-height:0; }
 
-  .columns .left,
-  .columns .right {
-    flex: 1;
-    min-width: 0;
-  }
+  .status-bar { display:flex;align-items:center;padding:0 10px;height:22px;background:$ac;color:#fff;font-size:11px;flex-shrink:0;gap:16px; }
+  .sb-spacer { flex:1; }
 
-  form {
-    flex: 1;
-    display: flex;
-    min-width: 0;
-  }
-
-  .tree-editor,
-  .text-editor {
-    flex: 1;
-    display: flex;
-    min-width: 0;
-
-    // some styling to try out if it doesn't break the styling of the editor
-    line-height: 72px;
-    font-size: 72px;
-    font-family: 'Comic Sans MS', 'Courier New', serif;
-  }
-
-  .mode-toggle {
-    font-size: 12pt;
-    font-family: arial, serif;
-  }
-
-  .data {
-    margin-top: 10px;
-  }
-
-  pre {
-    background: #f5f5f5;
-  }
-
-  p {
-    max-width: none;
-    margin: 10px 0;
-
-    &.buttons {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 5px;
-    }
-  }
-
-  button,
-  input,
-  select {
-    font-size: inherit;
-    font-family: inherit;
-  }
-
-  label {
-    white-space: nowrap;
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.5);
-    }
-  }
-
-  :global(.jse-main.jse-focus) {
-    box-shadow: 0 2px 10px 0 rgba(0, 0, 0, 0.24);
+  // Diff highlighting
+  :global(.jse-diff-changed) {
+    background: rgba(255, 200, 0, 0.15) !important;
+    border-left: 3px solid #ffc800 !important;
   }
 </style>
