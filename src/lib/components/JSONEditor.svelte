@@ -632,7 +632,6 @@
 
 {#each previewWindowsState.windows as win (win.id)}
   <PreviewModal
-    initialValue={win.value}
     windowId={win.id}
     pathLabel={win.pathLabel}
     x={win.x}

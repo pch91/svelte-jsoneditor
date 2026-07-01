@@ -20,7 +20,6 @@
   } from '$lib/utils/previewRenderers.js'
   import { previewWindows } from '$lib/stores/previewWindows.js'
 
-  export let initialValue: string = ''
   export let windowId: string = ''
   export let pathLabel: string = ''
   export let x: number = 0
@@ -208,7 +207,7 @@
         </div>
       {/if}
 
-      <div class="jse-preview-spacer" />
+      <div class="jse-preview-spacer"></div>
 
       <button
         class="jse-preview-save-btn"
@@ -230,7 +229,7 @@
           bind:value={editValue}
           spellcheck="false"
           placeholder="Enter value to preview..."
-        />
+        ></textarea>
       </div>
 
       <!-- Right: Preview -->
