@@ -36,6 +36,7 @@
     "dev": "vite dev",
     "preview": "svelte-kit preview",
     "build": "npm run build:svelte && npm run build:vanilla",
+    "build:pages": "vite build",
     "build:watch": "npm run build -- --watch",
     "build:svelte": "npm-run-all build:svelte:**",
     "build:svelte:check": "npm run check",
