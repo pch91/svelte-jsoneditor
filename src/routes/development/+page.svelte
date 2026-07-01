@@ -12,7 +12,7 @@
   import { mount } from 'svelte'
   import { parse, stringify } from 'lossless-json'
   import { parseJSONPath, stringifyJSONPath } from '$lib/utils/pathUtils.js'
-  import { compileJSONPointer, parseJSONPointer } from 'immutable-json-patch'
+  import { compileJSONPointer, parseJSONPointer, type JSONPath } from 'immutable-json-patch'
 
   // ============================================================
   const LosslessJSON = { parse, stringify }
@@ -192,7 +192,7 @@
 
   function onRenderMenu(items: MenuItem[]) { return items }
   function onRenderContextMenu(items: ContextMenuItem[]) { return items }
-  function onChangeQueryLang(id: string) { queryLangId = id }
+  function onChangeQueryLanguage(id: string) { queryLangId = id }
 
   // ---- Diff / Compare ----
   let diffMode = false
@@ -205,11 +205,13 @@
     return tabs.find(t => t.id === tabId)?.revision ?? 0
   }
 
-  $: diffPaths = diffMode && panes.length >= 2 ? computeDiff(
-    getTab(panes[0].activeTabId)?.content,
-    getTab(panes[1].activeTabId)?.content,
-    touched(panes[0].activeTabId) + touched(panes[1].activeTabId)
-  ) : new Set<string>()
+  $: diffRevision = touched(panes[0]?.activeTabId ?? 0) + touched(panes[1]?.activeTabId ?? 0)
+  $: diffPaths = diffMode && panes.length >= 2 && diffRevision
+    ? computeDiff(
+        getTab(panes[0].activeTabId)?.content,
+        getTab(panes[1].activeTabId)?.content
+      )
+    : new Set<string>()
 
   // Auto-switch to tree mode when comparing (so highlights are visible)
   $: if (diffMode && panes.length >= 2) {
@@ -255,7 +257,7 @@
 
   function onClassNameDiff(path: JSONPath, _value: unknown): string | undefined {
     if (!diffMode || diffPaths.size === 0) return undefined
-    const pathStr = '/' + path.map(p => String(p).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')
+    const pathStr = '/' + path.map((p: string | number) => String(p).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')
     // Check exact path and parent paths
     for (const dp of diffPaths) {
       if (pathStr === dp || pathStr.startsWith(dp + '/') || dp.startsWith(pathStr + '/')) {
@@ -299,7 +301,7 @@
 
     // Copy all stylesheets and styles from main document to popup
     const mainDoc = document
-    for (const node of mainDoc.querySelectorAll('link[rel="stylesheet"], style')) {
+    for (const node of Array.from(mainDoc.querySelectorAll('link[rel="stylesheet"], style'))) {
       w.document.head.appendChild(node.cloneNode(true))
     }
     // Ensure body fills viewport
@@ -459,12 +461,12 @@
                     indentation={$selectedIndent} tabSize={$tabSz}
                     parser={selParser} pathParser={selPath}
                     validator={selValidator}
-                    {queryLangs} bind:queryLanguageId={queryLangId}
+                    queryLanguages={queryLangs} bind:queryLanguageId={queryLangId}
                     onRenderValue={$customRenderer ? customRenderValue : renderValue}
                     onClassName={diffMode ? onClassNameDiff : undefined}
                     onChange={() => bumpRevision(tab.id)}
                     onChangeMode={(m: Mode) => { tabs = tabs.map(t => t.id === tab.id ? { ...t, mode: m } : t) }}
-                    {onRenderMenu} {onRenderContextMenu} {onChangeQueryLang}
+                    {onRenderMenu} {onRenderContextMenu} {onChangeQueryLanguage}
                   />
                 </form>
               {/if}
@@ -477,7 +479,7 @@
       <footer class="status-bar">
         <span>{getTab(panes[0].activeTabId)?.mode ?? '—'}</span>
         <span>{queryLangId}</span>
-        <span class="sb-spacer" />
+        <span class="sb-spacer"></span>
         <span>Tabs: {tabs.length} · Panes: {panes.length}</span>
       </footer>
     </div>
