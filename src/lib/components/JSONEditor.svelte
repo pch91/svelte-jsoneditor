@@ -50,6 +50,9 @@
   import memoizeOne from 'memoize-one'
   import { cloneDeep } from 'lodash-es'
   import SortModal from './modals/SortModal.svelte'
+  import PreviewModal from './modals/PreviewModal.svelte'
+  import MinimizedWindowsBar from './modals/MinimizedWindowsBar.svelte'
+  import { previewWindows, type PreviewWindowState } from '$lib/stores/previewWindows.js'
 
   // TODO: document how to enable debugging in the readme: localStorage.debug="jsoneditor:*", then reload
   const debug = createDebug('jsoneditor:JSONEditor')
@@ -132,6 +135,11 @@
   let jsonEditorModalProps: JSONEditorModalProps | undefined = undefined
   let sortModalProps: SortModalCallback | undefined
   let transformModalProps: TransformModalProps | undefined
+
+  let previewWindowsState = { windows: [] as PreviewWindowState[] }
+  previewWindows.subscribe((state) => {
+    previewWindowsState = { windows: state.windows }
+  })
 
   $: {
     const contentError = validateContentType(content)
@@ -621,5 +629,30 @@
     />
   {/if}
 </AbsolutePopup>
+
+{#each previewWindowsState.windows as win (win.id)}
+  <PreviewModal
+    initialValue={win.value}
+    windowId={win.id}
+    pathLabel={win.pathLabel}
+    x={win.x}
+    y={win.y}
+    width={win.width}
+    height={win.height}
+    zIndex={win.zIndex}
+    minimized={win.minimized}
+    renderValue={win.value}
+    onChangeRenderValue={(value) => previewWindows.updateWindowValue(win.id, value)}
+    onClose={() => previewWindows.closeWindow(win.id)}
+    onFocus={() => previewWindows.focusWindow(win.id)}
+    onMinimize={() => previewWindows.minimizeWindow(win.id)}
+    onMaximize={() => {}}
+    onRestore={() => {}}
+    onMove={(x, y) => previewWindows.moveWindow(win.id, x, y)}
+    onResize={(width, height, x, y) => previewWindows.resizeWindow(win.id, width, height, x, y)}
+  />
+{/each}
+
+<MinimizedWindowsBar />
 
 <style src="./JSONEditor.scss"></style>

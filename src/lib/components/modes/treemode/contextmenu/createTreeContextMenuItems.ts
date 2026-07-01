@@ -7,6 +7,7 @@ import {
   faCopy,
   faCropAlt,
   faCut,
+  faEye,
   faFilter,
   faPaste,
   faPen,
@@ -56,7 +57,8 @@ export default function ({
   onConvert,
   onInsertAfter,
   onSort,
-  onTransform
+  onTransform,
+  onEditWithPreview
 }: {
   json: unknown
   documentState: DocumentState | undefined
@@ -77,6 +79,7 @@ export default function ({
   onInsertAfter: () => void
   onSort: () => void
   onTransform: () => void
+  onEditWithPreview: () => void
 }): ContextMenuItem[] {
   const hasJson = json !== undefined
   const hasSelection = !!selection
@@ -100,6 +103,12 @@ export default function ({
 
   const canEditValue =
     !readOnly && hasJson && selection !== undefined && singleItemSelected(selection)
+  const canEditWithPreview =
+    !readOnly &&
+    hasJson &&
+    selection !== undefined &&
+    singleItemSelected(selection) &&
+    !isObjectOrArray(focusValue)
   const canEnforceString = canEditValue && !isObjectOrArray(focusValue)
 
   const canCut = !readOnly && hasSelectionContents
@@ -162,7 +171,7 @@ export default function ({
             title: 'Edit the value (Double-click on the value)',
             disabled: !canEditValue
           },
-          width: '11em',
+          width: '14em',
           items: [
             {
               type: 'button',
@@ -171,6 +180,14 @@ export default function ({
               title: 'Edit the value (Double-click on the value)',
               onClick: () => onEditValue(),
               disabled: !canEditValue
+            },
+            {
+              type: 'button',
+              icon: faEye,
+              text: 'Edit with preview',
+              title: 'Open a preview window to edit the value with live rendering',
+              onClick: () => onEditWithPreview(),
+              disabled: !canEditWithPreview
             },
             {
               type: 'button',

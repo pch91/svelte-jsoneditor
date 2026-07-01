@@ -165,6 +165,7 @@
   import createTreeContextMenuItems from './contextmenu/createTreeContextMenuItems'
   import { toRecursiveSearchResults as toRecursiveSearchResults } from 'svelte-jsoneditor/logic/search.js'
   import { isTreeHistoryItem } from 'svelte-jsoneditor'
+  import { previewWindows } from '$lib/stores/previewWindows.js'
 
   const debug = createDebug('jsoneditor:TreeMode')
 
@@ -691,6 +692,35 @@
     } else {
       selection = createEditValueSelection(path)
     }
+  }
+
+  function handleEditWithPreview() {
+    if (readOnly || !selection) {
+      return
+    }
+
+    const path = getFocusPath(selection)
+    const value = getIn(json, path)
+    if (isObjectOrArray(value)) {
+      return
+    }
+
+    const pathLabel = compileJSONPointer(path)
+    const valueString = value !== undefined && value !== null ? String(value) : ''
+    const windowId = previewWindows.openWindow(pathLabel, valueString, path)
+
+    previewWindows.registerSaveCallback(windowId, (newValue: string) => {
+      const pointer = compileJSONPointer(path)
+      const updatedValue = stringConvert(newValue, parser)
+
+      handlePatch([
+        {
+          op: 'replace',
+          path: pointer,
+          value: updatedValue
+        }
+      ])
+    })
   }
 
   function handleToggleEnforceString() {
@@ -1695,7 +1725,8 @@
       onConvert: handleConvert,
 
       onSort: handleSortSelection,
-      onTransform: handleTransformSelection
+      onTransform: handleTransformSelection,
+      onEditWithPreview: handleEditWithPreview
     })
 
     const items = onRenderContextMenu(defaultItems) ?? defaultItems
