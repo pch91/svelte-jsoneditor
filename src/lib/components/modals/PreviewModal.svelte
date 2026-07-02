@@ -210,6 +210,7 @@
       <div class="jse-preview-spacer"></div>
 
       <button
+        type="button"
         class="jse-preview-save-btn"
         on:click={() => previewWindows.saveWindow(windowId)}
         title="Save the value back to the JSON document"
