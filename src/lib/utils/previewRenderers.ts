@@ -23,18 +23,24 @@ export function renderHtml(value: string): string {
   return `<div class="jse-preview-html">${value}</div>`
 }
 
-/** Simple Markdown to HTML renderer */
+/** Simple Markdown to HTML renderer — allows inline HTML (br, div, img, etc.) */
 export function renderMarkdown(value: string): string {
-  let html = escapeHtml(value)
+  // Strip dangerous tags but allow safe HTML
+  let html = value.replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object[\s\S]*?<\/object>/gi, '')
+    .replace(/<embed[\s\S]*?>/gi, '')
+    .replace(/on\w+\s*=\s*"[^"]*"/gi, '')  // strip event handlers
+    .replace(/on\w+\s*=\s*'[^']*'/gi, '')
 
-  // Code blocks (``` ... ```)
+  // Code blocks (``` ... ```) — escape content
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, lang, code) => {
     const langClass = lang ? ` class="language-${escapeHtml(lang)}"` : ''
-    return `<pre><code${langClass}>${code}</code></pre>`
+    return `<pre><code${langClass}>${escapeHtml(code)}</code></pre>`
   })
 
-  // Inline code (`...`)
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
+  // Inline code (`...`) — escape content
+  html = html.replace(/`([^`]+)`/g, (_match, code) => `<code>${escapeHtml(code)}</code>`)
 
   // Bold (**...** or __...__)
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
