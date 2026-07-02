@@ -54,89 +54,65 @@
   const validator = createAjvValidator({ schema })
 
   // ============================================================
-  // TAB + PANE STATE
+  // TAB + PANE STATE — flat parallel arrays for reliable Svelte bind:
   // ============================================================
-  interface EditorTab {
-    id: number; title: string; content: Content; mode: Mode
-    selection: JSONEditorSelection | undefined; ref: JSONEditor | undefined
-    revision: number
-  }
-  interface Pane {
-    id: number; activeTabId: number
-  }
+  interface Pane { id: number; tabIdx: number }
 
-  let tabIdCounter = 0
-  let paneIdCounter = 0
+  let tabIds: number[] = [1]
+  let tabTitles: string[] = ['Editor 1']
+  let tabContents: Content[] = [{ text: defaultJson, json: undefined }]
+  let tabModes: Mode[] = [Mode.tree]
+  let tabSelections: (JSONEditorSelection | undefined)[] = [undefined]
+  let tabRefs: (JSONEditor | undefined)[] = [undefined]
+  let tabRevisions: number[] = [0]
+  let nextTabId = 2
 
-  let tabs: EditorTab[] = [{
-    id: tabIdCounter++, title: 'Editor 1',
-    content: { text: defaultJson, json: undefined },
-    mode: Mode.tree, selection: undefined, ref: undefined, revision: 0
-  }]
-  let panes: Pane[] = [{ id: paneIdCounter++, activeTabId: tabs[0].id }]
+  let panes: Pane[] = [{ id: 1, tabIdx: 0 }]
+  let nextPaneId = 2
   let splitDir: 'vertical' | 'horizontal' = 'vertical'
 
-  function getTab(id: number) { return tabs.find(t => t.id === id)! }
+  function getTabIdx(tabId: number): number { return tabIds.indexOf(tabId) }
 
   // ---- Pane operations ----
   function addPane() {
     if (panes.length >= 4) return
-    // Find a tab not currently active in any pane
-    const usedIds = new Set(panes.map(p => p.activeTabId))
-    const nextTab = tabs.find(t => !usedIds.has(t.id))
-    const activeTabId = nextTab
-      ? nextTab.id
-      : (() => { // Create new empty tab
-          const t: EditorTab = {
-            id: tabIdCounter++, title: `Editor ${tabs.length + 1}`,
-            content: { text: '{}', json: undefined },
-            mode: Mode.tree, selection: undefined, ref: undefined, revision: 0
-          }
-          tabs = [...tabs, t]
-          return t.id
-        })()
-    panes = [...panes, { id: paneIdCounter++, activeTabId }]
+    const used = new Set(panes.map(p => p.tabIdx))
+    let idx = tabIds.findIndex((_, i) => !used.has(i))
+    if (idx === -1) { addTab(); idx = tabIds.length - 1 }
+    panes = [...panes, { id: nextPaneId++, tabIdx: idx }]
   }
-
-  function removeLastPane() {
-    if (panes.length <= 1) return
-    panes = panes.slice(0, -1)
-  }
-
-  function toggleSplitDir() {
-    splitDir = splitDir === 'vertical' ? 'horizontal' : 'vertical'
-  }
+  function removeLastPane() { if (panes.length > 1) panes = panes.slice(0, -1) }
+  function toggleSplitDir() { splitDir = splitDir === 'vertical' ? 'horizontal' : 'vertical' }
 
   // ---- Tab operations ----
   function addTab() {
-    const t: EditorTab = {
-      id: tabIdCounter++, title: `Editor ${tabs.length + 1}`,
-      content: { text: '{}', json: undefined },
-      mode: Mode.tree, selection: undefined, ref: undefined, revision: 0
-    }
-    tabs = [...tabs, t]
-    // Make it active in the first pane
-    panes[0].activeTabId = t.id
-    panes = [...panes]
+    tabIds = [...tabIds, nextTabId++]
+    tabTitles = [...tabTitles, `Editor ${tabIds.length}`]
+    tabContents = [...tabContents, { text: '{}', json: undefined }]
+    tabModes = [...tabModes, Mode.tree]
+    tabSelections = [...tabSelections, undefined]
+    tabRefs = [...tabRefs, undefined]
+    tabRevisions = [...tabRevisions, 0]
+    panes = panes.map((p, i) => i === 0 ? { ...p, tabIdx: tabIds.length - 1 } : p)
   }
 
   function closeTab(tabId: number) {
-    if (tabs.length <= 1) return
-    const idx = tabs.findIndex(t => t.id === tabId)
-    tabs = tabs.filter(t => t.id !== tabId)
-    // Update any pane that had this tab active
-    panes = panes.map(p => {
-      if (p.activeTabId === tabId) {
-        // Find another tab (prefer adjacent)
-        const newIdx = Math.min(idx, tabs.length - 1)
-        return { ...p, activeTabId: tabs[newIdx]?.id ?? p.activeTabId }
-      }
-      return p
-    })
+    const idx = getTabIdx(tabId)
+    if (idx === -1 || tabIds.length <= 1) return
+    tabIds = tabIds.filter((_, i) => i !== idx)
+    tabTitles = tabTitles.filter((_, i) => i !== idx)
+    tabContents = tabContents.filter((_, i) => i !== idx)
+    tabModes = tabModes.filter((_, i) => i !== idx)
+    tabSelections = tabSelections.filter((_, i) => i !== idx)
+    tabRefs = tabRefs.filter((_, i) => i !== idx)
+    tabRevisions = tabRevisions.filter((_, i) => i !== idx)
+    panes = panes.map(p => ({ ...p, tabIdx: p.tabIdx > idx ? p.tabIdx - 1 : p.tabIdx === idx ? Math.min(idx, tabIds.length - 1) : p.tabIdx }))
   }
 
-  function renameTab(id: number, title: string) {
-    tabs = tabs.map(t => t.id === id ? { ...t, title } : t)
+  function renameTab(tabId: number, title: string) {
+    const idx = getTabIdx(tabId)
+    if (idx === -1) return
+    tabTitles[idx] = title; tabTitles = [...tabTitles]
   }
 
   // ---- Drag tab between panes ----
@@ -144,17 +120,13 @@
     e.dataTransfer!.setData('text/plain', String(tabId))
     e.dataTransfer!.effectAllowed = 'move'
   }
-
-  function onPaneDragOver(e: DragEvent) {
-    e.preventDefault()
-    e.dataTransfer!.dropEffect = 'move'
-  }
-
+  function onPaneDragOver(e: DragEvent) { e.preventDefault(); e.dataTransfer!.dropEffect = 'move' }
   function onPaneDrop(e: DragEvent, paneId: number) {
     e.preventDefault()
     const tabId = Number(e.dataTransfer!.getData('text/plain'))
-    if (!tabId || !tabs.find(t => t.id === tabId)) return
-    panes = panes.map(p => p.id === paneId ? { ...p, activeTabId: tabId } : p)
+    const idx = getTabIdx(tabId)
+    if (idx === -1) return
+    panes = panes.map(p => p.id === paneId ? { ...p, tabIdx: idx } : p)
   }
 
   // ---- Settings ----
@@ -184,7 +156,7 @@
   $: selPath = pathParsers.find(p => p.id === $selectedPathId)?.value ?? pathParsers[0].value
   $: selValidator = $validateDoc ? validator : undefined
 
-  function refresh() { tabs.forEach(t => t.ref?.refresh()) }
+  function refresh() { tabRefs.forEach(r => r?.refresh()) }
 
   function customRenderValue(props: RenderValueProps): RenderValueComponentDescription[] {
     return props.isEditing ? [{ component: EditableValue, props }] : [{ component: ReadonlyValue, props }]
@@ -197,33 +169,21 @@
   // ---- Diff / Compare ----
   let diffMode = false
 
-  function bumpRevision(tabId: number) {
-    tabs = tabs.map(t => t.id === tabId ? { ...t, revision: t.revision + 1 } : t)
+  function bumpRevision(tabIdx: number) {
+    tabRevisions[tabIdx]++; tabRevisions = [...tabRevisions]
   }
 
-  function touched(tabId: number): number {
-    return tabs.find(t => t.id === tabId)?.revision ?? 0
-  }
-
-  $: diffRevision = touched(panes[0]?.activeTabId ?? 0) + touched(panes[1]?.activeTabId ?? 0)
+  $: diffRevision = tabRevisions[panes[0]?.tabIdx ?? 0] + tabRevisions[panes[1]?.tabIdx ?? 0]
   $: diffPaths = diffMode && panes.length >= 2 && diffRevision
-    ? computeDiff(
-        getTab(panes[0].activeTabId)?.content,
-        getTab(panes[1].activeTabId)?.content
-      )
+    ? computeDiff(tabContents[panes[0].tabIdx], tabContents[panes[1].tabIdx])
     : new Set<string>()
 
-  // Auto-switch to tree mode when comparing (so highlights are visible)
+  // Auto-switch to tree mode when comparing
   $: if (diffMode && panes.length >= 2) {
-    const t0 = getTab(panes[0].activeTabId)
-    const t1 = getTab(panes[1].activeTabId)
-    if (t0?.mode === Mode.text || t1?.mode === Mode.text) {
-      tabs = tabs.map(t => {
-        if ((t.id === t0?.id || t.id === t1?.id) && t.mode === Mode.text) {
-          return { ...t, mode: Mode.tree }
-        }
-        return t
-      })
+    for (const pane of panes.slice(0, 2)) {
+      if (tabModes[pane.tabIdx] === Mode.text) {
+        tabModes[pane.tabIdx] = Mode.tree; tabModes = [...tabModes]
+      }
     }
   }
 
@@ -274,50 +234,36 @@
     const reader = new FileReader()
     reader.onload = e => {
       if (!e.target) return
-      const tab = getTab(panes[0].activeTabId)
-      tab.content = { text: String(e.target.result), json: undefined }
-      tabs = [...tabs]
+      const i = panes[0].tabIdx
+      tabContents[i] = { text: String(e.target.result), json: undefined }; tabContents = [...tabContents]
     }
     reader.readAsText(file)
   }
 
   function downloadJson() {
-    const tab = getTab(panes[0].activeTabId)
-    const text = isJSONContent(tab.content)
-      ? (selParser.stringify(tab.content.json, null, $selectedIndent as number) ?? '')
-      : tab.content.text ?? ''
+    const i = panes[0].tabIdx
+    const c = tabContents[i]
+    const text = isJSONContent(c) ? (selParser.stringify(c.json, null, $selectedIndent as number) ?? '') : c.text ?? ''
     const blob = new Blob([text], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url; a.download = `${tab.title.replace(/\s+/g, '_')}.json`
+    a.href = url; a.download = `${tabTitles[i].replace(/\s+/g, '_')}.json`
     a.click(); URL.revokeObjectURL(url)
   }
 
   function openInWindow() {
-    const tab = getTab(panes[0].activeTabId)
+    const i = panes[0].tabIdx
     const w = window.open('', '_blank', 'width=900,height=700,left=100,top=50')
     if (!w) return
-    w.document.title = `${tab.title} — JSON Editor`
-
-    // Copy all stylesheets and styles from main document to popup
-    const mainDoc = document
-    for (const node of Array.from(mainDoc.querySelectorAll('link[rel="stylesheet"], style'))) {
+    w.document.title = `${tabTitles[i]} — JSON Editor`
+    for (const node of Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))) {
       w.document.head.appendChild(node.cloneNode(true))
     }
-    // Ensure body fills viewport
     w.document.body.className = $selectedTheme
     const style = w.document.createElement('style')
     style.textContent = 'body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden}'
     w.document.head.appendChild(style)
-
-    mount(JSONEditor, {
-      target: w.document.body,
-      props: {
-        content: tab.content,
-        mode: tab.mode,
-        mainMenuBar: true, navigationBar: true, statusBar: true
-      }
-    })
+    mount(JSONEditor, { target: w.document.body, props: { content: tabContents[i], mode: tabModes[i], mainMenuBar: true, navigationBar: true, statusBar: true } })
   }
 
   // ---- Samples ----
@@ -329,10 +275,9 @@
       empty: { text: '', json: undefined },
       invalid: { text: '[1,2,3', json: undefined }
     }
-    const s = samples[name]
-    if (!s) return
-    const tab = getTab(panes[0].activeTabId)
-    tab.content = s; tabs = [...tabs]
+    const s = samples[name]; if (!s) return
+    const i = panes[0].tabIdx
+    tabContents[i] = s; tabContents = [...tabContents]
   }
 </script>
 
@@ -406,26 +351,25 @@
     <div class="editor-area">
       <!-- TAB BAR -->
       <nav class="tab-bar">
-        {#each tabs as tab}
+        {#each tabIds as id, i (id)}
           <button
-            class="tab" class:active={panes.some(p => p.activeTabId === tab.id)}
-            on:click={() => { panes = panes.map((p, i) => i === 0 ? { ...p, activeTabId: tab.id } : p) }}
-            on:dblclick={() => { const n = prompt('Rename:', tab.title); if (n) renameTab(tab.id, n) }}
+            class="tab" class:active={panes.some(p => p.tabIdx === i)}
+            on:click={() => { panes = panes.map((p, j) => j === 0 ? { ...p, tabIdx: i } : p) }}
+            on:dblclick={() => { const n = prompt('Rename:', tabTitles[i]); if (n) renameTab(id, n) }}
             draggable="true"
-            on:dragstart={(e) => onTabDragStart(e, tab.id)}
+            on:dragstart={(e) => onTabDragStart(e, id)}
           >
-            <span class="tab-label">{tab.title}</span>
-            {#if tabs.length > 1}
-              <span class="tab-close" on:click|stopPropagation={() => closeTab(tab.id)}>×</span>
+            <span class="tab-label">{tabTitles[i]}</span>
+            {#if tabIds.length > 1}
+              <span class="tab-close" on:click|stopPropagation={() => closeTab(id)}>×</span>
             {/if}
           </button>
         {/each}
         <button class="tab tab-add" on:click={addTab} title="New tab">+</button>
         <div class="tab-mode">
           {#each Object.values(Mode) as m}
-            {@const active = getTab(panes[0].activeTabId)}
-            <button class="mode-btn" class:active={active?.mode === m}
-              on:click={() => { if (active) { tabs = tabs.map(t => t.id === active.id ? { ...t, mode: m } : t) } }}>{m}</button>
+            <button class="mode-btn" class:active={tabModes[panes[0].tabIdx] === m}
+              on:click={() => { tabModes[panes[0].tabIdx] = m; tabModes = [...tabModes] }}>{m}</button>
           {/each}
         </div>
       </nav>
@@ -433,43 +377,41 @@
       <!-- PANES -->
       <div class="editor-panes" class:split-h={splitDir === 'horizontal' && panes.length > 1} class:split-v={splitDir === 'vertical' && panes.length > 1}>
         {#each panes as pane (pane.id)}
-          {@const tab = getTab(pane.activeTabId)}
+          {@const i = pane.tabIdx}
           <div class="editor-pane"
             on:dragover={onPaneDragOver}
             on:drop={(e) => onPaneDrop(e, pane.id)}
           >
             {#if panes.length > 1}
               <div class="pane-tab-strip">
-                {#each tabs as t}
-                  <button class="pane-tab" class:active={t.id === pane.activeTabId}
-                    on:click={() => { panes = panes.map(p => p.id === pane.id ? { ...p, activeTabId: t.id } : p) }}
-                  >{t.title}</button>
+                {#each tabIds as tid, j (tid)}
+                  <button class="pane-tab" class:active={j === i}
+                    on:click={() => { panes = panes.map(p => p.id === pane.id ? { ...p, tabIdx: j } : p) }}
+                  >{tabTitles[j]}</button>
                 {/each}
               </div>
             {/if}
             <div class="editor-wrapper">
-              {#if tab}
-                <form novalidate action="/" class="editor-form">
-                  <JSONEditor
-                    bind:this={tab.ref} bind:content={tab.content}
-                    bind:selection={tab.selection} mode={tab.mode}
-                    mainMenuBar={$mainMenuBar} navigationBar={$navigationBar}
-                    statusBar={$statusBar} askToFormat={$askToFormat}
-                    escapeControlCharacters={$escapeCtrl}
-                    escapeUnicodeCharacters={$escapeUni}
-                    flattenColumns={$flatten} readOnly={$readOnly}
-                    indentation={$selectedIndent} tabSize={$tabSz}
-                    parser={selParser} pathParser={selPath}
-                    validator={selValidator}
-                    queryLanguages={queryLangs} bind:queryLanguageId={queryLangId}
-                    onRenderValue={$customRenderer ? customRenderValue : renderValue}
-                    onClassName={diffMode ? onClassNameDiff : undefined}
-                    onChange={() => bumpRevision(tab.id)}
-                    onChangeMode={(m: Mode) => { tabs = tabs.map(t => t.id === tab.id ? { ...t, mode: m } : t) }}
-                    {onRenderMenu} {onRenderContextMenu} {onChangeQueryLanguage}
-                  />
-                </form>
-              {/if}
+              <form novalidate action="/" class="editor-form">
+                <JSONEditor
+                  bind:this={tabRefs[i]} bind:content={tabContents[i]}
+                  bind:selection={tabSelections[i]} mode={tabModes[i]}
+                  mainMenuBar={$mainMenuBar} navigationBar={$navigationBar}
+                  statusBar={$statusBar} askToFormat={$askToFormat}
+                  escapeControlCharacters={$escapeCtrl}
+                  escapeUnicodeCharacters={$escapeUni}
+                  flattenColumns={$flatten} readOnly={$readOnly}
+                  indentation={$selectedIndent} tabSize={$tabSz}
+                  parser={selParser} pathParser={selPath}
+                  validator={selValidator}
+                  queryLanguages={queryLangs} bind:queryLanguageId={queryLangId}
+                  onRenderValue={$customRenderer ? customRenderValue : renderValue}
+                  onClassName={diffMode ? onClassNameDiff : undefined}
+                  onChange={() => bumpRevision(i)}
+                  onChangeMode={(m: Mode) => { tabModes[i] = m; tabModes = [...tabModes] }}
+                  {onRenderMenu} {onRenderContextMenu} {onChangeQueryLanguage}
+                />
+              </form>
             </div>
           </div>
         {/each}
@@ -477,10 +419,10 @@
 
       <!-- STATUS -->
       <footer class="status-bar">
-        <span>{getTab(panes[0].activeTabId)?.mode ?? '—'}</span>
+        <span>{tabModes[panes[0].tabIdx]}</span>
         <span>{queryLangId}</span>
         <span class="sb-spacer"></span>
-        <span>Tabs: {tabs.length} · Panes: {panes.length}</span>
+        <span>Tabs: {tabIds.length} · Panes: {panes.length}</span>
       </footer>
     </div>
   </div>
