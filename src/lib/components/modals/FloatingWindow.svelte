@@ -171,6 +171,7 @@
       <span class="jse-floating-title">{title}</span>
       <div class="jse-floating-actions">
         <button
+          type="button"
           class="jse-floating-btn"
           on:click={handleMinimize}
           on:mousedown|stopPropagation
@@ -180,6 +181,7 @@
           <Icon data={faWindowMinimize} scale={0.7} />
         </button>
         <button
+          type="button"
           class="jse-floating-btn"
           on:click={handleMaximize}
           on:mousedown|stopPropagation
@@ -189,6 +191,7 @@
           <Icon data={maximized ? faWindowRestore : faWindowMaximize} scale={0.7} />
         </button>
         <button
+          type="button"
           class="jse-floating-btn jse-floating-close"
           on:click={handleClose}
           on:mousedown|stopPropagation
