@@ -30,31 +30,36 @@ export function renderMarkdown(value: string): string {
     .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
     .replace(/<object[\s\S]*?<\/object>/gi, '')
     .replace(/<embed[\s\S]*?>/gi, '')
-    .replace(/on\w+\s*=\s*"[^"]*"/gi, '')  // strip event handlers
+    .replace(/on\w+\s*=\s*"[^"]*"/gi, '')
     .replace(/on\w+\s*=\s*'[^']*'/gi, '')
 
-  // Code blocks (``` ... ```) — escape content
+  // Protect code blocks and inline code with placeholders
+  const codeBlocks: string[] = []
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, lang, code) => {
+    const idx = codeBlocks.length
     const langClass = lang ? ` class="language-${escapeHtml(lang)}"` : ''
-    return `<pre><code${langClass}>${escapeHtml(code)}</code></pre>`
+    codeBlocks.push(`<pre><code${langClass}>${escapeHtml(code)}</code></pre>`)
+    return `\x00CODEBLOCK${idx}\x00`
   })
 
-  // Inline code (`...`) — escape content
-  html = html.replace(/`([^`]+)`/g, (_match, code) => `<code>${escapeHtml(code)}</code>`)
+  const inlineCodes: string[] = []
+  html = html.replace(/`([^`]+)`/g, (_match, code) => {
+    const idx = inlineCodes.length
+    inlineCodes.push(`<code>${escapeHtml(code)}</code>`)
+    return `\x00INLINECODE${idx}\x00`
+  })
 
-  // Bold (**...** or __...__)
+  // Bold
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>')
 
-  // Italic (*...* or _..._)
+  // Italic
   html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
   html = html.replace(/_([^_]+)_/g, '<em>$1</em>')
 
-  // Images (![alt](url))
+  // Images then links (image first to avoid ![ being treated as link)
   html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />')
-
-  // Links ([text](url))
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+  html = html.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
 
   // Headings
   html = html.replace(/^###### (.+)$/gm, '<h6>$1</h6>')
@@ -69,7 +74,6 @@ export function renderMarkdown(value: string): string {
 
   // Unordered lists
   html = html.replace(/^[\*\-] (.+)$/gm, '<li>$1</li>')
-  // Wrap consecutive <li> in <ul>
   html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
 
   // Ordered lists
@@ -78,17 +82,17 @@ export function renderMarkdown(value: string): string {
   // Blockquotes
   html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>')
 
-  // Paragraphs: wrap lines that are not already wrapped in block elements
+  // Paragraphs
   html = html.replace(/^(?!<[a-z]|<\/?[a-z]|<hr|<ul|<ol|<li|<blockquote)(.+)$/gm, '<p>$1</p>')
-
-  // Clean up empty paragraphs
   html = html.replace(/<p>\s*<\/p>/g, '')
-
-  // Clean up consecutive blockquotes
   html = html.replace(/((?:<blockquote>.*<\/blockquote>\n?)+)/g, (match) => {
     const inner = match.replace(/<\/?blockquote>/g, '')
     return `<blockquote>${inner}</blockquote>`
   })
+
+  // Restore code blocks and inline code
+  html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, idx) => codeBlocks[Number(idx)] || '')
+  html = html.replace(/\x00INLINECODE(\d+)\x00/g, (_match, idx) => inlineCodes[Number(idx)] || '')
 
   return `<div class="jse-preview-markdown">${html}</div>`
 }
