@@ -139,22 +139,6 @@
     tabs = tabs.map(t => t.id === id ? { ...t, title } : t)
   }
 
-  function switchMode(tab: EditorTab, newMode: Mode) {
-    const content = { ...tab.content }
-    if (newMode !== Mode.text && tab.mode === Mode.text && content.text) {
-      // switching from text to tree/table: parse text into JSON
-      try {
-        content.json = JSON.parse(content.text)
-        content.text = undefined
-      } catch { /* keep as text if invalid */ }
-    } else if (newMode === Mode.text && tab.mode !== Mode.text && content.json !== undefined) {
-      // switching from tree/table to text: stringify JSON
-      content.text = JSON.stringify(content.json, null, 2)
-      content.json = undefined
-    }
-    tabs = tabs.map(t => t.id === tab.id ? { ...t, mode: newMode, content } : t)
-  }
-
   // ---- Drag tab between panes ----
   function onTabDragStart(e: DragEvent, tabId: number) {
     e.dataTransfer!.setData('text/plain', String(tabId))
@@ -441,7 +425,7 @@
           {#each Object.values(Mode) as m}
             {@const active = getTab(panes[0].activeTabId)}
             <button class="mode-btn" class:active={active?.mode === m}
-              on:click={() => { if (active) switchMode(active, m) }}>{m}</button>
+              on:click={() => { if (active) { tabs = tabs.map(t => t.id === active.id ? { ...t, mode: m } : t) } }}>{m}</button>
           {/each}
         </div>
       </nav>
@@ -481,7 +465,7 @@
                     onRenderValue={$customRenderer ? customRenderValue : renderValue}
                     onClassName={diffMode ? onClassNameDiff : undefined}
                     onChange={() => bumpRevision(tab.id)}
-                    onChangeMode={(m: Mode) => { switchMode(tab, m) }}
+                    onChangeMode={(m: Mode) => { tabs = tabs.map(t => t.id === tab.id ? { ...t, mode: m } : t) }}
                     {onRenderMenu} {onRenderContextMenu} {onChangeQueryLanguage}
                   />
                 </form>
