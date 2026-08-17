@@ -11,6 +11,8 @@ export interface RequestHistoryEntry {
   durationMs: number
   sizeBytes: number
   timestamp: number
+  /** Whether the response was fetched via a CORS proxy */
+  viaProxy?: boolean
   /** Response body (truncated to a max size), so history clicks can reopen it. */
   responseText?: string
 }

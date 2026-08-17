@@ -36,6 +36,82 @@ export function parseHeadersText(text: string): Record<string, string> {
   return headers
 }
 
+// ---- Query params ----
+
+export interface QueryParam {
+  key: string
+  value: string
+  enabled: boolean
+}
+
+/** Parse the query string of a URL into key/value rows. */
+export function parseQueryParams(url: string): QueryParam[] {
+  const question = url.indexOf('?')
+  if (question === -1) return []
+  const query = url.slice(question + 1)
+  if (!query) return []
+
+  return query.split('&').map((pair) => {
+    const eq = pair.indexOf('=')
+    const rawKey = eq === -1 ? pair : pair.slice(0, eq)
+    const rawValue = eq === -1 ? '' : pair.slice(eq + 1)
+    let key = rawKey
+    let value = rawValue
+    try {
+      key = decodeURIComponent(rawKey)
+    } catch {
+      // keep raw
+    }
+    try {
+      value = decodeURIComponent(rawValue)
+    } catch {
+      // keep raw
+    }
+    return { key, value, enabled: true }
+  })
+}
+
+/** Replace the query part of a URL with the given (enabled) params, properly encoded. */
+export function buildUrlWithQuery(url: string, params: QueryParam[]): string {
+  const base = url.split('?')[0]
+  const query = params
+    .filter((param) => param.enabled && param.key.trim() !== '')
+    .map((param) => `${encodeURIComponent(param.key.trim())}=${encodeURIComponent(param.value)}`)
+    .join('&')
+  return query ? `${base}?${query}` : base
+}
+
+// ---- Header rows ----
+
+export interface HeaderRow {
+  key: string
+  value: string
+  enabled: boolean
+}
+
+/** Parse "Key: value" header text into editable rows (all enabled). */
+export function headersToRows(text: string): HeaderRow[] {
+  const headers = parseHeadersText(text)
+  return Object.entries(headers).map(([key, value]) => ({
+    key,
+    value: String(value),
+    enabled: true
+  }))
+}
+
+/** Serialize header rows back into "Key: value" text (enabled rows only). */
+export function rowsToHeadersText(rows: HeaderRow[]): string {
+  return rows
+    .filter((row) => row.enabled && row.key.trim() !== '')
+    .map((row) => `${row.key.trim()}: ${row.value}`)
+    .join('\n')
+}
+
+/** Build the Basic Authorization header value (Base64 of "user:pass"). */
+export function encodeBasicAuth(username: string, password: string): string {
+  return btoa(`${username}:${password}`)
+}
+
 /** Build the proxied URL from a template. Supports `{url}` placeholders. */
 export function proxyUrl(url: string, proxyTemplate: string): string {
   const template = proxyTemplate.trim()

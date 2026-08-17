@@ -25,11 +25,18 @@
     type RenderValueProps
   } from 'svelte-jsoneditor'
   import { useLocalStorage } from '$lib/utils/localStorageUtils.js'
+  import PreviewModal from '$lib/components/modals/PreviewModal.svelte'
+  import type { EditWithPreviewProps, JSONEditorModalCallback } from '$lib/types.js'
   import { range } from 'lodash-es'
   import { mount, onMount, tick } from 'svelte'
   import { parse, stringify } from 'lossless-json'
   import { parseJSONPath, stringifyJSONPath } from '$lib/utils/pathUtils.js'
-  import { compileJSONPointer, parseJSONPointer, type JSONPath } from 'immutable-json-patch'
+  import {
+    compileJSONPointer,
+    immutableJSONPatch,
+    parseJSONPointer,
+    type JSONPath
+  } from 'immutable-json-patch'
   import { loadWorkspace, saveWorkspace } from './workspaceStorage.js'
   import CommandPalette from './components/CommandPalette.svelte'
   import FolderTree from './components/FolderTree.svelte'
@@ -62,15 +69,22 @@
     type SplitLeaf
   } from './splitLayout.js'
   import {
+    buildUrlWithQuery,
+    encodeBasicAuth,
     extractValueByPath,
     formatBytes,
+    headersToRows,
     parseCaptureList,
     parseHeadersText,
+    parseQueryParams,
     proxyUrl,
     relativeTime,
     resolveVariables,
     responseName,
-    truncateText
+    rowsToHeadersText,
+    truncateText,
+    type HeaderRow,
+    type QueryParam
   } from './requestsUtils.js'
   import {
     loadRequestHistory,
@@ -183,6 +197,21 @@
   let reqHeaders = ''
   let reqBody = ''
   let reqSending = false
+  let reqActiveTab: 'params' | 'headers' | 'body' | 'auth' | 'env' = 'params'
+  let reqParams: QueryParam[] = []
+  let reqHeaderRows: HeaderRow[] = []
+  let reqBodyType: 'none' | 'json' | 'text' = 'json'
+  let reqAuthType: 'none' | 'bearer' | 'basic' | 'apikey' = 'none'
+  let authBearerToken = ''
+  let authBasicUser = ''
+  let authBasicPass = ''
+  let authApiKeyName = 'X-API-Key'
+  let authApiKeyValue = ''
+  let reqResponseText = ''
+  const chainOpen = useLocalStorage('svelte-jsoneditor-demo-chain-open', true)
+  const historyOpen = useLocalStorage('svelte-jsoneditor-demo-history-open', true)
+  const sidebarAdvancedOpen = useLocalStorage('svelte-jsoneditor-demo-sidebar-advanced', false)
+  const sidebarSamplesOpen = useLocalStorage('svelte-jsoneditor-demo-sidebar-samples', false)
   let reqResult:
     | {
         status: number
@@ -201,10 +230,40 @@
   // ---- Environments, tokens and execution chain ----
   const environments = useLocalStorage('svelte-jsoneditor-demo-environments', {})
   const activeEnvName = useLocalStorage('svelte-jsoneditor-demo-active-env', '')
-  const requestChain = useLocalStorage('svelte-jsoneditor-demo-chain', [])
+
+  /**
+   * Pre-registered example chain (Rick and Morty API):
+   * step 1 uses the env variable `{{baseUrl}}` and captures `id` into `{{charId}}`;
+   * the following steps reuse that captured value in the URL and in a header.
+   */
+  const EXAMPLE_CHAIN: ChainItem[] = [
+    {
+      method: 'GET',
+      url: '{{baseUrl}}/character/1',
+      headers: '',
+      body: '',
+      captures: [{ path: 'id', name: 'charId' }]
+    },
+    {
+      method: 'GET',
+      url: '{{baseUrl}}/episode/{{charId}}',
+      headers: '',
+      body: '',
+      captures: [{ path: 'name', name: 'episodeName' }]
+    },
+    {
+      method: 'GET',
+      url: '{{baseUrl}}/location/{{charId}}',
+      headers: 'X-Character-Id: {{charId}}',
+      body: '',
+      captures: []
+    }
+  ]
+  const requestChain = useLocalStorage('svelte-jsoneditor-demo-chain', EXAMPLE_CHAIN)
   let tokenUrl = ''
   let tokenPath = 'access_token'
   let chainRunning = false
+  let chainRunningIndex = -1
   let chainResults: Array<{
     method: string
     url: string
@@ -222,8 +281,65 @@
   let envTabId: number | undefined
   let bodyTabId: number | undefined
 
+  // ---- Edit-in-tab support: preview windows and nested content open as tabs ----
+  let previewTabInfo = new Map<number, { pathLabel: string; onSave: (value: string) => void }>()
+  let nestedTabInfo = new Map<
+    number,
+    { pointer: string; sourceTabId: number; onClose: () => void }
+  >()
+
+  // ---- Preserve tree expansion across tab switches ----
+  let tabExpandedPaths = new Map<number, JSONPath[]>()
+
+  /**
+   * Apply a JSON patch (replace at pointer) to a source tab's CONTENT directly,
+   * so it works even when that tab's editor is not mounted (it is unmounted
+   * while another tab is active in the same pane).
+   */
+  function applyReplaceToSource(sourceTabId: number, pointer: string, value: unknown) {
+    const sourceIdx = getTabIdx(sourceTabId)
+    if (sourceIdx === -1) return
+    const sourceContent = tabContents[sourceIdx]
+    if (!sourceContent) return
+
+    let json: unknown
+    if (isJSONContent(sourceContent) && sourceContent.json !== undefined) {
+      json = sourceContent.json
+    } else if (isTextContent(sourceContent)) {
+      try {
+        json = JSON.parse(sourceContent.text ?? 'null')
+      } catch {
+        return
+      }
+    } else {
+      return
+    }
+
+    const patched = immutableJSONPatch(json, [{ op: 'replace', path: pointer, value }])
+    tabContents[sourceIdx] = { text: JSON.stringify(patched, null, 2), json: undefined }
+    tabContents = [...tabContents]
+    tabRevisions[sourceIdx]++
+    tabRevisions = [...tabRevisions]
+    updateDirtyFlags()
+    scheduleAutosave()
+    showDiskSaveLabel(`Saved back to the document at "${pointer}"`)
+  }
+
   $: activeEnv = $activeEnvName ? ($environments[$activeEnvName] ?? {}) : {}
   $: chainItems = ($requestChain ?? []) as ChainItem[]
+  $: urlSuggestions = [...new Set(reqHistory.map((entry) => entry.url).filter(Boolean))].slice(0, 8)
+  $: reqBodyInvalid = reqBodyType === 'json' && reqBody.trim() !== '' && !isValidJsonText(reqBody)
+  $: bodyIgnored =
+    reqBodyType !== 'none' && reqBody.trim() !== '' && ['GET', 'HEAD'].includes(reqMethod)
+
+  function isValidJsonText(text: string): boolean {
+    try {
+      JSON.parse(text)
+      return true
+    } catch {
+      return false
+    }
+  }
 
   $: layoutRects = computeRects(layout)
   $: layoutLeaves = collectLeaves(layout)
@@ -235,7 +351,28 @@
   function setActiveLeafTab(idx: number) {
     const leaf = getActiveLeaf()
     if (leaf.tabIdx !== idx) {
+      // save the expansion state of the outgoing tab (its editor will be unmounted)
+      const prevTabId = tabIds[leaf.tabIdx]
+      const prevRef = tabRefs[leaf.tabIdx]
+      if (prevTabId !== undefined && prevRef) {
+        try {
+          const paths = prevRef.getExpandedPaths()
+          if (paths.length > 0) tabExpandedPaths.set(prevTabId, paths)
+        } catch {
+          // method may be missing in older builds
+        }
+      }
+
       layout = replaceLeaf(layout, leaf.id, { ...leaf, tabIdx: idx })
+
+      // restore the expansion state of the incoming tab once its editor is mounted
+      void tick().then(() => {
+        const ref = tabRefs[idx]
+        const paths = tabExpandedPaths.get(tabIds[idx])
+        if (ref && paths && paths.length > 0) {
+          ref.expandPaths(paths)
+        }
+      })
     }
   }
 
@@ -323,6 +460,12 @@
     }
     if (envTabId === tabId) envTabId = undefined
     if (bodyTabId === tabId) bodyTabId = undefined
+    if (previewTabInfo.has(tabId)) previewTabInfo.delete(tabId)
+    if (nestedTabInfo.has(tabId)) {
+      nestedTabInfo.get(tabId)?.onClose()
+      nestedTabInfo.delete(tabId)
+    }
+    if (tabExpandedPaths.has(tabId)) tabExpandedPaths.delete(tabId)
     updateDirtyFlags()
     scheduleAutosave()
     remapLeafTabs((t) => (t > idx ? t - 1 : t === idx ? Math.min(idx, tabIds.length - 1) : t))
@@ -351,6 +494,18 @@
       if (key !== tabId) fileHandles.delete(key)
     }
     void saveFileHandles(fileHandles)
+    for (const key of [...previewTabInfo.keys()]) {
+      if (key !== tabId) previewTabInfo.delete(key)
+    }
+    for (const key of [...nestedTabInfo.keys()]) {
+      if (key !== tabId) {
+        nestedTabInfo.get(key)?.onClose()
+        nestedTabInfo.delete(key)
+      }
+    }
+    for (const key of [...tabExpandedPaths.keys()]) {
+      if (key !== tabId) tabExpandedPaths.delete(key)
+    }
     remapLeafTabs(() => 0)
     updateDirtyFlags()
     scheduleAutosave()
@@ -365,6 +520,9 @@
     tabRefs = [undefined]
     tabRevisions = [0]
     tabLastSavedText = ['{}']
+    previewTabInfo.clear()
+    nestedTabInfo.clear()
+    tabExpandedPaths.clear()
     remapLeafTabs(() => 0)
     if (fileHandles.size > 0) {
       fileHandles.clear()
@@ -559,6 +717,18 @@
     scheduleAutosave()
     if (envTabId !== undefined && tabIds[tabIdx] === envTabId) syncEnvFromTab(tabIdx)
     if (bodyTabId !== undefined && tabIds[tabIdx] === bodyTabId) syncBodyFromTab(tabIdx)
+
+    // Nested edit tabs: apply changes back to the source document live
+    const nested = nestedTabInfo.get(tabIds[tabIdx])
+    if (nested) {
+      try {
+        const parsed: unknown = JSON.parse(getTabText(tabIdx))
+        applyReplaceToSource(nested.sourceTabId, nested.pointer, parsed)
+      } catch {
+        // invalid JSON while typing in the nested tab — wait until it parses
+      }
+    }
+
     if ($validateDoc) void collectProblems()
   }
 
@@ -1032,6 +1202,48 @@
     })
   }
 
+  /** Extract the selected JSON into a NEW tab, keeping the original document untouched. */
+  function handleExtractToNewTab(extractedValue: unknown, pointer: string) {
+    const text = JSON.stringify(extractedValue, null, 2)
+    const suffix = (pointer || 'root').replace(/^\/+/, '').replace(/[^a-zA-Z0-9_.-]+/g, '-')
+    const name = `extract-${suffix || 'root'}.json`
+    addTabWithContent(name, text, guessMode(name, text))
+    showDiskSaveLabel(`Extracted "${pointer || '/'}" into a new tab`)
+  }
+
+  /** Open a primitive value in a preview tab (with the modal's full UI inline). */
+  function handleEditWithPreview(props: EditWithPreviewProps) {
+    const sourceTabId = tabIds[getActiveLeaf().tabIdx]
+    const pointer = compileJSONPointer(props.path)
+    const idx = addTabWithContent(`Preview: ${props.pathLabel}`, props.value, Mode.text)
+    previewTabInfo.set(tabIds[idx], {
+      pathLabel: props.pathLabel,
+      onSave: (value: string) => {
+        // keep the value as a string unless it parses as another JSON type
+        let updated: unknown = value
+        try {
+          updated = JSON.parse(value)
+        } catch {
+          // not valid JSON — keep the raw string
+        }
+        applyReplaceToSource(sourceTabId, pointer, updated)
+      }
+    })
+    showDiskSaveLabel(`Preview tab opened: "${props.pathLabel}"`)
+  }
+
+  /** Open nested object/array content in a regular tab, syncing edits back live. */
+  function handleEditNestedContent(props: JSONEditorModalCallback) {
+    const pointer = compileJSONPointer(props.path)
+    const sourceTabId = tabIds[getActiveLeaf().tabIdx]
+    const text = isJSONContent(props.content)
+      ? JSON.stringify(props.content.json, null, 2)
+      : (props.content.text ?? '{}')
+    const idx = addTabWithContent(`Edit: ${pointer || '(root)'}`, text, Mode.tree)
+    nestedTabInfo.set(tabIds[idx], { pointer, sourceTabId, onClose: props.onClose })
+    showDiskSaveLabel(`Nested content tab opened: "${pointer || '/'}"`)
+  }
+
   // ---- Samples ----
   function loadSample(name: string) {
     const samples: Record<string, Content> = {
@@ -1103,14 +1315,33 @@
     }
   }
 
-  /** Add application/json automatically when a body is sent without a Content-Type. */
+  /** Add a default Content-Type automatically when a body is sent without one. */
   function withContentType(
     headers: Record<string, string>,
-    body: string | undefined
+    body: string | undefined,
+    contentType = 'application/json'
   ): Record<string, string> {
     if (!body) return headers
     const has = Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')
-    return has ? headers : { ...headers, 'Content-Type': 'application/json' }
+    return has ? headers : { ...headers, 'Content-Type': contentType }
+  }
+
+  /** Build the Authorization (or API-key) headers from the Auth section. */
+  function buildAuthHeaders(env: Record<string, string>): Record<string, string> {
+    const auth: Record<string, string> = {}
+    if (reqAuthType === 'bearer') {
+      const token = resolveVariables(authBearerToken, env).resolved.trim()
+      if (token) auth.Authorization = `Bearer ${token}`
+    } else if (reqAuthType === 'basic') {
+      const user = resolveVariables(authBasicUser, env).resolved
+      const pass = resolveVariables(authBasicPass, env).resolved
+      if (user || pass) auth.Authorization = `Basic ${encodeBasicAuth(user, pass)}`
+    } else if (reqAuthType === 'apikey') {
+      const name = resolveVariables(authApiKeyName, env).resolved.trim()
+      const value = resolveVariables(authApiKeyValue, env).resolved
+      if (name && value) auth[name] = value
+    }
+    return auth
   }
 
   /** Try the URL directly, then fall back to the CORS proxy when configured. */
@@ -1137,17 +1368,32 @@
     if (!url || reqSending) return
     reqSending = true
     reqResult = undefined
+    reqResponseText = ''
     const started = performance.now()
     const method = reqMethod
     const env = activeEnv as Record<string, string>
     const resolvedUrl = resolveVariables(url, env)
     const resolvedHeaders = resolveVariables(reqHeaders, env)
     const resolvedBody = resolveVariables(reqBody, env)
+    const authHeaders = buildAuthHeaders(env)
+    const authValues = Object.values(authHeaders).join(' ')
+    const authMissing = resolveVariables(authValues, env).missing
     const missing = [
-      ...new Set([...resolvedUrl.missing, ...resolvedHeaders.missing, ...resolvedBody.missing])
+      ...new Set([
+        ...resolvedUrl.missing,
+        ...resolvedHeaders.missing,
+        ...resolvedBody.missing,
+        ...authMissing
+      ])
     ]
-    const body = ['GET', 'HEAD'].includes(method) ? undefined : resolvedBody.resolved
-    const headers = withContentType(parseHeadersText(resolvedHeaders.resolved), body)
+    const hasBody = reqBodyType !== 'none' && !['GET', 'HEAD'].includes(method)
+    const body = hasBody ? resolvedBody.resolved : undefined
+    const contentType = reqBodyType === 'text' ? 'text/plain' : 'application/json'
+    const headers = withContentType(
+      { ...parseHeadersText(resolvedHeaders.resolved), ...authHeaders },
+      body,
+      contentType
+    )
     const proxyTemplate = String($corsProxy).trim()
 
     try {
@@ -1159,6 +1405,7 @@
       const durationMs = Math.round(performance.now() - started)
       const text = await res.text()
       const sizeBytes = new Blob([text]).size
+      reqResponseText = truncateText(text, 64 * 1024)
       reqResult = {
         status: res.status,
         statusText: res.statusText,
@@ -1178,6 +1425,7 @@
         durationMs,
         sizeBytes,
         timestamp: Date.now(),
+        viaProxy,
         responseText: truncateText(text, MAX_RESPONSE_HISTORY)
       }
       reqHistory = [entry, ...reqHistory].slice(0, 20)
@@ -1187,8 +1435,8 @@
     } catch (err) {
       reqResult = {
         error: proxyTemplate
-          ? 'Request failed even via the proxy. Check the URL or the proxy configuration.'
-          : 'Request failed — the API may block browser access (CORS) or the network is unreachable. Configure a CORS proxy in Storage settings.'
+          ? `Request failed even via the proxy (${proxyTemplate}). Check the URL or the proxy configuration.`
+          : 'Request failed — the API may block browser access (CORS) or the network is unreachable. Choose a proxy in the header bar.'
       }
     }
     reqSending = false
@@ -1199,7 +1447,70 @@
     reqUrl = entry.url
     reqHeaders = entry.headers
     reqBody = entry.body
+    reqParams = parseQueryParams(entry.url)
+    reqHeaderRows = headersToRows(entry.headers)
+    reqBodyType = entry.body ? 'json' : 'none'
   }
+
+  // ---- Params / Headers row editors ----
+  function onUrlInput() {
+    reqParams = parseQueryParams(reqUrl)
+  }
+
+  function onParamChange() {
+    reqParams = [...reqParams]
+    reqUrl = buildUrlWithQuery(reqUrl, reqParams)
+  }
+
+  function addParam() {
+    reqParams = [...reqParams, { key: '', value: '', enabled: true }]
+  }
+
+  function removeParam(index: number) {
+    reqParams = reqParams.filter((_, i) => i !== index)
+    reqUrl = buildUrlWithQuery(reqUrl, reqParams)
+  }
+
+  function onHeaderRowChange() {
+    reqHeaderRows = [...reqHeaderRows]
+    reqHeaders = rowsToHeadersText(reqHeaderRows)
+  }
+
+  function addHeaderRow() {
+    reqHeaderRows = [...reqHeaderRows, { key: '', value: '', enabled: true }]
+  }
+
+  function removeHeaderRow(index: number) {
+    reqHeaderRows = reqHeaderRows.filter((_, i) => i !== index)
+    reqHeaders = rowsToHeadersText(reqHeaderRows)
+  }
+
+  const HEADER_SUGGESTIONS = [
+    'Accept',
+    'Authorization',
+    'Cache-Control',
+    'Content-Type',
+    'Cookie',
+    'Origin',
+    'Referer',
+    'User-Agent'
+  ]
+  const PROXY_PLACEHOLDER = 'https://my-proxy/?url={url}'
+  const BEARER_PLACEHOLDER = 'token (use {{token}} for the env token)'
+  const TOKEN_VAR = '{{token}}'
+  const REQ_TABS: Array<['params' | 'headers' | 'body' | 'auth' | 'env', string]> = [
+    ['params', 'Params'],
+    ['headers', 'Headers'],
+    ['body', 'Body'],
+    ['auth', 'Auth'],
+    ['env', 'Env']
+  ]
+  const AUTH_METHODS: Array<['none' | 'bearer' | 'basic' | 'apikey', string, string]> = [
+    ['none', 'None', 'No authentication header is sent'],
+    ['bearer', 'Bearer', 'Adds Authorization: Bearer <token>'],
+    ['basic', 'Basic', 'Adds Authorization: Basic (base64 of user:password)'],
+    ['apikey', 'API Key', 'Adds a custom header with the key']
+  ]
 
   /** Open the stored response as a new editor tab AND load the request into the form. */
   function openHistoryResponse(entry: RequestHistoryEntry) {
@@ -1346,6 +1657,10 @@
       }
       envJsonText = JSON.stringify($environments[$activeEnvName], null, 2)
       updateEnvTabContent()
+      // pre-fill the Bearer token field when it is empty
+      if (reqAuthType === 'bearer' && !authBearerToken.trim()) {
+        authBearerToken = '{{token}}'
+      }
       showDiskSaveLabel(`Token saved as {{token}} in "${$activeEnvName}"`)
     } catch (err) {
       console.warn('Failed to fetch token', err)
@@ -1398,6 +1713,61 @@
     $requestChain = []
     chainResults = []
     editingChainIndex = -1
+    chainRunningIndex = -1
+  }
+
+  /**
+   * Ensure a dedicated environment for the example chain, so it runs out of the
+   * box without touching the values of the user's own environments.
+   */
+  function ensureExampleEnv() {
+    const envs = ($environments as Record<string, Record<string, string>>) ?? {}
+    if (!envs['Rick & Morty']) {
+      $environments = {
+        ...envs,
+        'Rick & Morty': { baseUrl: 'https://rickandmortyapi.com/api' }
+      }
+    }
+    $activeEnvName = 'Rick & Morty'
+    envJsonText = JSON.stringify(
+      ($environments as Record<string, Record<string, string>>)['Rick & Morty'] ?? {},
+      null,
+      2
+    )
+    updateEnvTabContent()
+  }
+
+  /** Pre-populate the chain with the ready-to-run example. */
+  function loadExampleChain() {
+    ensureExampleEnv()
+    $requestChain = EXAMPLE_CHAIN
+    chainResults = []
+    editingChainIndex = -1
+    chainRunningIndex = -1
+    showDiskSaveLabel('Example chain loaded (env "Rick & Morty" activated)')
+  }
+
+  /** Sample from the sidebar: load the example chain and open the Requests panel. */
+  function loadChainSample() {
+    loadExampleChain()
+    $chainOpen = true
+    showRequests = true
+  }
+
+  /** Move a chain step up (-1) or down (+1). */
+  function moveChainItem(index: number, direction: -1 | 1) {
+    const items = [...(chainItems as ChainItem[])]
+    const target = index + direction
+    if (target < 0 || target >= items.length) return
+    const [item] = items.splice(index, 1)
+    items.splice(target, 0, item)
+    $requestChain = items
+    if (editingChainIndex === index) editingChainIndex = target
+  }
+
+  /** Stop editing the current chain step without saving. */
+  function cancelChainEdit() {
+    editingChainIndex = -1
   }
 
   function startRequestsResize(e: MouseEvent) {
@@ -1422,14 +1792,15 @@
     chainRunning = true
     chainResults = []
     const proxyTemplate = String($corsProxy).trim()
-    for (const item of items) {
+    for (const [itemIndex, item] of items.entries()) {
+      chainRunningIndex = itemIndex
       // Read the environment fresh at every step, so values captured by
       // previous steps (e.g. tokens) are available to the next one.
       const env = ($environments[$activeEnvName] ?? {}) as Record<string, string>
       const resolvedUrl = resolveVariables(item.url, env).resolved
       const started = performance.now()
       try {
-        const { res } = await fetchWithProxy(
+        const { res, viaProxy } = await fetchWithProxy(
           resolvedUrl,
           {
             method: item.method,
@@ -1501,6 +1872,7 @@
           durationMs,
           sizeBytes,
           timestamp: Date.now(),
+          viaProxy,
           responseText: truncateText(text, MAX_RESPONSE_HISTORY)
         }
         reqHistory = [entry, ...reqHistory].slice(0, 20)
@@ -1520,6 +1892,7 @@
       await new Promise((r) => setTimeout(r, 250))
     }
     chainRunning = false
+    chainRunningIndex = -1
   }
 
   /** Write back to disk every tab that has a file handle and unsaved changes. */
@@ -1747,69 +2120,7 @@
           </section>
         {/if}
         <section class="sb-section">
-          <h3 class="sb-title">Editor</h3>
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$readOnly} /> Read only</label
-          >
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$mainMenuBar} /> Main menu</label
-          >
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$navigationBar} /> Navigation</label
-          >
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$statusBar} /> Status bar</label
-          >
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$askToFormat} /> Ask to format</label
-          >
-        </section>
-        <section class="sb-section">
-          <h3 class="sb-title">Validation</h3>
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$validateDoc} /> JSON Schema</label
-          >
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$customRenderer} /> Custom renderer</label
-          >
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={diffMode} /> Compare panes (diff)</label
-          >
-        </section>
-        <section class="sb-section">
-          <h3 class="sb-title">Text</h3>
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$escapeCtrl} /> Escape ctrl</label
-          >
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$escapeUni} /> Escape unicode</label
-          >
-          <label class="sb-check"
-            ><input type="checkbox" bind:checked={$flatten} /> Flatten cols</label
-          >
-          <div class="sb-row">
-            <label>Tab size</label><input
-              class="sb-input"
-              type="number"
-              bind:value={$tabSz}
-              min="1"
-              max="8"
-            />
-          </div>
-          <div class="sb-row" style="margin-top:4px">
-            <label>Multi query</label><input type="checkbox" bind:checked={$multiQuery} />
-          </div>
-        </section>
-        <section class="sb-section">
-          <h3 class="sb-title">Load Sample</h3>
-          <button class="sb-btn" on:click={() => loadSample('array')}>Array</button>
-          <button class="sb-btn" on:click={() => loadSample('object')}>Object</button>
-          <button class="sb-btn" on:click={() => loadSample('long')}>Long Array</button>
-          <button class="sb-btn" on:click={() => loadSample('empty')}>Empty Text</button>
-          <button class="sb-btn" on:click={() => loadSample('invalid')}>Invalid JSON</button>
-        </section>
-        <section class="sb-section">
-          <h3 class="sb-title">Storage</h3>
+          <h3 class="sb-title">📁 Files & Workspace</h3>
           <p class="sb-note">
             The workspace autosaves in this browser and is restored when reopening the same address
             (host and port).
@@ -1827,33 +2138,87 @@
             >💾 Save active tab to disk</button
           >
           <button class="sb-btn" on:click={saveAllToDisk}>💾 Save all files</button>
-          <div class="sb-row">
-            <label>CORS proxy</label>
-          </div>
-          <select
-            class="sb-input sb-input-wide"
-            value={proxyPresetValue}
-            on:change={onProxyPresetChange}
-          >
-            {#each PROXY_PRESETS as preset}
-              <option value={preset.value}>{preset.label}</option>
-            {/each}
-            <option value="custom">Custom…</option>
-          </select>
-          {#if proxyPresetValue === 'custom'}
-            <input
-              class="sb-input sb-input-wide"
-              type="text"
-              placeholder={'https://corsproxy.io/?url={url}'}
-              bind:value={$corsProxy}
-            />
-            <p class="sb-note">
-              Use <code>{'{url}'}</code> as the placeholder for the request URL — e.g.
-              <code>https://my-proxy.example/?target={'{url}'}</code>.
-            </p>
-          {/if}
           <button class="sb-btn" on:click={downloadAllTabs}>⬇ Download all tabs</button>
         </section>
+        <section class="sb-section">
+          <h3 class="sb-title">👁 Editor</h3>
+          <label class="sb-check" title="Prevent all editing in the document"
+            ><input type="checkbox" bind:checked={$readOnly} /> Read only</label
+          >
+          <label class="sb-check" title="Show the main menu bar at the top of the editor"
+            ><input type="checkbox" bind:checked={$mainMenuBar} /> Main menu</label
+          >
+          <label class="sb-check" title="Show the navigation bar (path of the selected item)"
+            ><input type="checkbox" bind:checked={$navigationBar} /> Navigation</label
+          >
+          <label class="sb-check" title="Show the status bar with validation info"
+            ><input type="checkbox" bind:checked={$statusBar} /> Status bar</label
+          >
+          <label class="sb-check" title="Ask confirmation before formatting the document"
+            ><input type="checkbox" bind:checked={$askToFormat} /> Ask to format</label
+          >
+        </section>
+        <button
+          class="sb-section-head"
+          on:click={() => ($sidebarAdvancedOpen = !$sidebarAdvancedOpen)}
+        >
+          <span class="sb-caret">{$sidebarAdvancedOpen ? '▾' : '▸'}</span>
+          ⚙ Advanced
+        </button>
+        {#if $sidebarAdvancedOpen}
+          <section class="sb-section">
+            <h3 class="sb-title">Validation</h3>
+            <label class="sb-check" title="Validate the document against a JSON Schema"
+              ><input type="checkbox" bind:checked={$validateDoc} /> JSON Schema</label
+            >
+            <label class="sb-check" title="Use the custom value renderer (colors, links)"
+              ><input type="checkbox" bind:checked={$customRenderer} /> Custom renderer</label
+            >
+            <label class="sb-check" title="Show two panes side by side and highlight differences"
+              ><input type="checkbox" bind:checked={diffMode} /> Compare panes (diff)</label
+            >
+          </section>
+          <section class="sb-section">
+            <h3 class="sb-title">Text</h3>
+            <label
+              class="sb-check"
+              title="Escape control characters in the rendered text (e.g. \\n)"
+              ><input type="checkbox" bind:checked={$escapeCtrl} /> Control characters</label
+            >
+            <label
+              class="sb-check"
+              title="Escape unicode characters in the rendered text (e.g. \\u00e9)"
+              ><input type="checkbox" bind:checked={$escapeUni} /> Unicode characters</label
+            >
+            <label class="sb-check" title="Flatten nested columns in table mode"
+              ><input type="checkbox" bind:checked={$flatten} /> Flat columns</label
+            >
+            <label class="sb-check" title="Allow multiple query languages at once"
+              ><input type="checkbox" bind:checked={$multiQuery} /> Multi query</label
+            >
+          </section>
+        {/if}
+        <button
+          class="sb-section-head"
+          on:click={() => ($sidebarSamplesOpen = !$sidebarSamplesOpen)}
+        >
+          <span class="sb-caret">{$sidebarSamplesOpen ? '▾' : '▸'}</span>
+          🧪 Samples
+        </button>
+        {#if $sidebarSamplesOpen}
+          <section class="sb-section">
+            <button class="sb-btn" on:click={() => loadSample('array')}>Array</button>
+            <button class="sb-btn" on:click={() => loadSample('object')}>Object</button>
+            <button class="sb-btn" on:click={() => loadSample('long')}>Long Array</button>
+            <button class="sb-btn" on:click={() => loadSample('empty')}>Empty Text</button>
+            <button class="sb-btn" on:click={() => loadSample('invalid')}>Invalid JSON</button>
+            <button
+              class="sb-btn"
+              title="Load a ready-to-run chain using the Rick and Morty API and open the Requests panel"
+              on:click={loadChainSample}>⛓ Chain · Rick & Morty</button
+            >
+          </section>
+        {/if}
       </aside>
     {/if}
 
@@ -1890,19 +2255,6 @@
           </button>
         {/each}
         <button class="tab tab-add" on:click={addTab} title="New tab">+</button>
-        <div class="tab-mode">
-          {#each Object.values(Mode) as m}
-            <button
-              class="mode-btn"
-              class:active={tabModes[getActiveLeaf().tabIdx] === m}
-              on:click={() => {
-                tabModes[getActiveLeaf().tabIdx] = m
-                tabModes = [...tabModes]
-                scheduleAutosave()
-              }}>{m}</button
-            >
-          {/each}
-        </div>
       </nav>
 
       {#if tabDragActive && layoutLeaves.length < 4}
@@ -1962,40 +2314,58 @@
               </div>
             {/if}
             <div class="editor-wrapper">
-              <form novalidate action="/" class="editor-form">
-                <JSONEditor
-                  bind:this={tabRefs[i]}
-                  bind:content={tabContents[i]}
-                  bind:selection={tabSelections[i]}
-                  mode={tabModes[i]}
-                  mainMenuBar={$mainMenuBar}
-                  navigationBar={$navigationBar}
-                  statusBar={$statusBar}
-                  askToFormat={$askToFormat}
-                  escapeControlCharacters={$escapeCtrl}
-                  escapeUnicodeCharacters={$escapeUni}
-                  flattenColumns={$flatten}
-                  readOnly={$readOnly}
-                  indentation={$selectedIndent}
-                  tabSize={$tabSz}
-                  parser={selParser}
-                  pathParser={selPath}
-                  validator={selValidator}
-                  queryLanguages={queryLangs}
-                  bind:queryLanguageId={queryLangId}
-                  onRenderValue={$customRenderer ? customRenderValue : renderValue}
-                  onClassName={diffMode ? onClassNameDiff : undefined}
-                  onChange={() => bumpRevision(i)}
-                  onChangeMode={(m: Mode) => {
-                    tabModes[i] = m
-                    tabModes = [...tabModes]
-                    scheduleAutosave()
+              {#if previewTabInfo.has(tabIds[i])}
+                <PreviewModal
+                  inline
+                  windowId={String(tabIds[i])}
+                  pathLabel={previewTabInfo.get(tabIds[i])?.pathLabel ?? ''}
+                  renderValue={getTabText(i)}
+                  onChangeRenderValue={(value) => {
+                    tabContents[i] = { text: value, json: undefined }
+                    tabContents = [...tabContents]
                   }}
-                  {onRenderMenu}
-                  {onRenderContextMenu}
-                  {onChangeQueryLanguage}
+                  onSave={previewTabInfo.get(tabIds[i])?.onSave}
+                  onClose={() => closeTab(tabIds[i])}
                 />
-              </form>
+              {:else}
+                <form novalidate action="/" class="editor-form">
+                  <JSONEditor
+                    bind:this={tabRefs[i]}
+                    bind:content={tabContents[i]}
+                    bind:selection={tabSelections[i]}
+                    mode={tabModes[i]}
+                    mainMenuBar={$mainMenuBar}
+                    navigationBar={$navigationBar}
+                    statusBar={$statusBar}
+                    askToFormat={$askToFormat}
+                    escapeControlCharacters={$escapeCtrl}
+                    escapeUnicodeCharacters={$escapeUni}
+                    flattenColumns={$flatten}
+                    readOnly={$readOnly}
+                    indentation={$selectedIndent}
+                    tabSize={$tabSz}
+                    parser={selParser}
+                    pathParser={selPath}
+                    validator={selValidator}
+                    queryLanguages={queryLangs}
+                    bind:queryLanguageId={queryLangId}
+                    onRenderValue={$customRenderer ? customRenderValue : renderValue}
+                    onClassName={diffMode ? onClassNameDiff : undefined}
+                    onChange={() => bumpRevision(i)}
+                    onChangeMode={(m: Mode) => {
+                      tabModes[i] = m
+                      tabModes = [...tabModes]
+                      scheduleAutosave()
+                    }}
+                    {onRenderMenu}
+                    {onRenderContextMenu}
+                    {onChangeQueryLanguage}
+                    onExtract={handleExtractToNewTab}
+                    onEditWithPreview={handleEditWithPreview}
+                    onEditNestedContent={handleEditNestedContent}
+                  />
+                </form>
+              {/if}
             </div>
           </div>
         {/each}
@@ -2049,228 +2419,615 @@
           ></div>
           <div class="requests-header">
             <span class="requests-title">Requests</span>
+            <div class="requests-proxy">
+              <span
+                class="req-label"
+                title="CORS proxy: used as fallback when a direct request fails">🛡 Proxy</span
+              >
+              <select
+                class="tb-select req-proxy-select"
+                value={proxyPresetValue}
+                on:change={onProxyPresetChange}
+              >
+                {#each PROXY_PRESETS as preset}
+                  <option value={preset.value}>{preset.label}</option>
+                {/each}
+                <option value="custom">Custom…</option>
+              </select>
+              {#if proxyPresetValue === 'custom'}
+                <input
+                  class="req-proxy-input"
+                  type="text"
+                  placeholder={PROXY_PLACEHOLDER}
+                  title="The placeholder is replaced by the request URL"
+                  bind:value={$corsProxy}
+                />
+              {/if}
+            </div>
+            <span class="req-spacer"></span>
             <button
               class="problems-close"
               on:click={() => (showRequests = false)}
               title="Close requests panel">×</button
             >
           </div>
+
+          <!-- Request row -->
           <div class="requests-form">
-            <select class="tb-select req-method" bind:value={reqMethod}>
+            <select
+              class="tb-select req-method req-method-{reqMethod.toLowerCase()}"
+              bind:value={reqMethod}
+            >
               {#each ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as m}<option>{m}</option>{/each}
             </select>
             <input
               class="req-url"
               type="text"
+              list="req-url-history"
               placeholder="https://api.example.com/items"
               bind:value={reqUrl}
+              on:input={onUrlInput}
               on:keydown={(e) => {
                 if (e.key === 'Enter') void sendRequest()
               }}
             />
+            <datalist id="req-url-history">
+              {#each urlSuggestions as suggestion}<option value={suggestion}></option>{/each}
+            </datalist>
             <button
               class="sb-btn-status req-send"
               disabled={reqSending}
+              title="Send (Enter in the URL field)"
               on:click={() => void sendRequest()}>{reqSending ? 'Sending…' : 'Send'}</button
             >
           </div>
-          <div class="requests-form req-env-row">
-            <select class="tb-select" bind:value={$activeEnvName} on:change={onEnvSelected}>
-              <option value="">No environment</option>
-              {#each Object.keys($environments) as name}<option value={name}>{name}</option>{/each}
-            </select>
-            <button class="sb-btn-status" title="New environment" on:click={newEnvironment}
-              >＋ Env</button
-            >
-            <input
-              class="req-url"
-              type="text"
-              placeholder="Token URL (https://auth.example.com/token)"
-              bind:value={tokenUrl}
-            />
-            <input class="req-path" type="text" placeholder="token path" bind:value={tokenPath} />
-            <button
-              class="sb-btn-status"
-              title={'Fetch token into {{token}}'}
-              on:click={() => void fetchToken()}>🔑 Get token</button
-            >
+
+          <!-- Section tabs -->
+          <div class="req-tabs">
+            {#each REQ_TABS as [tab, label]}
+              <button
+                class="req-tab"
+                class:active={reqActiveTab === tab}
+                on:click={() => (reqActiveTab = tab)}>{label}</button
+              >
+            {/each}
           </div>
-          <div class="requests-fields">
-            <label class="req-field">
-              <span class="req-label">Headers</span>
-              <textarea
-                class="req-textarea"
-                rows="3"
-                placeholder={'Content-Type: application/json'}
-                bind:value={reqHeaders}
-              ></textarea>
-            </label>
-            <label class="req-field">
-              <span class="req-label-row">
-                <span class="req-label">Body (JSON)</span>
-                <button
-                  class="req-mini-btn"
-                  title="Open body in the main editor"
-                  on:click={openBodyInEditor}>↗</button
-                >
-              </span>
-              <textarea
-                class="req-textarea"
-                rows="3"
-                placeholder={'{"key": "value"}'}
-                bind:value={reqBody}
-                on:input={onBodyInput}
-              ></textarea>
-            </label>
-            <label class="req-field">
-              <span class="req-label-row">
-                <span class="req-label"
-                  >Env JSON{#if $activeEnvName}
-                    ({$activeEnvName}){/if}</span
-                >
-                <button
-                  class="req-mini-btn"
-                  title="Open environment in the main editor"
-                  on:click={openEnvInEditor}>↗</button
-                >
-              </span>
-              <textarea
-                class="req-textarea"
-                rows="3"
-                placeholder={'{"baseUrl": "…", "token": "…"}'}
-                disabled={!$activeEnvName}
-                bind:value={envJsonText}
-                on:input={onEnvJsonInput}
-              ></textarea>
-            </label>
-            {#if reqResult}
-              {#if 'error' in reqResult}
+
+          <!-- Section content -->
+          <div class="req-section-content">
+            {#if reqActiveTab === 'params'}
+              <div class="req-params">
+                {#if reqParams.length === 0}
+                  <p class="req-note">No query parameters. Add key/value pairs below.</p>
+                {/if}
+                {#if reqParams.length > 0}
+                  <table class="req-rows">
+                    <thead>
+                      <tr><th></th><th>Key</th><th>Value</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {#each reqParams as param, pi (pi)}
+                        <tr>
+                          <td>
+                            <input
+                              type="checkbox"
+                              title="Include this parameter"
+                              bind:checked={param.enabled}
+                              on:change={onParamChange}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              placeholder="key"
+                              bind:value={param.key}
+                              on:input={onParamChange}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              placeholder="value"
+                              bind:value={param.value}
+                              on:input={onParamChange}
+                            />
+                          </td>
+                          <td>
+                            <button
+                              class="req-mini-btn"
+                              title="Remove parameter"
+                              on:click={() => removeParam(pi)}>×</button
+                            >
+                          </td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                {/if}
+                <button class="req-mini-btn" on:click={addParam}>＋ Add parameter</button>
+              </div>
+            {:else if reqActiveTab === 'headers'}
+              <div class="req-headers">
+                {#if reqHeaderRows.length > 0}
+                  <table class="req-rows">
+                    <thead>
+                      <tr><th></th><th>Key</th><th>Value</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {#each reqHeaderRows as row, ri (ri)}
+                        <tr>
+                          <td>
+                            <input
+                              type="checkbox"
+                              title="Include this header"
+                              bind:checked={row.enabled}
+                              on:change={onHeaderRowChange}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              list="req-header-suggest"
+                              placeholder="Header"
+                              bind:value={row.key}
+                              on:input={onHeaderRowChange}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              placeholder="value"
+                              bind:value={row.value}
+                              on:input={onHeaderRowChange}
+                            />
+                          </td>
+                          <td>
+                            <button
+                              class="req-mini-btn"
+                              title="Remove header"
+                              on:click={() => removeHeaderRow(ri)}>×</button
+                            >
+                          </td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                {/if}
+                <datalist id="req-header-suggest">
+                  {#each HEADER_SUGGESTIONS as suggestion}
+                    <option value={suggestion}></option>
+                  {/each}
+                </datalist>
+                <button class="req-mini-btn" on:click={addHeaderRow}>＋ Add header</button>
+              </div>
+            {:else if reqActiveTab === 'body'}
+              <div class="req-body">
+                <div class="req-label-row">
+                  <span class="req-label"
+                    >Body{#if bodyIgnored}
+                      <span class="req-note"> (ignored for {reqMethod})</span>{/if}</span
+                  >
+                  <span class="req-spacer"></span>
+                  <button
+                    class="req-open-btn"
+                    title="Open body in the main editor"
+                    on:click={openBodyInEditor}>↗ Editor</button
+                  >
+                </div>
+                <div class="req-row">
+                  <span class="req-label">Type</span>
+                  <select class="tb-select" bind:value={reqBodyType}>
+                    <option value="none">None</option>
+                    <option value="json">JSON</option>
+                    <option value="text">Text</option>
+                  </select>
+                </div>
+                <textarea
+                  class="req-textarea"
+                  rows="6"
+                  placeholder={'{"key": "value"}'}
+                  bind:value={reqBody}
+                  on:input={onBodyInput}
+                  on:keydown={(e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void sendRequest()
+                  }}
+                ></textarea>
+                {#if reqBodyInvalid}
+                  <div class="req-warn">⚠ Invalid JSON in the body — fix it before sending.</div>
+                {/if}
+              </div>
+            {:else if reqActiveTab === 'auth'}
+              <div class="req-auth">
+                <p class="req-note">How should the request authenticate?</p>
+                <div class="req-auth-methods">
+                  {#each AUTH_METHODS as [value, label, hint]}
+                    <button
+                      class="req-auth-method"
+                      class:active={reqAuthType === value}
+                      title={hint}
+                      on:click={() => (reqAuthType = value)}>{label}</button
+                    >
+                  {/each}
+                </div>
+                {#if reqAuthType === 'bearer'}
+                  <div class="req-auth-fields">
+                    <label class="req-auth-field">
+                      <span class="req-label">Token</span>
+                      <input
+                        class="req-auth-input"
+                        type="text"
+                        placeholder={BEARER_PLACEHOLDER}
+                        bind:value={authBearerToken}
+                      />
+                    </label>
+                    <div class="req-token-block">
+                      <span class="req-note"
+                        >Fetch a token from an API — saves it as <code>{TOKEN_VAR}</code> in the active
+                        environment.</span
+                      >
+                      <div class="req-token-row">
+                        <input
+                          class="req-auth-input"
+                          type="text"
+                          placeholder="Token URL (https://auth.example.com/token)"
+                          bind:value={tokenUrl}
+                        />
+                        <input
+                          class="req-path"
+                          type="text"
+                          placeholder="token path"
+                          bind:value={tokenPath}
+                        />
+                        <button
+                          class="sb-btn-status"
+                          title={'Fetch token into {{token}} of the active environment'}
+                          on:click={() => void fetchToken()}>🔑 Get token</button
+                        >
+                      </div>
+                    </div>
+                  </div>
+                {:else if reqAuthType === 'basic'}
+                  <div class="req-auth-fields">
+                    <label class="req-auth-field">
+                      <span class="req-label">Username</span>
+                      <input
+                        class="req-auth-input"
+                        type="text"
+                        placeholder="username"
+                        bind:value={authBasicUser}
+                      />
+                    </label>
+                    <label class="req-auth-field">
+                      <span class="req-label">Password</span>
+                      <input
+                        class="req-auth-input"
+                        type="password"
+                        placeholder="password"
+                        bind:value={authBasicPass}
+                      />
+                    </label>
+                  </div>
+                {:else if reqAuthType === 'apikey'}
+                  <div class="req-auth-fields">
+                    <label class="req-auth-field">
+                      <span class="req-label">Header name</span>
+                      <input
+                        class="req-auth-input"
+                        type="text"
+                        placeholder="X-API-Key"
+                        bind:value={authApiKeyName}
+                      />
+                    </label>
+                    <label class="req-auth-field">
+                      <span class="req-label">Key value</span>
+                      <input
+                        class="req-auth-input"
+                        type="text"
+                        placeholder="key"
+                        bind:value={authApiKeyValue}
+                      />
+                    </label>
+                  </div>
+                {/if}
+              </div>
+            {:else}
+              <div class="req-env">
+                <div class="req-row">
+                  <select class="tb-select" bind:value={$activeEnvName} on:change={onEnvSelected}>
+                    <option value="">No environment</option>
+                    {#each Object.keys($environments) as name}
+                      <option value={name}>{name}</option>
+                    {/each}
+                  </select>
+                  <button class="sb-btn-status" title="New environment" on:click={newEnvironment}
+                    >＋ Env</button
+                  >
+                </div>
+                <label class="req-field">
+                  <span class="req-label-row">
+                    <span class="req-label"
+                      >Env JSON{#if $activeEnvName}
+                        ({$activeEnvName}){/if}</span
+                    >
+                    <span class="req-spacer"></span>
+                    <button
+                      class="req-open-btn"
+                      title="Open environment in the main editor"
+                      on:click={openEnvInEditor}>↗ Editor</button
+                    >
+                  </span>
+                  <textarea
+                    class="req-textarea"
+                    rows="5"
+                    placeholder={'{"baseUrl": "…", "token": "…"}'}
+                    disabled={!$activeEnvName}
+                    bind:value={envJsonText}
+                    on:input={onEnvJsonInput}
+                  ></textarea>
+                </label>
+              </div>
+            {/if}
+          </div>
+
+          <!-- Response -->
+          {#if reqResult}
+            {#if 'error' in reqResult}
+              <div class="req-response">
                 <div class="req-result req-error">⚠ {reqResult.error}</div>
-              {:else}
-                <div class="req-result">
-                  {reqResult.status}
-                  {reqResult.statusText} · {reqResult.durationMs} ms ·
-                  {formatBytes(reqResult.sizeBytes)}{#if reqResult.viaProxy}
-                    · via proxy{/if} — response opened as a new tab
+              </div>
+            {:else}
+              <div class="req-response">
+                <div class="req-response-head">
+                  <span
+                    class="req-status-chip"
+                    class:ok={reqResult.status < 400}
+                    class:bad={reqResult.status >= 400}
+                  >
+                    {reqResult.status}
+                    {reqResult.statusText}
+                  </span>
+                  <span class="req-meta"
+                    >{reqResult.durationMs} ms · {formatBytes(
+                      reqResult.sizeBytes
+                    )}{#if reqResult.viaProxy}
+                      · 🛡 via proxy{/if}</span
+                  >
+                  <span class="req-spacer"></span>
+                  <span class="req-meta">full response opened as a new tab</span>
                 </div>
                 {#if reqResult.missing && reqResult.missing.length > 0}
                   <div class="req-result req-error">
                     Unresolved variables: {reqResult.missing.join(', ')}
                   </div>
                 {/if}
-              {/if}
-            {/if}
-          </div>
-          <div class="req-chain">
-            <span class="req-label"
-              >Chain{#if chainItems.length > 0}
-                ({chainItems.length}){/if}</span
-            >
-            <input
-              class="req-capture"
-              type="text"
-              placeholder="capture paths (data.token, data.id)"
-              bind:value={capturePath}
-            />
-            <span class="req-arrow">→</span>
-            <input
-              class="req-capture req-var"
-              type="text"
-              placeholder="vars (token, userId)"
-              bind:value={captureVar}
-            />
-            <button
-              class="sb-btn-status"
-              title={editingChainIndex >= 0
-                ? 'Update the step being edited'
-                : 'Add current request to the execution chain'}
-              on:click={addToChain}>{editingChainIndex >= 0 ? '✎ Update step' : '⛓ Add'}</button
-            >
-            <button class="sb-btn-status" disabled={chainRunning} on:click={() => void runChain()}
-              >{chainRunning ? 'Running…' : '▶ Run chain'}</button
-            >
-            {#if chainItems.length > 0}
-              <button class="req-mini-btn" title="Clear chain" on:click={clearChain}>Clear</button>
-            {/if}
-            {#each chainItems as item, ci (ci)}
-              <span
-                class="req-chain-item"
-                class:editing={ci === editingChainIndex}
-                title={ci === editingChainIndex
-                  ? 'Editing this step — click Add/Update to save'
-                  : 'Click to edit this step'}
-                on:click={() => editChainItem(ci)}
-              >
-                <span class="req-method-tag">{item.method}</span>
-                <span class="req-chain-url">{item.url}</span>
-                {#if itemCaptureNames(item)}
-                  <span class="req-capture-badge">→ {itemCaptureNames(item)}</span>
+                {#if reqResponseText}
+                  <pre class="req-response-body">{reqResponseText}</pre>
                 {/if}
-                <button
-                  class="req-mini-btn"
-                  title="Remove from chain"
-                  on:click|stopPropagation={() => removeFromChain(ci)}>×</button
-                >
-              </span>
-            {/each}
-            {#each chainResults as result (result.method + result.url + result.durationMs)}
-              <span
-                class="req-chain-result"
-                class:ok={typeof result.status === 'number' && result.status < 400}
-                class:bad={result.status === 'error' ||
-                  (typeof result.status === 'number' && result.status >= 400)}
+              </div>
+            {/if}
+          {/if}
+
+          <!-- Chain (collapsible) -->
+          <div class="req-chain">
+            <div
+              class="req-section-head"
+              role="button"
+              tabindex="0"
+              on:click={() => ($chainOpen = !$chainOpen)}
+              on:keydown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') $chainOpen = !$chainOpen
+              }}
+            >
+              <span class="req-caret">{$chainOpen ? '▾' : '▸'}</span>
+              <span class="req-label"
+                >Chain{#if chainItems.length > 0}
+                  ({chainItems.length}){/if}</span
               >
-                {result.method}
-                {result.status} · {result.durationMs} ms{#if result.captured}
-                  → {result.captured} ✓{/if}
-              </span>
-            {/each}
+              <span class="req-spacer"></span>
+              <button
+                class="sb-btn-status"
+                disabled={chainRunning || chainItems.length === 0}
+                title="Run the chain"
+                on:click|stopPropagation={() => void runChain()}
+                >{chainRunning ? 'Running…' : '▶ Run'}</button
+              >
+            </div>
+            {#if $chainOpen}
+              <div class="req-chain-body">
+                {#if chainItems.length === 0}
+                  <div class="req-chain-empty">
+                    <p class="req-note">
+                      The chain runs several requests in sequence. Add the current request as a
+                      step, then press Run.
+                    </p>
+                    <button
+                      class="sb-btn-status"
+                      title="Load a ready-to-run example chain: uses baseUrl from the environment and captures id into charId"
+                      on:click={loadExampleChain}>⛓ Load example chain</button
+                    >
+                  </div>
+                {:else}
+                  <table class="req-rows req-chain-table">
+                    <thead>
+                      <tr><th>#</th><th>Method</th><th>URL</th><th>Capture</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {#each chainItems as item, ci (ci)}
+                        <tr
+                          class="req-chain-row"
+                          class:editing={ci === editingChainIndex}
+                          class:running={ci === chainRunningIndex}
+                        >
+                          <td>{ci + 1}</td>
+                          <td><span class="req-method-tag">{item.method}</span></td>
+                          <td class="req-chain-url">{item.url}</td>
+                          <td>
+                            {#if itemCaptureNames(item)}
+                              <span class="req-capture-badge">→ {itemCaptureNames(item)}</span>
+                            {:else}—{/if}
+                          </td>
+                          <td class="req-chain-actions">
+                            <button
+                              class="req-mini-btn"
+                              title="Move step up"
+                              disabled={ci === 0}
+                              on:click={() => moveChainItem(ci, -1)}>↑</button
+                            >
+                            <button
+                              class="req-mini-btn"
+                              title="Move step down"
+                              disabled={ci === chainItems.length - 1}
+                              on:click={() => moveChainItem(ci, 1)}>↓</button
+                            >
+                            <button
+                              class="req-mini-btn"
+                              title="Edit this step (loads it into the form)"
+                              on:click={() => editChainItem(ci)}>✎</button
+                            >
+                            <button
+                              class="req-mini-btn"
+                              title="Remove from chain"
+                              on:click={() => removeFromChain(ci)}>×</button
+                            >
+                          </td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                {/if}
+                <div class="req-chain-toolbar">
+                  {#if editingChainIndex >= 0}
+                    <span class="req-note">Editing step {editingChainIndex + 1}:</span>
+                    <input
+                      class="req-capture"
+                      type="text"
+                      placeholder="capture paths (data.token, data.id)"
+                      bind:value={capturePath}
+                    />
+                    <span class="req-arrow">→</span>
+                    <input
+                      class="req-capture req-var"
+                      type="text"
+                      placeholder="vars (token, userId)"
+                      bind:value={captureVar}
+                    />
+                    <button class="sb-btn-status" title="Save this step" on:click={addToChain}
+                      >✎ Update step</button
+                    >
+                    <button class="req-mini-btn" title="Stop editing" on:click={cancelChainEdit}
+                      >Cancel</button
+                    >
+                  {:else}
+                    <span class="req-note">Capture (optional):</span>
+                    <input
+                      class="req-capture"
+                      type="text"
+                      placeholder="capture paths (data.token, data.id)"
+                      bind:value={capturePath}
+                    />
+                    <span class="req-arrow">→</span>
+                    <input
+                      class="req-capture req-var"
+                      type="text"
+                      placeholder="vars (token, userId)"
+                      bind:value={captureVar}
+                    />
+                    <button
+                      class="sb-btn-status"
+                      title="Add current request to the execution chain"
+                      on:click={addToChain}>⛓ Add step</button
+                    >
+                  {/if}
+                  {#if chainItems.length > 0}
+                    <button class="req-mini-btn" title="Clear chain" on:click={clearChain}
+                      >Clear</button
+                    >
+                  {/if}
+                </div>
+                <p class="req-note">
+                  Capture: save values from the step's JSON response into the environment — path in
+                  the response (e.g. <code>data.token</code>) → variable name (e.g.
+                  <code>token</code>).
+                </p>
+                {#each chainResults as result (result.method + result.url + result.durationMs)}
+                  <span
+                    class="req-chain-result"
+                    class:ok={typeof result.status === 'number' && result.status < 400}
+                    class:bad={result.status === 'error' ||
+                      (typeof result.status === 'number' && result.status >= 400)}
+                  >
+                    {result.method}
+                    {result.status} · {result.durationMs} ms{#if result.captured}
+                      → {result.captured} ✓{/if}
+                  </span>
+                {/each}
+              </div>
+            {/if}
           </div>
+
+          <!-- History (collapsible) -->
           {#if reqHistory.length > 0}
             <div class="req-history">
-              <div class="req-history-head">
+              <div
+                class="req-section-head"
+                role="button"
+                tabindex="0"
+                on:click={() => ($historyOpen = !$historyOpen)}
+                on:keydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') $historyOpen = !$historyOpen
+                }}
+              >
+                <span class="req-caret">{$historyOpen ? '▾' : '▸'}</span>
                 <span class="req-label">History ({reqHistory.length})</span>
-                <button class="req-mini-btn" title="Clear history" on:click={clearHistory}
-                  >Clear</button
+                <span class="req-spacer"></span>
+                <button
+                  class="req-mini-btn"
+                  title="Clear history"
+                  on:click|stopPropagation={clearHistory}>Clear</button
                 >
               </div>
-              {#each reqHistory as entry (entry.id)}
-                <div
-                  class="req-history-item"
-                  title="Open response in the editor and load the request into the form"
-                  on:click={() => openHistoryResponse(entry)}
-                >
-                  <span class="req-method-tag">{entry.method}</span>
-                  <span
-                    class="req-status"
-                    class:ok={typeof entry.status === 'number' && entry.status < 400}
-                    class:bad={entry.status === 'error' ||
-                      (typeof entry.status === 'number' && entry.status >= 400)}
+              {#if $historyOpen}
+                {#each reqHistory as entry (entry.id)}
+                  <div
+                    class="req-history-item"
+                    title="Open response in the editor and load the request into the form"
+                    on:click={() => openHistoryResponse(entry)}
                   >
-                    {entry.status}
-                  </span>
-                  <span class="req-history-url">{entry.url}</span>
-                  <span class="req-history-meta"
-                    >{relativeTime(entry.timestamp)} · {entry.durationMs} ms ·
-                    {formatBytes(entry.sizeBytes)}</span
-                  >
-                  <button
-                    class="req-mini-btn"
-                    title="Load request into form"
-                    on:click|stopPropagation={() => loadRequestIntoForm(entry)}>✎</button
-                  >
-                  <button
-                    class="req-mini-btn"
-                    title="Re-send"
-                    on:click|stopPropagation={() => void reSendRequest(entry)}>↻</button
-                  >
-                  <button
-                    class="req-mini-btn"
-                    title="Remove"
-                    on:click|stopPropagation={() => removeHistoryEntry(entry.id)}>×</button
-                  >
-                </div>
-              {/each}
+                    <span class="req-method-tag">{entry.method}</span>
+                    <span
+                      class="req-status"
+                      class:ok={typeof entry.status === 'number' && entry.status < 400}
+                      class:bad={entry.status === 'error' ||
+                        (typeof entry.status === 'number' && entry.status >= 400)}
+                    >
+                      {entry.status}
+                    </span>
+                    <span class="req-history-url">{entry.url}</span>
+                    <span class="req-history-meta"
+                      >{relativeTime(entry.timestamp)} · {entry.durationMs} ms ·
+                      {formatBytes(entry.sizeBytes)}{#if entry.viaProxy}
+                        · 🛡 proxy{/if}</span
+                    >
+                    <span class="req-history-actions">
+                      <button
+                        class="req-mini-btn"
+                        title="Load request into form"
+                        on:click|stopPropagation={() => loadRequestIntoForm(entry)}>✎</button
+                      >
+                      <button
+                        class="req-mini-btn"
+                        title="Re-send"
+                        on:click|stopPropagation={() => void reSendRequest(entry)}>↻</button
+                      >
+                      <button
+                        class="req-mini-btn"
+                        title="Remove"
+                        on:click|stopPropagation={() => removeHistoryEntry(entry.id)}>×</button
+                      >
+                    </span>
+                  </div>
+                {/each}
+              {/if}
             </div>
           {/if}
         </div>
@@ -2587,38 +3344,6 @@
     color: $td;
     &:hover {
       color: #fff;
-    }
-  }
-  .tab-mode {
-    display: flex;
-    margin-left: auto;
-    padding-right: 8px;
-    gap: 1px;
-    flex-shrink: 0;
-  }
-  .mode-btn {
-    padding: 2px 8px;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border: 1px solid $b;
-    background: transparent;
-    color: $td;
-    cursor: pointer;
-    border-radius: 2px;
-    &:first-child {
-      border-radius: 3px 0 0 3px;
-    }
-    &:last-child {
-      border-radius: 0 3px 3px 0;
-    }
-    &.active {
-      background: $ac;
-      color: #fff;
-      border-color: $ac;
-    }
-    &:hover:not(.active) {
-      background: rgba(255, 255, 255, 0.05);
     }
   }
 
@@ -3171,5 +3896,357 @@
   :global(.jse-diff-changed) {
     background: rgba(255, 200, 0, 0.15) !important;
     border-left: 3px solid #ffc800 !important;
+  }
+
+  // ---- Requests panel: redesigned layout ----
+  .req-spacer {
+    flex: 1;
+  }
+  .req-meta {
+    font-size: 11px;
+    color: $td;
+    white-space: nowrap;
+  }
+  .req-note {
+    font-size: 11px;
+    color: $td;
+    margin: 4px 0;
+  }
+  .req-warn {
+    font-size: 11px;
+    color: #f1b24c;
+    margin: 4px 0;
+  }
+  .requests-proxy {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 12px;
+  }
+  .req-proxy-select {
+    max-width: 140px;
+  }
+  .req-proxy-input {
+    width: 220px;
+    padding: 2px 6px;
+    font-size: 11px;
+    background: $bg;
+    color: $t;
+    border: 1px solid $b;
+    border-radius: 3px;
+    outline: none;
+    &:focus {
+      border-color: $ac;
+    }
+  }
+  .req-method {
+    font-weight: 600;
+    &.req-method-get {
+      color: #89d185;
+    }
+    &.req-method-post {
+      color: #f1b24c;
+    }
+    &.req-method-put {
+      color: #64b5f6;
+    }
+    &.req-method-patch {
+      color: #b48df2;
+    }
+    &.req-method-delete {
+      color: #f14c4c;
+    }
+  }
+  .req-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 8px;
+    border-bottom: 1px solid $b;
+    flex-shrink: 0;
+  }
+  .req-tab {
+    padding: 4px 12px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: transparent;
+    color: $td;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    &:hover {
+      color: $t;
+    }
+    &.active {
+      color: $t;
+      border-bottom-color: $ac;
+    }
+  }
+  .req-section-content {
+    flex-shrink: 0;
+    padding: 6px 8px;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .req-rows {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    th {
+      text-align: left;
+      color: $td;
+      font-weight: 600;
+      padding: 2px 4px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    td {
+      padding: 2px 2px;
+    }
+    input[type='text'] {
+      width: 100%;
+      padding: 3px 6px;
+      font-size: 11px;
+      background: $bg;
+      color: $t;
+      border: 1px solid $b;
+      border-radius: 3px;
+      outline: none;
+      &:focus {
+        border-color: $ac;
+      }
+    }
+    input[type='checkbox'] {
+      accent-color: $ac;
+    }
+  }
+  .req-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .req-auth-input {
+    display: block;
+    width: 100%;
+    max-width: 420px;
+    margin-bottom: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+    background: $bg;
+    color: $t;
+    border: 1px solid $b;
+    border-radius: 3px;
+    outline: none;
+    &:focus {
+      border-color: $ac;
+    }
+  }
+  .req-token-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+  }
+  .req-response {
+    flex-shrink: 0;
+    border-top: 1px solid $b;
+    padding: 4px 8px;
+  }
+  .req-response-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .req-status-chip {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 10px;
+    &.ok {
+      background: rgba(137, 209, 133, 0.25);
+      color: #89d185;
+    }
+    &.bad {
+      background: rgba(241, 76, 76, 0.3);
+      color: #f14c4c;
+    }
+  }
+  .req-response-body {
+    margin: 6px 0 2px 0;
+    max-height: 160px;
+    overflow: auto;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid $b;
+    border-radius: 4px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .req-section-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 4px 8px;
+    background: transparent;
+    color: $t;
+    border: none;
+    border-top: 1px solid $b;
+    cursor: pointer;
+    font-size: 12px;
+    text-align: left;
+    &:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+  }
+  .req-caret {
+    font-size: 10px;
+    color: $td;
+    width: 12px;
+  }
+  .req-chain-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px 8px;
+  }
+  .req-chain-table {
+    th {
+      white-space: nowrap;
+    }
+    td {
+      vertical-align: middle;
+    }
+    .req-chain-url {
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: block;
+    }
+  }
+  .req-chain-row {
+    &.editing {
+      background: rgba(0, 120, 212, 0.14);
+      outline: 1px solid $ac;
+    }
+    &.running {
+      background: rgba(255, 200, 0, 0.12);
+    }
+  }
+  .req-chain-actions {
+    display: flex;
+    gap: 2px;
+    justify-content: flex-end;
+  }
+  .req-chain-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .req-chain-empty {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .req-open-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: $ac;
+    background: rgba(0, 120, 212, 0.12);
+    border: 1px solid $ac;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+    &:hover {
+      background: rgba(0, 120, 212, 0.22);
+    }
+  }
+  .req-auth-methods {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .req-auth-method {
+    padding: 5px 14px;
+    font-size: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    color: $td;
+    border: 1px solid $b;
+    border-radius: 4px;
+    cursor: pointer;
+    &:hover {
+      color: $t;
+      border-color: $td;
+    }
+    &.active {
+      background: $ac;
+      color: #fff;
+      border-color: $ac;
+    }
+  }
+  .req-auth-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .req-auth-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-width: 480px;
+  }
+  .req-token-block {
+    margin-top: 6px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px dashed $b;
+    border-radius: 4px;
+  }
+  .req-history-actions {
+    display: inline-flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .req-history-item:hover .req-history-actions {
+    opacity: 1;
+  }
+
+  // ---- Sidebar: collapsible section headers ----
+  .sb-section-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 12px;
+    background: transparent;
+    color: $t;
+    border: none;
+    border-top: 1px solid $b;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+    &:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+  }
+  .sb-caret {
+    font-size: 10px;
+    color: $td;
+    width: 12px;
   }
 </style>

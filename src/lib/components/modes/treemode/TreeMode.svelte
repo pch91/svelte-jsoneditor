@@ -34,6 +34,8 @@
     expandSelf,
     expandSmart,
     expandSmartIfCollapsed,
+    expandPaths as restoreExpandedPaths,
+    getExpandedPaths as collectExpandedPaths,
     getEnforceString,
     setInDocumentState,
     syncDocumentState
@@ -43,7 +45,6 @@
     canConvert,
     createAfterSelection,
     createEditKeySelection,
-    createEditValueSelection,
     createInsideSelection,
     createSelectionFromOperations,
     createValueSelection,
@@ -115,6 +116,7 @@
     HistoryItem,
     InsertType,
     JSONEditorSelection,
+    JSONEditorModalCallback,
     JSONParser,
     JSONPatchResult,
     JSONPathParser,
@@ -126,6 +128,9 @@
     OnClassName,
     OnError,
     OnExpand,
+    OnExtract,
+    OnEditWithPreview,
+    OnEditNestedContent,
     OnFocus,
     OnJSONEditorModal,
     OnRedo,
@@ -214,6 +219,9 @@
   export let onSortModal: OnSortModal
   export let onTransformModal: OnTransformModal
   export let onJSONEditorModal: OnJSONEditorModal
+  export let onExtract: OnExtract | undefined = undefined
+  export let onEditWithPreview: OnEditWithPreview | undefined = undefined
+  export let onEditNestedContent: OnEditNestedContent | undefined = undefined
 
   // modalOpen is true when one of the modals is open.
   // This is used to track whether the editor still has focus
@@ -688,9 +696,11 @@
     const path = getFocusPath(selection)
     const value = getIn(json, path)
     if (isObjectOrArray(value)) {
+      // objects and arrays: edit with the regular (nested) editor
       openJSONEditorModal(path, value)
     } else {
-      selection = createEditValueSelection(path)
+      // strings, numbers, booleans, null: edit with the live preview editor
+      handleEditWithPreview()
     }
   }
 
@@ -707,9 +717,8 @@
 
     const pathLabel = compileJSONPointer(path)
     const valueString = value !== undefined && value !== null ? String(value) : ''
-    const windowId = previewWindows.openWindow(pathLabel, valueString, path)
 
-    previewWindows.registerSaveCallback(windowId, (newValue: string) => {
+    const saveValue = (newValue: string) => {
       const pointer = compileJSONPointer(path)
       const updatedValue = stringConvert(newValue, parser)
 
@@ -720,7 +729,16 @@
           value: updatedValue
         }
       ])
-    })
+    }
+
+    if (onEditWithPreview) {
+      // the host decides where to edit (e.g. a tab with an inline preview)
+      onEditWithPreview({ pathLabel, value: valueString, path, onSave: saveValue })
+      return
+    }
+
+    const windowId = previewWindows.openWindow(pathLabel, valueString, path)
+    previewWindows.registerSaveCallback(windowId, saveValue)
   }
 
   function handleToggleEnforceString() {
@@ -750,6 +768,14 @@
         }
       }
     )
+  }
+
+  export function getExpandedPaths(): JSONPath[] {
+    return collectExpandedPaths(documentState)
+  }
+
+  export function expandPaths(paths: JSONPath[]): void {
+    documentState = restoreExpandedPaths(json, documentState, paths)
   }
 
   export function acceptAutoRepair(): Content {
@@ -875,6 +901,14 @@
     debug('extract', { selection })
 
     const operations = extract(json, selection)
+
+    if (onExtract) {
+      // Extract into a destination (e.g. a new tab) instead of replacing the document
+      const extractedValue = immutableJSONPatch(json, operations)
+      const pointer = compileJSONPointer(getFocusPath(selection))
+      onExtract(extractedValue, pointer)
+      return
+    }
 
     handlePatch(operations, (patchedJson, patchedState) => {
       if (isObjectOrArray(patchedJson)) {
@@ -1206,10 +1240,7 @@
   function openJSONEditorModal(path: JSONPath, value: unknown) {
     debug('openJSONEditorModal', { path, value })
 
-    modalOpen = true
-
-    // open a popup where you can edit the nested object/array
-    onJSONEditorModal({
+    const props: JSONEditorModalCallback = {
       content: {
         json: value
       },
@@ -1219,7 +1250,18 @@
         modalOpen = false
         setTimeout(focus)
       }
-    })
+    }
+
+    if (onEditNestedContent) {
+      // the host decides where to edit the nested content (e.g. a tab)
+      onEditNestedContent(props)
+      return
+    }
+
+    modalOpen = true
+
+    // open a popup where you can edit the nested object/array
+    onJSONEditorModal(props)
   }
 
   /**

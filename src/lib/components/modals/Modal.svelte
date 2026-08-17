@@ -68,6 +68,11 @@
       height: 800px;
     }
 
+    &.jse-preview-modal {
+      width: 1000px;
+      height: 600px;
+    }
+
     &.jse-fullscreen {
       width: 100%;
       height: 100%;

@@ -381,6 +381,46 @@ export function collapsePath(
   })
 }
 
+/**
+ * Collect the JSONPaths of all expanded object/array nodes in the document state.
+ * Useful to save the expansion state before unmounting and restoring it later.
+ */
+export function getExpandedPaths(documentState: DocumentState | undefined): JSONPath[] {
+  const paths: JSONPath[] = []
+  if (!documentState) return paths
+
+  const walk = (state: DocumentState | undefined, path: JSONPath) => {
+    if (!state) return
+
+    if (state.type === 'object') {
+      if (state.expanded) paths.push(path)
+      for (const [key, child] of Object.entries(state.properties)) {
+        walk(child, [...path, key])
+      }
+    } else if (state.type === 'array') {
+      if (state.expanded) paths.push(path)
+      for (let index = 0; index < state.items.length; index++) {
+        walk(state.items[index], [...path, String(index)])
+      }
+    }
+  }
+
+  walk(documentState, [])
+  return paths
+}
+
+/**
+ * Expand exactly the given paths (and their ancestors), without touching other nodes.
+ * Useful to restore the expansion state saved with `getExpandedPaths`.
+ */
+export function expandPaths(
+  json: unknown | undefined,
+  documentState: DocumentState | undefined,
+  paths: JSONPath[]
+): DocumentState | undefined {
+  return paths.reduce((state, path) => expandPath(json, state, path, expandSelf), documentState)
+}
+
 function _collapse<T extends DocumentState | undefined>(documentState: T): T {
   if (isArrayRecursiveState(documentState) && documentState.expanded) {
     return { ...documentState, expanded: false, visibleSections: DEFAULT_VISIBLE_SECTIONS }

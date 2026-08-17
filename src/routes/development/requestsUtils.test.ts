@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildUrlWithQuery,
+  encodeBasicAuth,
   extractValueByPath,
   formatBytes,
+  headersToRows,
   parseCaptureList,
   parseHeadersText,
+  parseQueryParams,
   proxyUrl,
   relativeTime,
   resolveVariables,
   responseName,
+  rowsToHeadersText,
   truncateText
 } from './requestsUtils.js'
 
@@ -163,5 +168,58 @@ describe('parseCaptureList', () => {
 
   it('returns an empty list for empty input', () => {
     expect(parseCaptureList('', '')).toEqual([])
+  })
+})
+
+describe('parseQueryParams and buildUrlWithQuery', () => {
+  it('parses query pairs and decodes them', () => {
+    expect(parseQueryParams('https://api.example.com?a=1&b=two%20words')).toEqual([
+      { key: 'a', value: '1', enabled: true },
+      { key: 'b', value: 'two words', enabled: true }
+    ])
+  })
+
+  it('returns an empty list when there is no query', () => {
+    expect(parseQueryParams('https://api.example.com/path')).toEqual([])
+  })
+
+  it('rebuilds the URL with encoded params', () => {
+    expect(
+      buildUrlWithQuery('https://api.example.com/path?old=1', [
+        { key: 'a', value: '1', enabled: true },
+        { key: 'q', value: 'two words', enabled: true },
+        { key: 'skip', value: 'x', enabled: false }
+      ])
+    ).toBe('https://api.example.com/path?a=1&q=two%20words')
+  })
+
+  it('round-trips URL -> params -> URL', () => {
+    const url = 'https://api.example.com/path?a=1&q=two%20words'
+    expect(buildUrlWithQuery(url, parseQueryParams(url))).toBe(url)
+  })
+})
+
+describe('headersToRows and rowsToHeadersText', () => {
+  it('converts header text into rows', () => {
+    expect(headersToRows('Content-Type: application/json\nAccept: */*')).toEqual([
+      { key: 'Content-Type', value: 'application/json', enabled: true },
+      { key: 'Accept', value: '*/*', enabled: true }
+    ])
+  })
+
+  it('serializes only enabled rows with a key', () => {
+    expect(
+      rowsToHeadersText([
+        { key: 'A', value: '1', enabled: true },
+        { key: 'B', value: '2', enabled: false },
+        { key: '', value: 'x', enabled: true }
+      ])
+    ).toBe('A: 1')
+  })
+})
+
+describe('encodeBasicAuth', () => {
+  it('encodes user:password as base64', () => {
+    expect(encodeBasicAuth('user', 'pass')).toBe(btoa('user:pass'))
   })
 })

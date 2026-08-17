@@ -12,6 +12,8 @@ export interface PreviewWindowState {
   height: number
   zIndex: number
   minimized: boolean
+  maximized: boolean
+  maximizedRect?: { x: number; y: number; width: number; height: number }
 }
 
 interface PreviewWindowsStore {
@@ -48,7 +50,8 @@ function createPreviewWindowsStore() {
         width: 900,
         height: 500,
         zIndex: state.nextZIndex,
-        minimized: false
+        minimized: false,
+        maximized: false
       }
 
       return {
@@ -91,9 +94,24 @@ function createPreviewWindowsStore() {
   function minimizeWindow(id: string) {
     update((state) => ({
       ...state,
+      windows: state.windows.map((w) => (w.id === id ? { ...w, minimized: true } : w))
+    }))
+  }
+
+  function maximizeWindow(id: string) {
+    update((state) => ({
+      ...state,
       windows: state.windows.map((w) =>
-        w.id === id ? { ...w, minimized: true } : w
-      )
+        w.id === id
+          ? {
+              ...w,
+              maximized: true,
+              maximizedRect: { x: w.x, y: w.y, width: w.width, height: w.height },
+              zIndex: state.nextZIndex
+            }
+          : w
+      ),
+      nextZIndex: state.nextZIndex + 1
     }))
   }
 
@@ -102,7 +120,17 @@ function createPreviewWindowsStore() {
       ...state,
       windows: state.windows.map((w) =>
         w.id === id
-          ? { ...w, minimized: false, zIndex: state.nextZIndex }
+          ? {
+              ...w,
+              minimized: false,
+              maximized: false,
+              x: w.maximizedRect?.x ?? w.x,
+              y: w.maximizedRect?.y ?? w.y,
+              width: w.maximizedRect?.width ?? w.width,
+              height: w.maximizedRect?.height ?? w.height,
+              maximizedRect: undefined,
+              zIndex: state.nextZIndex
+            }
           : w
       ),
       nextZIndex: state.nextZIndex + 1
@@ -112,9 +140,7 @@ function createPreviewWindowsStore() {
   function focusWindow(id: string) {
     update((state) => ({
       ...state,
-      windows: state.windows.map((w) =>
-        w.id === id ? { ...w, zIndex: state.nextZIndex } : w
-      ),
+      windows: state.windows.map((w) => (w.id === id ? { ...w, zIndex: state.nextZIndex } : w)),
       nextZIndex: state.nextZIndex + 1
     }))
   }
@@ -122,27 +148,21 @@ function createPreviewWindowsStore() {
   function moveWindow(id: string, x: number, y: number) {
     update((state) => ({
       ...state,
-      windows: state.windows.map((w) =>
-        w.id === id ? { ...w, x, y } : w
-      )
+      windows: state.windows.map((w) => (w.id === id ? { ...w, x, y } : w))
     }))
   }
 
   function resizeWindow(id: string, width: number, height: number, x: number, y: number) {
     update((state) => ({
       ...state,
-      windows: state.windows.map((w) =>
-        w.id === id ? { ...w, width, height, x, y } : w
-      )
+      windows: state.windows.map((w) => (w.id === id ? { ...w, width, height, x, y } : w))
     }))
   }
 
   function updateWindowValue(id: string, value: string) {
     update((state) => ({
       ...state,
-      windows: state.windows.map((w) =>
-        w.id === id ? { ...w, value } : w
-      )
+      windows: state.windows.map((w) => (w.id === id ? { ...w, value } : w))
     }))
   }
 
@@ -153,6 +173,7 @@ function createPreviewWindowsStore() {
     saveWindow,
     closeWindow,
     minimizeWindow,
+    maximizeWindow,
     restoreWindow,
     focusWindow,
     moveWindow,

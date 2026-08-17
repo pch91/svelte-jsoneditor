@@ -428,6 +428,15 @@ export type OnRenderContextMenuInternal = (
   items: ContextMenuItem[]
 ) => ContextMenuItem[] | false | undefined
 export type OnError = (error: Error) => void
+export type OnExtract = (extractedValue: unknown, pointer: string) => void
+export interface EditWithPreviewProps {
+  pathLabel: string
+  value: string
+  path: JSONPath
+  onSave: (newValue: string) => void
+}
+export type OnEditWithPreview = (props: EditWithPreviewProps) => void
+export type OnEditNestedContent = (props: JSONEditorModalCallback) => void
 export type OnFocus = () => void
 export type OnBlur = () => void
 export type OnSortModal = (props: SortModalCallback) => void
@@ -627,6 +636,9 @@ export interface JSONEditorPropsOptional {
   onError?: OnError
   onFocus?: OnFocus
   onBlur?: OnBlur
+  onExtract?: OnExtract
+  onEditWithPreview?: OnEditWithPreview
+  onEditNestedContent?: OnEditNestedContent
 }
 
 export interface JSONEditorModalProps {

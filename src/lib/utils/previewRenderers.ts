@@ -26,7 +26,8 @@ export function renderHtml(value: string): string {
 /** Simple Markdown to HTML renderer — allows inline HTML (br, div, img, etc.) */
 export function renderMarkdown(value: string): string {
   // Strip dangerous tags but allow safe HTML
-  let html = value.replace(/<script[\s\S]*?<\/script>/gi, '')
+  let html = value
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
     .replace(/<object[\s\S]*?<\/object>/gi, '')
     .replace(/<embed[\s\S]*?>/gi, '')
@@ -59,7 +60,10 @@ export function renderMarkdown(value: string): string {
 
   // Images then links (image first to avoid ![ being treated as link)
   html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />')
-  html = html.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+  html = html.replace(
+    /\[([^\]]+?)\]\(([^)]+?)\)/g,
+    '<a href="$2" target="_blank" rel="noopener">$1</a>'
+  )
 
   // Headings
   html = html.replace(/^###### (.+)$/gm, '<h6>$1</h6>')
@@ -116,16 +120,137 @@ export function renderMath(value: string): string {
   return `<div class="jse-preview-math">${html}</div>`
 }
 
+/** Detect an image mime type from base64 magic bytes */
+function detectImageMimeFromBase64(base64: string): string | undefined {
+  if (base64.startsWith('iVBORw0KGgo')) return 'image/png'
+  if (base64.startsWith('/9j/')) return 'image/jpeg'
+  if (base64.startsWith('R0lGOD')) return 'image/gif'
+  if (base64.startsWith('UklGR')) return 'image/webp'
+  if (base64.startsWith('Qk')) return 'image/bmp'
+  if (base64.startsWith('PHN2Zy') || (base64.startsWith('PD94bWw') && base64.includes('PHN2Zy'))) {
+    return 'image/svg+xml'
+  }
+  return undefined
+}
+
 /** Render as image */
 export function renderImage(value: string): string {
   const trimmed = value.trim()
 
-  // Check if it's a valid URL or base64 data URL
+  // Valid image source: http(s) URL, full data URL, or raw base64 (no prefix)
+  let src: string | undefined
   if (/^(https?:\/\/|data:image\/)/i.test(trimmed)) {
-    return `<div class="jse-preview-image"><img src="${escapeHtml(trimmed)}" alt="Preview" onerror="this.parentElement.innerHTML='<p class=\\'jse-preview-error\\'>Invalid image URL or could not load image</p>'" /></div>`
+    src = trimmed
+  } else {
+    const cleaned = trimmed.replace(/\s+/g, '')
+    if (/^[A-Za-z0-9+/=]+$/.test(cleaned) && cleaned.length > 16) {
+      const mime = detectImageMimeFromBase64(cleaned) ?? 'image/png'
+      src = `data:${mime};base64,${cleaned}`
+    }
   }
 
-  return `<div class="jse-preview-image"><p class="jse-preview-error">Not a valid image URL. Provide a full URL (https://...) or a base64 data URL (data:image/...)</p></div>`
+  if (src) {
+    return `<div class="jse-preview-image"><img src="${escapeHtml(src)}" alt="Preview" onerror="this.parentElement.innerHTML='<p class=\\'jse-preview-error\\'>Invalid image URL or could not load image</p>'" /></div>`
+  }
+
+  return `<div class="jse-preview-image"><p class="jse-preview-error">Not a valid image. Provide an image URL (https://...), a base64 data URL (data:image/...), or the raw base64 code.</p></div>`
+}
+
+/** Render a URL as an embedded site preview (iframe) with an open link */
+export function renderUrl(value: string): string {
+  const trimmed = value.trim()
+
+  if (!/^(https?:\/\/)/i.test(trimmed)) {
+    return `<div class="jse-preview-url"><p class="jse-preview-error">Not a valid URL. Provide a full URL starting with http:// or https://</p></div>`
+  }
+
+  const src = escapeHtml(trimmed)
+  return (
+    `<div class="jse-preview-url">` +
+    `<iframe class="jse-url-frame" src="${src}" title="Site preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" loading="lazy"></iframe>` +
+    `<p class="jse-url-link"><a href="${src}" target="_blank" rel="noopener">Open ${src} in a new tab</a></p>` +
+    `</div>`
+  )
+}
+
+/** Render the value as hexadecimal (UTF-8 bytes) with a decoded text preview */
+export function renderHex(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  const hexPairs = Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0').toUpperCase())
+    .join(' ')
+  const ascii = Array.from(bytes)
+    .map((byte) => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '.'))
+    .join('')
+
+  return (
+    `<div class="jse-preview-hex">` +
+    `<pre class="jse-hex-pairs">${hexPairs}</pre>` +
+    `<pre class="jse-hex-ascii">${escapeHtml(ascii)}</pre>` +
+    `</div>`
+  )
+}
+
+/** Render the value as binary (UTF-8 bytes as 8-bit strings) */
+export function renderBinary(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  const bits = Array.from(bytes)
+    .map((byte) => byte.toString(2).padStart(8, '0'))
+    .join(' ')
+
+  return `<div class="jse-preview-binary"><pre class="jse-binary-bits">${bits}</pre></div>`
+}
+
+/** Preview formats that can be auto-detected from the value */
+export type DetectedPreviewFormat =
+  | 'url'
+  | 'image'
+  | 'binary'
+  | 'hex'
+  | 'csv'
+  | 'markdown'
+  | 'math'
+  | 'html'
+  | 'text'
+
+/**
+ * Try to identify the type of the value and return the best preview format:
+ * URL first (image when it points to an image), then binary/hex look-alikes,
+ * then CSV, Markdown, Math, HTML, and finally plain text.
+ */
+export function detectPreviewFormat(value: string): DetectedPreviewFormat {
+  const trimmed = value.trim()
+  if (!trimmed) return 'text'
+
+  if (/^(https?:\/\/)/i.test(trimmed)) {
+    return /(\.(png|jpe?g|gif|svg|webp|bmp|ico)(\?.*)?$|data:image\/)/i.test(trimmed)
+      ? 'image'
+      : 'url'
+  }
+
+  const withoutSpaces = trimmed.replace(/\s+/g, '')
+  if (
+    /^[A-Za-z0-9+/=]+$/.test(withoutSpaces) &&
+    withoutSpaces.length > 16 &&
+    /^(iVBORw0KGgo|\/9j\/|R0lGOD|UklGR|Qk|PHN2Zy)/.test(withoutSpaces)
+  ) {
+    // raw base64 image code (no data:image/... prefix)
+    return 'image'
+  }
+
+  if (/^[01]+$/.test(withoutSpaces) && withoutSpaces.length >= 8) {
+    return 'binary'
+  }
+  if (/^([0-9a-fA-F]{2})+$/.test(withoutSpaces) && withoutSpaces.length >= 4) {
+    return 'hex'
+  }
+
+  if (/[\r\n]/.test(value) && /,/.test(value)) return 'csv'
+  if (/(^|\n)#{1,6}\s|```|\*\*|!?\[/.test(value)) return 'markdown'
+  if (/\$\$|\$[^$]+\$/.test(value)) return 'math'
+  if (/<[a-z][\s\S]*>/i.test(value)) return 'html'
+
+  return 'text'
 }
 
 /** Parse CSV and render as HTML table */
@@ -216,7 +341,6 @@ export const CODE_LANGUAGES: { value: string; label: string }[] = [
   { value: 'html', label: 'HTML' },
   { value: 'css', label: 'CSS' },
   { value: 'java', label: 'Java' },
-  { value: 'json', label: 'JSON' },
   { value: 'text', label: 'Plain Text' }
 ]
 
@@ -232,7 +356,8 @@ function highlightCode(code: string, language: string): string {
       { regex: /(&quot;[^&]*&quot;|'[^']*'|`[^`]*`)/g, className: 'jse-string' },
       // Keywords
       {
-        regex: /\b(import|export|from|const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|this|class|extends|super|try|catch|finally|throw|async|await|typeof|instanceof|in|of|default|yield|delete|void)\b/g,
+        regex:
+          /\b(import|export|from|const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|this|class|extends|super|try|catch|finally|throw|async|await|typeof|instanceof|in|of|default|yield|delete|void)\b/g,
         className: 'jse-keyword'
       },
       // Numbers
@@ -247,7 +372,8 @@ function highlightCode(code: string, language: string): string {
     typescript: [
       { regex: /(&quot;[^&]*&quot;|'[^']*'|`[^`]*`)/g, className: 'jse-string' },
       {
-        regex: /\b(import|export|from|const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|this|class|extends|super|try|catch|finally|throw|async|await|typeof|instanceof|in|of|default|yield|delete|void|type|interface|enum|implements|abstract|readonly|private|public|protected|static|as|is|keyof|infer|never|unknown|any|string|number|boolean|symbol|object)\b/g,
+        regex:
+          /\b(import|export|from|const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|this|class|extends|super|try|catch|finally|throw|async|await|typeof|instanceof|in|of|default|yield|delete|void|type|interface|enum|implements|abstract|readonly|private|public|protected|static|as|is|keyof|infer|never|unknown|any|string|number|boolean|symbol|object)\b/g,
         className: 'jse-keyword'
       },
       { regex: /\b(\d+\.?\d*)\b/g, className: 'jse-number' },
@@ -267,7 +393,10 @@ function highlightCode(code: string, language: string): string {
       // Properties
       { regex: /([\w-]+)\s*:/g, className: 'jse-property' },
       // Values (colors, units)
-      { regex: /(#[\w]+|rgb\([^)]+\)|\d+\.?\d*(px|em|rem|%|vh|vw|s|ms|deg)?)/g, className: 'jse-value' },
+      {
+        regex: /(#[\w]+|rgb\([^)]+\)|\d+\.?\d*(px|em|rem|%|vh|vw|s|ms|deg)?)/g,
+        className: 'jse-value'
+      },
       // Selectors handled by tag class
       { regex: /(\.[\w-]+|#[\w-]+)/g, className: 'jse-selector' },
       // Comments
@@ -278,7 +407,8 @@ function highlightCode(code: string, language: string): string {
     java: [
       { regex: /(&quot;[^&]*&quot;|'[^']*')/g, className: 'jse-string' },
       {
-        regex: /\b(import|package|public|private|protected|static|final|class|interface|extends|implements|new|return|if|else|for|while|do|switch|case|break|continue|try|catch|finally|throw|throws|void|int|long|double|float|boolean|char|byte|short|String|Object|List|Map|Set|null|true|false|this|super|abstract|synchronized|volatile|transient|native|enum|instanceof)\b/g,
+        regex:
+          /\b(import|package|public|private|protected|static|final|class|interface|extends|implements|new|return|if|else|for|while|do|switch|case|break|continue|try|catch|finally|throw|throws|void|int|long|double|float|boolean|char|byte|short|String|Object|List|Map|Set|null|true|false|this|super|abstract|synchronized|volatile|transient|native|enum|instanceof)\b/g,
         className: 'jse-keyword'
       },
       { regex: /\b(\d+\.?\d*[fLdD]?)\b/g, className: 'jse-number' },

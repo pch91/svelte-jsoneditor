@@ -17,6 +17,9 @@
     OnClassName,
     OnError,
     OnExpand,
+    OnExtract,
+    OnEditWithPreview,
+    OnEditNestedContent,
     OnFocus,
     OnJSONEditorModal,
     OnRenderContextMenu,
@@ -77,6 +80,9 @@
   export let onSortModal: OnSortModal
   export let onTransformModal: OnTransformModal
   export let onJSONEditorModal: OnJSONEditorModal
+  export let onExtract: OnExtract | undefined = undefined
+  export let onEditWithPreview: OnEditWithPreview | undefined = undefined
+  export let onEditNestedContent: OnEditNestedContent | undefined = undefined
 
   let refTreeMode: TreeMode | undefined
   let refTableMode: TableMode | undefined
@@ -306,6 +312,14 @@
     }
   }
 
+  export function getExpandedPaths(): JSONPath[] {
+    return refTreeMode ? refTreeMode.getExpandedPaths() : []
+  }
+
+  export function expandPaths(paths: JSONPath[]): void {
+    refTreeMode?.expandPaths(paths)
+  }
+
   export function findElement(path: JSONPath): Element | undefined {
     if (refTreeMode) {
       return refTreeMode.findElement(path)
@@ -430,5 +444,8 @@
     {onSortModal}
     {onTransformModal}
     {onJSONEditorModal}
+    {onExtract}
+    {onEditWithPreview}
+    {onEditNestedContent}
   />
 {/if}

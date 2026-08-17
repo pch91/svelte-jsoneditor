@@ -29,6 +29,9 @@
     OnClassName,
     OnError,
     OnExpand,
+    OnExtract,
+    OnEditWithPreview,
+    OnEditNestedContent,
     OnFocus,
     OnRenderMenu,
     OnRenderValue,
@@ -51,7 +54,6 @@
   import { cloneDeep } from 'lodash-es'
   import SortModal from './modals/SortModal.svelte'
   import PreviewModal from './modals/PreviewModal.svelte'
-  import MinimizedWindowsBar from './modals/MinimizedWindowsBar.svelte'
   import { previewWindows, type PreviewWindowState } from '$lib/stores/previewWindows.js'
 
   // TODO: document how to enable debugging in the readme: localStorage.debug="jsoneditor:*", then reload
@@ -95,6 +97,9 @@
   }
   const onFocusDefault = noop
   const onBlurDefault = noop
+  const onExtractDefault = undefined
+  const onEditWithPreviewDefault = undefined
+  const onEditNestedContentDefault = undefined
 
   export let content: Content = contentDefault
   export let selection: JSONEditorSelection | undefined = selectionDefault
@@ -128,6 +133,9 @@
   export let onError: OnError = onErrorDefault
   export let onFocus: OnFocus = onFocusDefault
   export let onBlur: OnBlur = onBlurDefault
+  export let onExtract: OnExtract | undefined = onExtractDefault
+  export let onEditWithPreview: OnEditWithPreview | undefined = onEditWithPreviewDefault
+  export let onEditNestedContent: OnEditNestedContent | undefined = onEditNestedContentDefault
 
   let instanceId = uniqueId()
   let hasFocus = false
@@ -281,6 +289,14 @@
     await refJSONEditorRoot.scrollTo(path)
   }
 
+  export function getExpandedPaths(): JSONPath[] {
+    return refJSONEditorRoot.getExpandedPaths()
+  }
+
+  export function expandPaths(paths: JSONPath[]): void {
+    refJSONEditorRoot.expandPaths(paths)
+  }
+
   export function findElement(path: JSONPath): Element | undefined {
     return refJSONEditorRoot.findElement(path)
   }
@@ -395,6 +411,15 @@
           break
         case 'onBlur':
           onBlur = props[name] ?? onBlurDefault
+          break
+        case 'onExtract':
+          onExtract = props[name] ?? onExtractDefault
+          break
+        case 'onEditWithPreview':
+          onEditWithPreview = props[name] ?? onEditWithPreviewDefault
+          break
+        case 'onEditNestedContent':
+          onEditNestedContent = props[name] ?? onEditNestedContentDefault
           break
 
         default:
@@ -513,8 +538,16 @@
 
   // The onJSONEditorModal method is located in JSONEditor to prevent circular references:
   //     JSONEditor -> TableMode -> JSONEditorModal -> JSONEditor
-  function onJSONEditorModal({ content, path, onPatch, onClose }: JSONEditorModalCallback) {
-    debug('onJSONEditorModal', { content, path })
+  function onJSONEditorModal(props: JSONEditorModalCallback) {
+    debug('onJSONEditorModal', { content: props.content, path: props.path })
+
+    if (onEditNestedContent) {
+      // the host decides where to edit the nested content (e.g. a tab)
+      onEditNestedContent(props)
+      return
+    }
+
+    const { content, path, onPatch, onClose } = props
 
     jsonEditorModalProps = {
       content,
@@ -595,6 +628,9 @@
         {onSortModal}
         {onTransformModal}
         {onJSONEditorModal}
+        {onExtract}
+        {onEditWithPreview}
+        {onEditNestedContent}
       />
     {/key}
   </div>
@@ -634,24 +670,10 @@
   <PreviewModal
     windowId={win.id}
     pathLabel={win.pathLabel}
-    x={win.x}
-    y={win.y}
-    width={win.width}
-    height={win.height}
-    zIndex={win.zIndex}
-    minimized={win.minimized}
     renderValue={win.value}
     onChangeRenderValue={(value) => previewWindows.updateWindowValue(win.id, value)}
     onClose={() => previewWindows.closeWindow(win.id)}
-    onFocus={() => previewWindows.focusWindow(win.id)}
-    onMinimize={() => previewWindows.minimizeWindow(win.id)}
-    onMaximize={() => {}}
-    onRestore={() => {}}
-    onMove={(x, y) => previewWindows.moveWindow(win.id, x, y)}
-    onResize={(width, height, x, y) => previewWindows.resizeWindow(win.id, width, height, x, y)}
   />
 {/each}
-
-<MinimizedWindowsBar />
 
 <style src="./JSONEditor.scss"></style>
