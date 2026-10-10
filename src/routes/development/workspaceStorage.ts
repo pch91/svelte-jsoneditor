@@ -22,16 +22,38 @@ export interface StoredWorkspaceTab {
   title: string
   text: string
   mode: string
+  primaryTabId?: number
+  kind?: string
+}
+
+export interface StoredPrimaryTab {
+  id: number
+  title: string
+  subTabIds: number[]
+  activeSubTabId: number
+  requestState?: {
+    method: string
+    url: string
+    headers: string
+    body: string
+    bodyType: 'none' | 'json' | 'text'
+    sendMode: 'same' | 'new'
+  }
 }
 
 export interface StoredWorkspace {
-  version: 1 | 2
+  version: 1 | 2 | 3
   tabs: StoredWorkspaceTab[]
+  primaryTabs?: StoredPrimaryTab[]
+  activePrimaryTabId?: number
+  panePrimaryMap?: Record<number, number[]>
+  paneActivePrimaryMap?: Record<number, number>
   /** v1 only: flat pane list (migrated to `layout` on load). */
   panes?: { id: number; tabIdx: number }[]
-  /** v2: tree-based split layout. */
+  /** v2+: tree-based split layout. */
   layout?: SerializedLayoutNode
   nextTabId: number
+  nextPrimaryTabId?: number
   nextPaneId?: number
   nextNodeId?: number
   splitDir?: 'vertical' | 'horizontal'

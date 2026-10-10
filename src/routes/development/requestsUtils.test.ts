@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildCurlCommand,
   buildUrlWithQuery,
   encodeBasicAuth,
   extractValueByPath,
   formatBytes,
   headersToRows,
+  isCurlCommand,
   parseCaptureList,
+  parseCurlCommand,
   parseHeadersText,
   parseQueryParams,
   proxyUrl,
@@ -13,6 +16,8 @@ import {
   resolveVariables,
   responseName,
   rowsToHeadersText,
+  stripCodeFences,
+  tokenizeShellArgs,
   truncateText
 } from './requestsUtils.js'
 
@@ -223,3 +228,317 @@ describe('encodeBasicAuth', () => {
     expect(encodeBasicAuth('user', 'pass')).toBe(btoa('user:pass'))
   })
 })
+
+describe('tokenizeShellArgs', () => {
+  it('splits simple arguments by space', () => {
+    expect(tokenizeShellArgs('curl -X POST https://example.com')).toEqual([
+      'curl',
+      '-X',
+      'POST',
+      'https://example.com'
+    ])
+  })
+
+  it('preserves single-quoted strings and escaped single quotes in bash', () => {
+    expect(
+      tokenizeShellArgs(
+        "curl --header 'Content-Type: application/json' --data '{\"name\":\"O'\\''Reilly\"}'"
+      )
+    ).toEqual([
+      'curl',
+      '--header',
+      'Content-Type: application/json',
+      '--data',
+      '{"name":"O\'Reilly"}'
+    ])
+  })
+
+  it('preserves double-quoted strings with spaces and escaped characters', () => {
+    expect(
+      tokenizeShellArgs('curl -H "Authorization: Bearer my-token" -d "{\\"active\\": true}"')
+    ).toEqual(['curl', '-H', 'Authorization: Bearer my-token', '-d', '{"active": true}'])
+  })
+
+  it('handles line continuations (bash backslash, cmd caret, powershell backtick)', () => {
+    const bash = `curl --location 'https://api.example.com/items' \\
+      --header 'Accept: application/json' \\
+      --data '{"ok":true}'`
+    expect(tokenizeShellArgs(bash)).toEqual([
+      'curl',
+      '--location',
+      'https://api.example.com/items',
+      '--header',
+      'Accept: application/json',
+      '--data',
+      '{"ok":true}'
+    ])
+
+    const cmd = `curl --location "https://api.example.com/items" ^
+      --header "Accept: application/json"`
+    expect(tokenizeShellArgs(cmd)).toEqual([
+      'curl',
+      '--location',
+      'https://api.example.com/items',
+      '--header',
+      'Accept: application/json'
+    ])
+
+    const ps = `curl --location 'https://api.example.com/items' \`
+      --header 'Accept: application/json'`
+    expect(tokenizeShellArgs(ps)).toEqual([
+      'curl',
+      '--location',
+      'https://api.example.com/items',
+      '--header',
+      'Accept: application/json'
+    ])
+  })
+
+  it('strips leading prompt symbols', () => {
+    expect(tokenizeShellArgs('$ curl https://example.com')).toEqual(['curl', 'https://example.com'])
+    expect(tokenizeShellArgs('> curl https://example.com')).toEqual(['curl', 'https://example.com'])
+  })
+})
+
+describe('isCurlCommand and stripCodeFences', () => {
+  it('detects standard curl command strings', () => {
+    expect(isCurlCommand("curl 'https://api.example.com'")).toBe(true)
+    expect(isCurlCommand('curl.exe -X POST https://api.example.com')).toBe(true)
+    expect(isCurlCommand('CURL https://api.example.com')).toBe(true)
+    expect(isCurlCommand('$ curl -v https://api.example.com')).toBe(true)
+  })
+
+  it('detects multiline curl commands with comments', () => {
+    const multi = `# Fetch users from api
+    curl --location 'https://api.example.com/users'`
+    expect(isCurlCommand(multi)).toBe(true)
+  })
+
+  it('detects curl enclosed in markdown code fences', () => {
+    const fenced = '```bash\ncurl --location https://api.example.com\n```'
+    expect(isCurlCommand(fenced)).toBe(true)
+    expect(stripCodeFences(fenced)).toBe('curl --location https://api.example.com')
+  })
+
+  it('returns false for plain URLs and non-curl text', () => {
+    expect(isCurlCommand('https://api.example.com/users')).toBe(false)
+    expect(isCurlCommand('{"some": "json"}')).toBe(false)
+    expect(isCurlCommand('')).toBe(false)
+  })
+})
+
+describe('parseCurlCommand', () => {
+  it('parses standard Postman cURL with headers and JSON body', () => {
+    const postman = `curl --location 'https://api.example.com/v1/users?page=1&limit=10' \\
+--header 'Content-Type: application/json' \\
+--header 'Authorization: Bearer my-secret-token' \\
+--data '{
+    "name": "Alice",
+    "email": "alice@example.com"
+}'`
+
+    const parsed = parseCurlCommand(postman)
+    expect(parsed).not.toBeNull()
+    if (!parsed) return
+
+    expect(parsed.url).toBe('https://api.example.com/v1/users?page=1&limit=10')
+    expect(parsed.method).toBe('POST')
+    expect(parsed.headers['Content-Type']).toBe('application/json')
+    expect(parsed.headers['Authorization']).toBe('Bearer my-secret-token')
+    expect(parsed.headerRows).toEqual([
+      { key: 'Content-Type', value: 'application/json', enabled: true },
+      { key: 'Authorization', value: 'Bearer my-secret-token', enabled: true }
+    ])
+    expect(parsed.params).toEqual([
+      { key: 'page', value: '1', enabled: true },
+      { key: 'limit', value: '10', enabled: true }
+    ])
+    expect(parsed.bodyType).toBe('json')
+    expect(JSON.parse(parsed.body)).toEqual({
+      name: 'Alice',
+      email: 'alice@example.com'
+    })
+    expect(parsed.auth).toEqual({
+      type: 'bearer',
+      token: 'my-secret-token'
+    })
+  })
+
+  it('parses Postman cURL with --request and --data-raw', () => {
+    const cmd = `curl --location --request PUT 'https://api.example.com/items/42' \\
+--header 'Accept: application/json' \\
+--data-raw '{"status":"active"}'`
+
+    const parsed = parseCurlCommand(cmd)
+    expect(parsed).not.toBeNull()
+    if (!parsed) return
+
+    expect(parsed.url).toBe('https://api.example.com/items/42')
+    expect(parsed.method).toBe('PUT')
+    expect(parsed.headers.Accept).toBe('application/json')
+    expect(parsed.bodyType).toBe('json')
+    expect(JSON.parse(parsed.body)).toEqual({ status: 'active' })
+  })
+
+  it('parses cURL with basic auth flag -u / --user', () => {
+    const cmd = "curl -u admin:supersecret 'https://api.example.com/admin'"
+    const parsed = parseCurlCommand(cmd)
+    expect(parsed).not.toBeNull()
+    if (!parsed) return
+
+    expect(parsed.url).toBe('https://api.example.com/admin')
+    expect(parsed.method).toBe('GET')
+    expect(parsed.auth).toEqual({
+      type: 'basic',
+      username: 'admin',
+      password: 'supersecret'
+    })
+    expect(parsed.headers.Authorization).toBe(`Basic ${encodeBasicAuth('admin', 'supersecret')}`)
+  })
+
+  it('parses boolean flags without consuming following URL or headers', () => {
+    const cmd = "curl -k -s -L --compressed 'https://api.example.com/data' -H 'X-Test: 1'"
+    const parsed = parseCurlCommand(cmd)
+    expect(parsed).not.toBeNull()
+    if (!parsed) return
+
+    expect(parsed.url).toBe('https://api.example.com/data')
+    expect(parsed.method).toBe('GET')
+    expect(parsed.headers['X-Test']).toBe('1')
+  })
+
+  it('parses URL with explicit --url flag and shorthand flags like -XPOST', () => {
+    const cmd =
+      "curl -XPOST --url 'https://api.example.com/submit' -H'Content-Type: text/plain' -d'Hello World'"
+    const parsed = parseCurlCommand(cmd)
+    expect(parsed).not.toBeNull()
+    if (!parsed) return
+
+    expect(parsed.url).toBe('https://api.example.com/submit')
+    expect(parsed.method).toBe('POST')
+    expect(parsed.headers['Content-Type']).toBe('text/plain')
+    expect(parsed.body).toBe('Hello World')
+    expect(parsed.bodyType).toBe('text')
+  })
+
+  it('parses urlencoded form data from multiple --data-urlencode flags', () => {
+    const cmd =
+      "curl --location 'https://api.example.com/token' --data-urlencode 'grant_type=client_credentials' --data-urlencode 'client_id=123'"
+    const parsed = parseCurlCommand(cmd)
+    expect(parsed).not.toBeNull()
+    if (!parsed) return
+
+    expect(parsed.method).toBe('POST')
+    expect(parsed.body).toBe('grant_type=client_credentials&client_id=123')
+    expect(parsed.headers['Content-Type']).toBe('application/x-www-form-urlencoded')
+  })
+
+  it('returns null if no URL can be identified', () => {
+    expect(parseCurlCommand('curl -v -k')).toBeNull()
+    expect(parseCurlCommand('')).toBeNull()
+  })
+})
+
+describe('buildCurlCommand', () => {
+  it('builds a Postman-compatible GET curl command', () => {
+    const curl = buildCurlCommand({
+      method: 'GET',
+      url: 'https://api.example.com/items?q=test',
+      headers: [
+        { key: 'Accept', value: 'application/json', enabled: true },
+        { key: 'X-Disabled', value: 'ignore', enabled: false }
+      ]
+    })
+
+    expect(curl).toBe(
+      "curl --location 'https://api.example.com/items?q=test' \\\n--header 'Accept: application/json'"
+    )
+  })
+
+  it('builds a POST curl command with body and auth', () => {
+    const curl = buildCurlCommand({
+      method: 'POST',
+      url: 'https://api.example.com/login',
+      headers: [{ key: 'Content-Type', value: 'application/json', enabled: true }],
+      body: '{"username":"john"}',
+      bodyType: 'json',
+      auth: {
+        type: 'bearer',
+        bearerToken: 'secret123'
+      }
+    })
+
+    expect(curl).toContain("curl --location --request POST 'https://api.example.com/login'")
+    expect(curl).toContain("--header 'Content-Type: application/json'")
+    expect(curl).toContain("--header 'Authorization: Bearer secret123'")
+    expect(curl).toContain('--data \'{"username":"john"}\'')
+  })
+
+  it('round-trips through buildCurlCommand and parseCurlCommand', () => {
+    const original = {
+      method: 'POST',
+      url: 'https://api.example.com/v1/resource?active=true',
+      headers: [
+        { key: 'Content-Type', value: 'application/json', enabled: true },
+        { key: 'X-Key', value: 'val-123', enabled: true }
+      ],
+      body: '{\n  "name": "Roundtrip"\n}',
+      bodyType: 'json' as const
+    }
+
+    const built = buildCurlCommand(original)
+    const parsed = parseCurlCommand(built)
+
+    expect(parsed).not.toBeNull()
+    if (!parsed) return
+
+    expect(parsed.method).toBe(original.method)
+    expect(parsed.url).toBe(original.url)
+    expect(parsed.headers['Content-Type']).toBe('application/json')
+    expect(parsed.headers['X-Key']).toBe('val-123')
+    expect(parsed.params).toEqual([{ key: 'active', value: 'true', enabled: true }])
+    expect(parsed.bodyType).toBe('json')
+    expect(JSON.parse(parsed.body)).toEqual({ name: 'Roundtrip' })
+  })
+
+  it('parses form-urlencoded parameters from multiple -d flags and adjusts the URL', () => {
+    const cmd = `curl -X POST "https://api.exemplo.com/login" \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "username=admin" \\
+  -d "password=123456"`
+
+    const parsed = parseCurlCommand(cmd)
+    expect(parsed).not.toBeNull()
+    if (!parsed) return
+
+    expect(parsed.method).toBe('POST')
+    expect(parsed.url).toBe('https://api.exemplo.com/login?username=admin&password=123456')
+    expect(parsed.params).toEqual([
+      { key: 'username', value: 'admin', enabled: true },
+      { key: 'password', value: '123456', enabled: true }
+    ])
+    expect(parsed.headers['Content-Type']).toBe('application/x-www-form-urlencoded')
+    expect(parsed.body).toBe('username=admin&password=123456')
+  })
+
+  it('parses form-urlencoded parameters when the URL is at the end of the command', () => {
+    const cmd = `curl -X POST \\
+     -H "Content-Type: application/x-www-form-urlencoded" \\
+     -d "username=testuser&password=testpass" \\
+     https://www.example.com/login`
+
+    const parsed = parseCurlCommand(cmd)
+    expect(parsed).not.toBeNull()
+    if (!parsed) return
+
+    expect(parsed.method).toBe('POST')
+    expect(parsed.url).toBe('https://www.example.com/login?username=testuser&password=testpass')
+    expect(parsed.params).toEqual([
+      { key: 'username', value: 'testuser', enabled: true },
+      { key: 'password', value: 'testpass', enabled: true }
+    ])
+    expect(parsed.headers['Content-Type']).toBe('application/x-www-form-urlencoded')
+    expect(parsed.body).toBe('username=testuser&password=testpass')
+  })
+})
+

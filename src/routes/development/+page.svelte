@@ -41,6 +41,7 @@
   import CommandPalette from './components/CommandPalette.svelte'
   import FolderTree from './components/FolderTree.svelte'
   import TabContextMenu from './components/TabContextMenu.svelte'
+  import CurlImportModal from './components/CurlImportModal.svelte'
   import {
     computeDiffPaths,
     contentToValue,
@@ -48,7 +49,21 @@
     matchesDiffPath
   } from './diffUtils.js'
   import { contentErrorsToProblems, type Problem } from './problemsUtils.js'
-  import { moveBefore } from './tabUtils.js'
+  import {
+    moveBefore,
+    createPrimaryTab,
+    addSubTabToPrimary,
+    removeSubTabFromPrimary,
+    promoteSubTabToPrimary,
+    canPromoteSubTab,
+    movePrimaryTabToPane,
+    reorderTabIds,
+    movePrimaryTabBetweenPanes,
+    createDefaultRequestContext,
+    type PrimaryTabState,
+    type SubTabState,
+    type SubTabKind
+  } from './tabUtils.js'
   import {
     collectLeaves,
     collectNodeIds,
@@ -69,12 +84,16 @@
     type SplitLeaf
   } from './splitLayout.js'
   import {
+    buildCurlCommand,
+    buildQueryParamsString,
     buildUrlWithQuery,
     encodeBasicAuth,
     extractValueByPath,
     formatBytes,
     headersToRows,
+    isCurlCommand,
     parseCaptureList,
+    parseCurlCommand,
     parseHeadersText,
     parseQueryParams,
     proxyUrl,
@@ -167,11 +186,39 @@
   const validator = createAjvValidator({ schema })
 
   // ============================================================
-  // TAB STATE — flat parallel arrays for reliable Svelte bind
+  // TAB STATE — 2-level hierarchy:
+  // Level 1: Primary tabs (Editor 1, Editor 2...)
+  // Level 2: Secondary tabs (Principal, extract, edit, requests...)
   // SPLIT STATE — binary tree layout (VS Code / mosaic model)
   // ============================================================
+  let nextPrimaryTabId = 2
+  let primaryTabs: PrimaryTabState[] = [
+    {
+      id: 1,
+      title: 'Editor 1',
+      subTabIds: [1],
+      activeSubTabId: 1,
+      requestState: createDefaultRequestContext()
+    }
+  ]
+  let activePrimaryTabId = 1
+  let subTabsMeta = new Map<number, SubTabState>([
+    [1, { id: 1, primaryTabId: 1, title: 'Principal', kind: 'main' }]
+  ])
+  let draggedLeafId: number | undefined
+  let draggedPrimaryId: number | undefined
+  let draggedPrimarySourceLeafId: number | undefined
+  let dragOverTargetPrimaryId: number | undefined
+  let dragOverTargetPrimaryPosition: 'before' | 'after' | undefined
+  let dragOverLeafId: number | undefined
+  let dragOverTargetSubId: number | undefined
+  let dragOverTargetSubPosition: 'before' | 'after' | undefined
+  let panePrimaryMap = new Map<number, number[]>([[1, [1]]])
+  let paneActivePrimaryMap = new Map<number, number>([[1, 1]])
+  let tabsRenderVersion = 0
+
   let tabIds: number[] = [1]
-  let tabTitles: string[] = ['Editor 1']
+  let tabTitles: string[] = ['Principal']
   let tabContents: Content[] = [{ text: defaultJson, json: undefined }]
   let tabModes: Mode[] = [Mode.tree]
   let tabSelections: (JSONEditorSelection | undefined)[] = [undefined]
@@ -188,15 +235,112 @@
   let panesEl: HTMLDivElement | undefined
   let tabDragActive = false
   let draggedTabId: number | undefined
-  let tabMenu: { x: number; y: number; tabId: number } | undefined
+  let tabMenu: { x: number; y: number; tabId: number; type?: 'primary' | 'sub'; leafId?: number } | undefined
 
   // ---- Requests panel (HTTP client) ----
   let showRequests = false
+  let showCurlModal = false
   let reqMethod = 'GET'
   let reqUrl = ''
   let reqHeaders = ''
   let reqBody = ''
   let reqSending = false
+  let reqSendMode: 'same' | 'new' = 'same'
+
+  function getPanePrimaryTabs(leafId: number, _version?: number): PrimaryTabState[] {
+    const pids = panePrimaryMap.get(leafId)
+    if (pids && pids.length > 0) {
+      const tabs = pids
+        .map((pid) => primaryTabs.find((p) => p.id === pid))
+        .filter((p): p is PrimaryTabState => Boolean(p))
+      if (tabs.length > 0) return tabs
+    }
+    return primaryTabs
+  }
+
+  function getPaneActivePrimaryId(leafId: number, _version?: number): number {
+    const active = paneActivePrimaryMap.get(leafId)
+    const prims = getPanePrimaryTabs(leafId, _version)
+    if (active !== undefined && prims.some((p) => p.id === active)) return active
+    return prims[0]?.id ?? primaryTabs[0]?.id ?? 1
+  }
+
+  function getPaneActivePrimary(leafId: number, _version?: number): PrimaryTabState {
+    const activeId = getPaneActivePrimaryId(leafId, _version)
+    const prims = getPanePrimaryTabs(leafId, _version)
+    return prims.find((p) => p.id === activeId) ?? prims[0] ?? primaryTabs[0]
+  }
+
+  function getPaneSubTabs(primary: PrimaryTabState | undefined, _version?: number): Array<{
+    subTabId: number
+    idx: number
+    meta: SubTabState
+  }> {
+    if (!primary) return []
+    return primary.subTabIds
+      .map((sid) => {
+        const idx = getTabIdx(sid)
+        const meta = subTabsMeta.get(sid) ?? {
+          id: sid,
+          primaryTabId: primary.id,
+          title: tabTitles[idx] || 'Principal',
+          kind: 'main' as SubTabKind
+        }
+        return { subTabId: sid, idx, meta }
+      })
+      .filter((item) => item.idx !== -1)
+  }
+
+  $: activePrimary = getPaneActivePrimary(activeLeafId, tabsRenderVersion)
+  $: activePrimarySubTabs = getPaneSubTabs(activePrimary, tabsRenderVersion)
+
+  $: {
+    if (layoutLeaves.length > 0) {
+      let changed = false
+      const currentLeafIds = new Set(layoutLeaves.map((l) => l.id))
+      for (const k of [...panePrimaryMap.keys()]) {
+        if (!currentLeafIds.has(k)) {
+          panePrimaryMap.delete(k)
+          paneActivePrimaryMap.delete(k)
+          changed = true
+        }
+      }
+      for (const leaf of layoutLeaves) {
+        if (!panePrimaryMap.has(leaf.id) || (panePrimaryMap.get(leaf.id)?.length ?? 0) === 0) {
+          if (layoutLeaves.length === 1) {
+            panePrimaryMap.set(leaf.id, primaryTabs.map((p) => p.id))
+          } else {
+            const assigned = new Set<number>()
+            for (const ids of panePrimaryMap.values()) ids.forEach((id) => assigned.add(id))
+            const unassigned = primaryTabs.filter((p) => !assigned.has(p.id))
+            if (unassigned.length > 0) {
+              panePrimaryMap.set(leaf.id, [unassigned[0].id])
+            } else {
+              panePrimaryMap.set(leaf.id, [primaryTabs[0]?.id ?? 1])
+            }
+          }
+          changed = true
+        }
+        if (!paneActivePrimaryMap.has(leaf.id)) {
+          paneActivePrimaryMap.set(leaf.id, panePrimaryMap.get(leaf.id)?.[0] ?? 1)
+          changed = true
+        }
+      }
+      if (changed) {
+        panePrimaryMap = new Map(panePrimaryMap)
+        paneActivePrimaryMap = new Map(paneActivePrimaryMap)
+      }
+    }
+  }
+
+  $: if (activePrimary) {
+    activePrimary.requestState.method = reqMethod
+    activePrimary.requestState.url = reqUrl
+    activePrimary.requestState.headers = reqHeaders
+    activePrimary.requestState.body = reqBody
+    activePrimary.requestState.bodyType = reqBodyType
+    activePrimary.requestState.sendMode = reqSendMode
+  }
   let reqActiveTab: 'params' | 'headers' | 'body' | 'auth' | 'env' = 'params'
   let reqParams: QueryParam[] = []
   let reqHeaderRows: HeaderRow[] = []
@@ -385,41 +529,73 @@
   }
 
   // ---- Split operations (tree-based) ----
-  function splitActiveLeaf(direction: SplitDirection, tabId?: number) {
+  function splitActiveLeaf(direction: SplitDirection, _tabId?: number) {
     if (layoutLeaves.length >= 4) {
       showDiskSaveLabel('Maximum of 4 panes reached')
       return
     }
-    if (tabId !== undefined) {
-      const idx = getTabIdx(tabId)
-      if (idx === -1) return
-      const leaf = findLeafByTab(layout, idx) ?? getActiveLeaf()
-      if (leaf.tabIdx !== idx) {
-        layout = replaceLeaf(layout, leaf.id, { ...leaf, tabIdx: idx })
-      }
-      activeLeafId = leaf.id
-    }
-    const leaf = getActiveLeaf()
-    const splitId = nextNodeId++
+    const sourceLeafId = activeLeafId
     const newLeafId = nextNodeId++
-    layout = splitLeaf(layout, leaf.id, direction, splitId, newLeafId)
-    activeLeafId = newLeafId
+    const splitId = nextNodeId++
+    layout = splitLeaf(layout, sourceLeafId, direction, splitId, newLeafId)
+
+    const currentTabs = panePrimaryMap.get(sourceLeafId) ?? []
+    if (currentTabs.length > 1) {
+      const primToMove = getPaneActivePrimaryId(sourceLeafId)
+      const { updatedMap } = movePrimaryTabToPane(panePrimaryMap, primToMove, newLeafId)
+      panePrimaryMap = updatedMap
+      selectPrimaryTabInPane(newLeafId, primToMove)
+    } else {
+      const newPrimId = nextPrimaryTabId++
+      const newSubId = nextTabId++
+      addDocWithId(newSubId, 'Principal', '{}', Mode.tree)
+      const { primary, initialSubTab } = createPrimaryTab(newPrimId, `Editor ${newPrimId}`, newSubId)
+      subTabsMeta.set(newSubId, initialSubTab)
+      primaryTabs = [...primaryTabs, primary]
+      panePrimaryMap.set(newLeafId, [newPrimId])
+      paneActivePrimaryMap.set(newLeafId, newPrimId)
+      panePrimaryMap = new Map(panePrimaryMap)
+      paneActivePrimaryMap = new Map(paneActivePrimaryMap)
+      selectPrimaryTabInPane(newLeafId, newPrimId)
+    }
     scheduleAutosave()
+    showDiskSaveLabel('Tela dividida em grid ✓')
   }
 
   function closeActiveLeaf() {
     if (layoutLeaves.length <= 1) return
-    const next = removeLeaf(layout, activeLeafId)
+    closeLeafById(activeLeafId)
+  }
+
+  function closeLeafById(leafId: number) {
+    if (layoutLeaves.length <= 1) return
+    const surviving = layoutLeaves.find((l) => l.id !== leafId)
+    if (surviving) {
+      const tabsToMove = panePrimaryMap.get(leafId) ?? []
+      const survivingTabs = panePrimaryMap.get(surviving.id) ?? []
+      panePrimaryMap.set(surviving.id, [...survivingTabs, ...tabsToMove])
+    }
+    panePrimaryMap.delete(leafId)
+    paneActivePrimaryMap.delete(leafId)
+    panePrimaryMap = new Map(panePrimaryMap)
+    paneActivePrimaryMap = new Map(paneActivePrimaryMap)
+
+    const next = removeLeaf(layout, leafId)
     if (next) {
       layout = next
-      activeLeafId = collectLeaves(layout)[0].id
+      const remainingLeaf = collectLeaves(layout)[0]
+      activeLeafId = remainingLeaf.id
+      activePrimaryTabId = getPaneActivePrimaryId(remainingLeaf.id)
+      const p = primaryTabs.find((x) => x.id === activePrimaryTabId)
+      if (p) loadPrimaryRequestToForm(p)
       scheduleAutosave()
+      showDiskSaveLabel('Grid fechado e tela ajustada ✓')
     }
   }
 
-  // ---- Tab operations ----
-  function addTabWithContent(title: string, text: string, mode: Mode = Mode.tree): number {
-    tabIds = [...tabIds, nextTabId++]
+  // ---- Tab operations (2-level hierarchy) ----
+  function addDocWithId(id: number, title: string, text: string, mode: Mode = Mode.tree): number {
+    tabIds = [...tabIds, id]
     tabTitles = [...tabTitles, title]
     tabContents = [...tabContents, { text, json: undefined }]
     tabModes = [...tabModes, mode]
@@ -427,15 +603,301 @@
     tabRefs = [...tabRefs, undefined]
     tabRevisions = [...tabRevisions, 0]
     tabLastSavedText = [...tabLastSavedText, text]
-    const idx = tabIds.length - 1
-    setActiveLeafTab(idx)
     updateDirtyFlags()
     scheduleAutosave()
+    return tabIds.length - 1
+  }
+
+  function selectPrimaryTabInPane(leafId: number, primaryId: number) {
+    paneActivePrimaryMap.set(leafId, primaryId)
+    paneActivePrimaryMap = new Map(paneActivePrimaryMap)
+    activeLeafId = leafId
+    activePrimaryTabId = primaryId
+    const primary = primaryTabs.find((p) => p.id === primaryId)
+    if (primary) {
+      loadPrimaryRequestToForm(primary)
+      const targetIdx = getTabIdx(primary.activeSubTabId)
+      if (targetIdx !== -1) {
+        layout = replaceLeaf(layout, leafId, { id: leafId, type: 'leaf', tabIdx: targetIdx })
+      }
+    }
+    tabsRenderVersion++
+    scheduleAutosave()
+  }
+
+  function selectPrimaryTab(primaryId: number) {
+    selectPrimaryTabInPane(activeLeafId, primaryId)
+  }
+
+  function selectSubTabInPane(leafId: number, primary: PrimaryTabState, subTabId: number) {
+    primary.activeSubTabId = subTabId
+    primaryTabs = [...primaryTabs]
+    activeLeafId = leafId
+    activePrimaryTabId = primary.id
+    loadPrimaryRequestToForm(primary)
+    const idx = getTabIdx(subTabId)
+    if (idx !== -1) {
+      layout = replaceLeaf(layout, leafId, { id: leafId, type: 'leaf', tabIdx: idx })
+    }
+    tabsRenderVersion++
+    scheduleAutosave()
+  }
+
+  function selectSubTab(subTabId: number) {
+    if (activePrimary) {
+      selectSubTabInPane(activeLeafId, activePrimary, subTabId)
+    }
+  }
+
+  function addPrimaryTabInPane(leafId: number) {
+    const newPrimId = nextPrimaryTabId++
+    const newSubId = nextTabId++
+    const title = `Editor ${newPrimId}`
+    const idx = addDocWithId(newSubId, 'Principal', '{}', Mode.tree)
+    const { primary, initialSubTab } = createPrimaryTab(newPrimId, title, newSubId)
+    subTabsMeta.set(newSubId, initialSubTab)
+    primaryTabs = [...primaryTabs, primary]
+    const existing = panePrimaryMap.get(leafId) ?? []
+    panePrimaryMap.set(leafId, [...existing, newPrimId])
+    panePrimaryMap = new Map(panePrimaryMap)
+    tabsRenderVersion++
+    selectPrimaryTabInPane(leafId, newPrimId)
+  }
+
+  function addPrimaryTab() {
+    addPrimaryTabInPane(activeLeafId)
+  }
+
+  function addSubTabInPane(leafId: number, primary: PrimaryTabState) {
+    const newSubId = nextTabId++
+    const title = `Documento ${primary.subTabIds.length + 1}`
+    const idx = addDocWithId(newSubId, title, '{}', Mode.tree)
+    const { updatedPrimary, subTab } = addSubTabToPrimary(primary, newSubId, title, 'custom')
+    subTabsMeta.set(newSubId, subTab)
+    primaryTabs = primaryTabs.map((p) => (p.id === updatedPrimary.id ? updatedPrimary : p))
+    tabsRenderVersion++
+    selectSubTabInPane(leafId, updatedPrimary, newSubId)
+  }
+
+  function addSubTab() {
+    if (activePrimary) {
+      addSubTabInPane(activeLeafId, activePrimary)
+    }
+  }
+
+  function loadPrimaryRequestToForm(primary: PrimaryTabState) {
+    const rs = primary.requestState
+    reqMethod = rs.method || 'GET'
+    reqUrl = rs.url || ''
+    reqHeaders = rs.headers || ''
+    reqBody = rs.body || ''
+    reqBodyType = rs.bodyType || 'json'
+    reqSendMode = rs.sendMode || 'same'
+    reqParams = parseQueryParams(reqUrl)
+    reqHeaderRows = headersToRows(reqHeaders)
+  }
+
+  function closePrimaryTabInPane(leafId: number, primaryId: number) {
+    const primary = primaryTabs.find((p) => p.id === primaryId)
+    if (!primary) return
+
+    primary.subTabIds.forEach((sid) => {
+      subTabsMeta.delete(sid)
+      closeTab(sid)
+    })
+
+    primaryTabs = primaryTabs.filter((p) => p.id !== primaryId)
+
+    const currentList = panePrimaryMap.get(leafId) ?? []
+    const updatedList = currentList.filter((id) => id !== primaryId)
+    panePrimaryMap.set(leafId, updatedList)
+    panePrimaryMap = new Map(panePrimaryMap)
+
+    if (updatedList.length === 0) {
+      if (layoutLeaves.length > 1) {
+        const collapsed = removeLeaf(layout, leafId)
+        if (collapsed) {
+          layout = collapsed
+          panePrimaryMap.delete(leafId)
+          paneActivePrimaryMap.delete(leafId)
+          panePrimaryMap = new Map(panePrimaryMap)
+          paneActivePrimaryMap = new Map(paneActivePrimaryMap)
+          const remainingLeaf = collectLeaves(layout)[0]
+          activeLeafId = remainingLeaf.id
+          activePrimaryTabId = getPaneActivePrimaryId(remainingLeaf.id)
+          const p = primaryTabs.find((x) => x.id === activePrimaryTabId)
+          if (p) loadPrimaryRequestToForm(p)
+          tabsRenderVersion++
+          scheduleAutosave()
+          showDiskSaveLabel('Grid colapsado e tela ajustada ✓')
+          return
+        }
+      } else {
+        const newPrimId = 1
+        const newSubId = nextTabId++
+        addDocWithId(newSubId, 'Principal', '{}', Mode.tree)
+        const { primary: newP, initialSubTab } = createPrimaryTab(newPrimId, 'Editor 1', newSubId)
+        nextPrimaryTabId = 2
+        primaryTabs = [newP]
+        subTabsMeta.clear()
+        subTabsMeta.set(newSubId, initialSubTab)
+        panePrimaryMap.set(leafId, [newPrimId])
+        panePrimaryMap = new Map(panePrimaryMap)
+        tabsRenderVersion++
+        selectPrimaryTabInPane(leafId, newPrimId)
+        return
+      }
+    } else {
+      selectPrimaryTabInPane(leafId, updatedList[0])
+    }
+    tabsRenderVersion++
+  }
+
+  function closePrimaryTab(primaryId: number) {
+    closePrimaryTabInPane(activeLeafId, primaryId)
+  }
+
+  function closeSubTabInPane(leafId: number, primary: PrimaryTabState, subTabId: number) {
+    if (primary.subTabIds.length <= 1) {
+      const idx = getTabIdx(subTabId)
+      if (idx !== -1) {
+        tabContents[idx] = { text: '{}', json: undefined }
+        tabTitles[idx] = 'Principal'
+        tabContents = [...tabContents]
+        tabTitles = [...tabTitles]
+        tabsRenderVersion++
+        scheduleAutosave()
+      }
+      return
+    }
+
+    const { updatedPrimary } = removeSubTabFromPrimary(primary, subTabId)
+    primaryTabs = primaryTabs.map((p) => (p.id === updatedPrimary.id ? updatedPrimary : p))
+    subTabsMeta.delete(subTabId)
+    closeTab(subTabId)
+    tabsRenderVersion++
+    selectSubTabInPane(leafId, updatedPrimary, updatedPrimary.activeSubTabId)
+  }
+
+  function closeSubTab(subTabId: number) {
+    const primary = primaryTabs.find((p) => p.subTabIds.includes(subTabId))
+    if (primary) {
+      closeSubTabInPane(activeLeafId, primary, subTabId)
+    }
+  }
+
+  function promoteSubTabInPane(leafId: number, subTabId: number) {
+    const meta = subTabsMeta.get(subTabId)
+    if (!canPromoteSubTab(meta)) {
+      showDiskSaveLabel('A aba principal não pode ser promovida')
+      return
+    }
+    const fromPrimary = primaryTabs.find((p) => p.subTabIds.includes(subTabId))
+    if (!fromPrimary) return
+    const idx = getTabIdx(subTabId)
+    const subTitle = tabTitles[idx] || meta?.title || `Editor ${nextPrimaryTabId}`
+    const newPrimId = nextPrimaryTabId++
+
+    let fallbackSubId: number | undefined
+    if (fromPrimary.subTabIds.length <= 1) {
+      fallbackSubId = nextTabId++
+      addDocWithId(fallbackSubId, 'Principal', '{}', Mode.tree)
+    }
+
+    const { updatedSource, newPrimary, updatedSubTab, fallbackCreated } = promoteSubTabToPrimary(
+      fromPrimary,
+      subTabId,
+      newPrimId,
+      subTitle,
+      fallbackSubId
+    )
+
+    if (fallbackCreated && fallbackSubId !== undefined) {
+      subTabsMeta.set(fallbackSubId, fallbackCreated)
+    }
+    subTabsMeta.set(subTabId, updatedSubTab)
+
+    primaryTabs = [
+      ...primaryTabs.map((p) => (p.id === updatedSource.id ? updatedSource : p)),
+      newPrimary
+    ]
+
+    const existing = panePrimaryMap.get(leafId) ?? []
+    panePrimaryMap.set(leafId, [...existing, newPrimId])
+    panePrimaryMap = new Map(panePrimaryMap)
+
+    tabsRenderVersion++
+    selectPrimaryTabInPane(leafId, newPrimId)
+    showDiskSaveLabel(`Sub-aba "${subTitle}" promovida para Nível 1 ✓`)
+  }
+
+  function promoteSubTab(subTabId: number) {
+    promoteSubTabInPane(activeLeafId, subTabId)
+  }
+
+  function renamePrimaryTab(primaryId: number, title: string) {
+    primaryTabs = primaryTabs.map((p) => (p.id === primaryId ? { ...p, title } : p))
+    tabsRenderVersion++
+    scheduleAutosave()
+  }
+
+  function renameSubTab(subTabId: number, title: string) {
+    const idx = getTabIdx(subTabId)
+    if (idx !== -1) {
+      tabTitles[idx] = title
+      tabTitles = [...tabTitles]
+    }
+    const meta = subTabsMeta.get(subTabId)
+    if (meta) {
+      meta.title = title
+      subTabsMeta.set(subTabId, meta)
+    }
+    tabsRenderVersion++
+    scheduleAutosave()
+  }
+
+  function addPrimaryTabWithContent(title: string, text: string, mode: Mode = Mode.tree): number {
+    const newPrimId = nextPrimaryTabId++
+    const newSubId = nextTabId++
+    const idx = addDocWithId(newSubId, title, text, mode)
+    const { primary, initialSubTab } = createPrimaryTab(newPrimId, title, newSubId)
+    subTabsMeta.set(newSubId, initialSubTab)
+    primaryTabs = [...primaryTabs, primary]
+    const existing = panePrimaryMap.get(activeLeafId) ?? []
+    panePrimaryMap.set(activeLeafId, [...existing, newPrimId])
+    panePrimaryMap = new Map(panePrimaryMap)
+    paneActivePrimaryMap.set(activeLeafId, newPrimId)
+    paneActivePrimaryMap = new Map(paneActivePrimaryMap)
+    activePrimaryTabId = newPrimId
+    setActiveLeafTab(idx)
+    loadPrimaryRequestToForm(primary)
+    tabsRenderVersion++
     return idx
   }
 
+  function addSubTabWithContent(
+    title: string,
+    text: string,
+    mode: Mode = Mode.tree,
+    kind: SubTabKind = 'custom'
+  ): number {
+    const activeP = getPaneActivePrimary(activeLeafId)
+    const newSubId = nextTabId++
+    const idx = addDocWithId(newSubId, title, text, mode)
+    const { updatedPrimary, subTab } = addSubTabToPrimary(activeP, newSubId, title, kind)
+    subTabsMeta.set(newSubId, subTab)
+    primaryTabs = primaryTabs.map((p) => (p.id === updatedPrimary.id ? updatedPrimary : p))
+    tabsRenderVersion++
+    selectSubTabInPane(activeLeafId, updatedPrimary, newSubId)
+    return idx
+  }
+
+  function addTabWithContent(title: string, text: string, mode: Mode = Mode.tree): number {
+    return addPrimaryTabWithContent(title, text, mode)
+  }
+
   function addTab() {
-    addTabWithContent(`Editor ${tabIds.length + 1}`, '{}')
+    addPrimaryTab()
   }
 
   function closeTab(tabId: number) {
@@ -476,6 +938,7 @@
     if (idx === -1) return
     tabTitles[idx] = title
     tabTitles = [...tabTitles]
+    tabsRenderVersion++
     scheduleAutosave()
   }
 
@@ -584,71 +1047,351 @@
     window.addEventListener('mouseup', onUp)
   }
 
-  function buildTabMenuItems(tabId: number) {
-    const single = tabIds.length <= 1
-    const idx = getTabIdx(tabId)
-    const disabledSplit = layoutLeaves.length >= 4
+  function buildPrimaryTabMenuItems(primaryId: number, leafId?: number) {
+    const p = primaryTabs.find((pt) => pt.id === primaryId)
+    const effectiveLeafId = leafId ?? activeLeafId
+    const currentPaneTabs = getPanePrimaryTabs(effectiveLeafId)
+    const isSingle = currentPaneTabs.length <= 1 && layoutLeaves.length <= 1
     return [
       {
-        label: 'Split Right',
-        disabled: disabledSplit,
-        action: () => splitActiveLeaf('vertical', tabId)
-      },
-      {
-        label: 'Split Down',
-        disabled: disabledSplit,
-        action: () => splitActiveLeaf('horizontal', tabId)
-      },
-      {
-        label: 'Rename…',
+        label: '+ Nova Sub-aba',
+        disabled: false,
         action: () => {
-          const n = prompt('Rename:', tabTitles[idx])
-          if (n) renameTab(tabId, n)
+          if (p) {
+            selectPrimaryTabInPane(effectiveLeafId, primaryId)
+            addSubTabInPane(effectiveLeafId, p)
+          }
         }
       },
-      { label: 'Close', disabled: single, action: () => closeTab(tabId) },
-      { label: 'Close Others', disabled: single, action: () => closeOtherTabs(tabId) },
-      { label: 'Close All', disabled: single, action: closeAllTabs }
+      {
+        label: 'Renomear…',
+        disabled: false,
+        action: () => {
+          const n = prompt('Renomear aba principal:', p?.title)
+          if (n) renamePrimaryTab(primaryId, n)
+        }
+      },
+      {
+        label: 'Dividir tela (Split Vertical)',
+        disabled: layoutLeaves.length >= 4,
+        action: () => splitActiveLeaf('vertical')
+      },
+      {
+        label: 'Dividir tela (Split Horizontal)',
+        disabled: layoutLeaves.length >= 4,
+        action: () => splitActiveLeaf('horizontal')
+      },
+      {
+        label: 'Fechar Aba Principal',
+        disabled: isSingle,
+        action: () => closePrimaryTabInPane(effectiveLeafId, primaryId)
+      }
     ]
   }
 
-  // ---- Drag tab between panes ----
-  function onTabDragStart(e: DragEvent, tabId: number) {
-    e.dataTransfer!.setData('text/plain', String(tabId))
-    e.dataTransfer!.effectAllowed = 'move'
-    draggedTabId = tabId
-    tabDragActive = true
+  function buildSubTabMenuItems(subTabId: number, leafId?: number) {
+    const meta = subTabsMeta.get(subTabId)
+    const canPromote = canPromoteSubTab(meta)
+    const effectiveLeafId = leafId ?? activeLeafId
+    const primary = primaryTabs.find((p) => p.subTabIds.includes(subTabId))
+    const isSingle = (primary?.subTabIds.length ?? 0) <= 1
+    return [
+      ...(canPromote
+        ? [
+            {
+              label: '⇡ Promover para Aba Principal (Nível 1)',
+              disabled: false,
+              action: () => promoteSubTabInPane(effectiveLeafId, subTabId)
+            }
+          ]
+        : []),
+      {
+        label: 'Renomear…',
+        disabled: false,
+        action: () => {
+          const idx = getTabIdx(subTabId)
+          const n = prompt('Renomear sub-aba:', tabTitles[idx])
+          if (n) renameSubTab(subTabId, n)
+        }
+      },
+      {
+        label: 'Fechar Sub-aba',
+        disabled: isSingle,
+        action: () => {
+          if (primary) closeSubTabInPane(effectiveLeafId, primary, subTabId)
+        }
+      }
+    ]
   }
+
+  function buildTabMenuItems(tabId: number) {
+    return buildSubTabMenuItems(tabId)
+  }
+
+  // ---- Drag & drop: Level 1 tabs, Level 2 sub-tabs, and Pane auto-collapse ----
+  function onPrimaryTabDragStartInPane(e: DragEvent, leafId: number, primaryId: number) {
+    draggedPrimaryId = primaryId
+    draggedPrimarySourceLeafId = leafId
+    tabDragActive = true
+    e.dataTransfer!.setData('application/x-primary-id', String(primaryId))
+    e.dataTransfer!.setData('application/x-source-leaf-id', String(leafId))
+    e.dataTransfer!.effectAllowed = 'move'
+  }
+
+  function onPrimaryTabDragOverInPane(e: DragEvent, leafId: number, targetPrimaryId: number) {
+    if (!draggedPrimaryId) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer!.dropEffect = 'move'
+    dragOverLeafId = leafId
+    if (draggedPrimaryId !== targetPrimaryId) {
+      dragOverTargetPrimaryId = targetPrimaryId
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      dragOverTargetPrimaryPosition = e.clientX - rect.left < rect.width / 2 ? 'before' : 'after'
+    } else {
+      dragOverTargetPrimaryId = undefined
+      dragOverTargetPrimaryPosition = undefined
+    }
+  }
+
+  function onPrimaryTabDrop(e: DragEvent, targetLeafId: number, targetPrimaryId?: number) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (draggedPrimaryId === undefined || draggedPrimarySourceLeafId === undefined) {
+      onTabDragEnd()
+      return
+    }
+
+    const primId = draggedPrimaryId
+    const sourceLeafId = draggedPrimarySourceLeafId
+    const targetPos = dragOverTargetPrimaryPosition ?? 'after'
+
+    if (sourceLeafId === targetLeafId) {
+      // Reordering within the same pane
+      let list = [...(panePrimaryMap.get(targetLeafId) ?? [])]
+      if (list.length === 0 || !list.includes(primId)) {
+        list = getPanePrimaryTabs(targetLeafId).map((p) => p.id)
+      }
+      const nextList = reorderTabIds(list, primId, targetPrimaryId, targetPos)
+      panePrimaryMap.set(targetLeafId, nextList)
+      panePrimaryMap = new Map(panePrimaryMap)
+
+      // Synchronize global primaryTabs order
+      const reordered: PrimaryTabState[] = []
+      for (const id of nextList) {
+        const p = primaryTabs.find((item) => item.id === id)
+        if (p) reordered.push(p)
+      }
+      for (const p of primaryTabs) {
+        if (!reordered.includes(p)) reordered.push(p)
+      }
+      primaryTabs = reordered
+      showDiskSaveLabel('Abas reorganizadas ✓')
+    } else {
+      // Moving between panes
+      let sourceList = [...(panePrimaryMap.get(sourceLeafId) ?? [])]
+      if (sourceList.length === 0 || !sourceList.includes(primId)) {
+        sourceList = getPanePrimaryTabs(sourceLeafId).map((p) => p.id)
+        panePrimaryMap.set(sourceLeafId, sourceList)
+      }
+
+      let targetList = [...(panePrimaryMap.get(targetLeafId) ?? [])]
+      if (targetList.length === 0) {
+        targetList = getPanePrimaryTabs(targetLeafId).map((p) => p.id)
+        panePrimaryMap.set(targetLeafId, targetList)
+      }
+
+      const { updatedMap, emptySourceLeafId } = movePrimaryTabBetweenPanes(
+        panePrimaryMap,
+        primId,
+        sourceLeafId,
+        targetLeafId,
+        targetPrimaryId,
+        targetPos
+      )
+      panePrimaryMap = updatedMap
+
+      // If source pane still has tabs, ensure its active tab is valid
+      const remainingSource = panePrimaryMap.get(sourceLeafId) ?? []
+      if (remainingSource.length > 0) {
+        const currentSourceActive = paneActivePrimaryMap.get(sourceLeafId)
+        if (currentSourceActive === primId || !remainingSource.includes(currentSourceActive ?? -1)) {
+          paneActivePrimaryMap.set(sourceLeafId, remainingSource[0])
+          paneActivePrimaryMap = new Map(paneActivePrimaryMap)
+        }
+      }
+
+      // Auto-collapse if source pane became empty
+      if (emptySourceLeafId !== undefined && layoutLeaves.length > 1) {
+        const collapsed = removeLeaf(layout, emptySourceLeafId)
+        if (collapsed) {
+          layout = collapsed
+          panePrimaryMap.delete(emptySourceLeafId)
+          paneActivePrimaryMap.delete(emptySourceLeafId)
+          panePrimaryMap = new Map(panePrimaryMap)
+          paneActivePrimaryMap = new Map(paneActivePrimaryMap)
+        }
+      }
+
+      selectPrimaryTabInPane(targetLeafId, primId)
+      showDiskSaveLabel('Aba movida para o grid ✓')
+    }
+
+    tabsRenderVersion++
+    scheduleAutosave()
+    onTabDragEnd()
+  }
+
+  function onSubTabDragStart(e: DragEvent, subTabId: number) {
+    draggedTabId = subTabId
+    tabDragActive = true
+    e.dataTransfer!.setData('text/plain', String(subTabId))
+    e.dataTransfer!.setData('application/x-subtab-id', String(subTabId))
+    e.dataTransfer!.effectAllowed = 'move'
+  }
+
+  function onSubTabDragOver(e: DragEvent, targetSubId: number) {
+    if (!draggedTabId) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer!.dropEffect = 'move'
+    if (draggedTabId !== targetSubId) {
+      dragOverTargetSubId = targetSubId
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      dragOverTargetSubPosition = e.clientX - rect.left < rect.width / 2 ? 'before' : 'after'
+    } else {
+      dragOverTargetSubId = undefined
+      dragOverTargetSubPosition = undefined
+    }
+  }
+
+  function onSubTabDrop(e: DragEvent, targetPrimary: PrimaryTabState, targetSubId?: number) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (draggedTabId === undefined) {
+      onTabDragEnd()
+      return
+    }
+
+    const sid = draggedTabId
+    const targetPos = dragOverTargetSubPosition ?? 'after'
+
+    if (targetPrimary.subTabIds.includes(sid)) {
+      // Reordering within the same primary tab
+      targetPrimary.subTabIds = reorderTabIds(targetPrimary.subTabIds, sid, targetSubId, targetPos)
+      primaryTabs = [...primaryTabs]
+      tabsRenderVersion++
+      showDiskSaveLabel('Sub-abas reorganizadas ✓')
+      scheduleAutosave()
+    } else {
+      // Dragging a subtab to another primary tab
+      const sourcePrimary = primaryTabs.find((p) => p.subTabIds.includes(sid))
+      const meta = subTabsMeta.get(sid)
+      if (sourcePrimary && meta && canPromoteSubTab(meta)) {
+        sourcePrimary.subTabIds = sourcePrimary.subTabIds.filter((id) => id !== sid)
+        if (sourcePrimary.activeSubTabId === sid) {
+          sourcePrimary.activeSubTabId = sourcePrimary.subTabIds[0] ?? 0
+        }
+        meta.primaryTabId = targetPrimary.id
+        subTabsMeta.set(sid, meta)
+        if (targetSubId !== undefined && targetPrimary.subTabIds.includes(targetSubId)) {
+          const insertIdx = targetPos === 'before'
+            ? targetPrimary.subTabIds.indexOf(targetSubId)
+            : targetPrimary.subTabIds.indexOf(targetSubId) + 1
+          targetPrimary.subTabIds.splice(insertIdx, 0, sid)
+        } else {
+          targetPrimary.subTabIds = [...targetPrimary.subTabIds, sid]
+        }
+        targetPrimary.activeSubTabId = sid
+        primaryTabs = [...primaryTabs]
+        tabsRenderVersion++
+        showDiskSaveLabel('Sub-aba transferida para o editor ✓')
+        scheduleAutosave()
+      }
+    }
+
+    onTabDragEnd()
+  }
+
   function onTabDragEnd() {
     draggedTabId = undefined
+    draggedLeafId = undefined
+    draggedPrimaryId = undefined
+    draggedPrimarySourceLeafId = undefined
+    dragOverTargetPrimaryId = undefined
+    dragOverTargetPrimaryPosition = undefined
+    dragOverLeafId = undefined
+    dragOverTargetSubId = undefined
+    dragOverTargetSubPosition = undefined
     tabDragActive = false
   }
-  function onTabDragOverReorder(e: DragEvent, tabId: number) {
-    if (!draggedTabId || draggedTabId === tabId) return
-    e.preventDefault()
-    moveTab(draggedTabId, tabId)
-  }
+
   function onPaneDragOver(e: DragEvent) {
     e.preventDefault()
     e.dataTransfer!.dropEffect = 'move'
   }
-  function onPaneDrop(e: DragEvent, leafId: number) {
+
+  function onPaneDrop(e: DragEvent, targetLeafId: number) {
     e.preventDefault()
-    const tabId = Number(e.dataTransfer!.getData('text/plain'))
-    const idx = getTabIdx(tabId)
-    if (idx === -1) return
-    const target = findLeaf(layout, leafId)
-    if (!target || target.tabIdx === idx) return
-    const source = findLeafByTab(layout, idx)
-    if (source && source.id !== leafId) {
-      // Move semantics: the target leaf gets this document, the source leaf
-      // gets the document that was previously in the target leaf (swap).
-      layout = replaceLeaf(layout, leafId, { ...target, tabIdx: idx })
-      layout = replaceLeaf(layout, source.id, { ...source, tabIdx: target.tabIdx })
-    } else {
-      layout = replaceLeaf(layout, leafId, { ...target, tabIdx: idx })
+    if (draggedPrimaryId !== undefined) {
+      onPrimaryTabDrop(e, targetLeafId)
+      return
     }
+    if (draggedTabId !== undefined) {
+      const targetPrim = getPaneActivePrimary(targetLeafId)
+      if (targetPrim) {
+        onSubTabDrop(e, targetPrim)
+      }
+      return
+    }
+    onTabDragEnd()
+  }
+
+  function onSplitDropPrimary(e: DragEvent, sourceLeafId: number, direction: SplitDirection) {
+    e.preventDefault()
+    if (draggedPrimaryId === undefined) return
+    if (layoutLeaves.length >= 4) {
+      showDiskSaveLabel('Maximum of 4 panes reached')
+      return
+    }
+
+    const primId = draggedPrimaryId
+    const sourceLeaf = draggedPrimarySourceLeafId ?? sourceLeafId
+    const newLeafId = nextNodeId++
+    const splitId = nextNodeId++
+
+    layout = splitLeaf(layout, sourceLeaf, direction, splitId, newLeafId)
+
+    const { updatedMap, emptySourceLeafId } = movePrimaryTabToPane(
+      panePrimaryMap,
+      primId,
+      newLeafId
+    )
+    panePrimaryMap = updatedMap
+
+    if (emptySourceLeafId !== undefined) {
+      const fallbackPrimId = nextPrimaryTabId++
+      const fallbackSubId = nextTabId++
+      addDocWithId(fallbackSubId, 'Principal', '{}', Mode.tree)
+      const { primary: fbP, initialSubTab: fbSub } = createPrimaryTab(
+        fallbackPrimId,
+        `Editor ${fallbackPrimId}`,
+        fallbackSubId
+      )
+      subTabsMeta.set(fallbackSubId, fbSub)
+      primaryTabs = [...primaryTabs, fbP]
+      panePrimaryMap.set(emptySourceLeafId, [fallbackPrimId])
+      paneActivePrimaryMap.set(emptySourceLeafId, fallbackPrimId)
+    }
+
+    panePrimaryMap = new Map(panePrimaryMap)
+    selectPrimaryTabInPane(newLeafId, primId)
+    draggedPrimaryId = undefined
+    draggedPrimarySourceLeafId = undefined
+    tabDragActive = false
+    tabsRenderVersion++
     scheduleAutosave()
+    showDiskSaveLabel('Tela dividida com sucesso ✓')
   }
 
   // ---- Settings ----
@@ -770,15 +1513,30 @@
   }
 
   $: workspaceSnapshot = {
-    version: 2 as const,
+    version: 3 as const,
     tabs: tabIds.map((id, i) => ({
       id,
       title: tabTitles[i],
       text: getTabText(i),
-      mode: tabModes[i]
+      mode: tabModes[i],
+      primaryTabId: subTabsMeta.get(id)?.primaryTabId,
+      kind: subTabsMeta.get(id)?.kind
     })),
+    primaryTabs: primaryTabs.map((pt) => ({
+      id: pt.id,
+      title: pt.title,
+      subTabIds: pt.subTabIds,
+      activeSubTabId: pt.activeSubTabId,
+      requestState: pt.requestState
+    })),
+    activePrimaryTabId,
+    panePrimaryMap: Object.fromEntries([...panePrimaryMap.entries()].map(([k, v]) => [k, v])),
+    paneActivePrimaryMap: Object.fromEntries(
+      [...paneActivePrimaryMap.entries()].map(([k, v]) => [k, v])
+    ),
     layout: serializeLayout(layout),
     nextTabId,
+    nextPrimaryTabId,
     nextNodeId
   }
 
@@ -824,8 +1582,44 @@
       tabLastSavedText = saved.tabs.map((t) => t.text)
       updateDirtyFlags()
       nextTabId = Math.max(saved.nextTabId, ...saved.tabs.map((t) => t.id)) + 1
+
+      if (saved.primaryTabs && saved.primaryTabs.length > 0) {
+        primaryTabs = saved.primaryTabs.map((pt) => ({
+          ...pt,
+          requestState: pt.requestState ?? createDefaultRequestContext()
+        }))
+        activePrimaryTabId = saved.activePrimaryTabId ?? primaryTabs[0].id
+        nextPrimaryTabId = Math.max(saved.nextPrimaryTabId ?? 1, ...primaryTabs.map((p) => p.id)) + 1
+      } else {
+        primaryTabs = saved.tabs.map((t, i) => ({
+          id: i + 1,
+          title: t.title || `Editor ${i + 1}`,
+          subTabIds: [t.id],
+          activeSubTabId: t.id,
+          requestState: createDefaultRequestContext()
+        }))
+        activePrimaryTabId = primaryTabs[0]?.id ?? 1
+        nextPrimaryTabId = primaryTabs.length + 1
+      }
+
+      subTabsMeta.clear()
+      primaryTabs.forEach((pt) => {
+        pt.subTabIds.forEach((sid) => {
+          const t = saved.tabs.find((x) => x.id === sid)
+          subTabsMeta.set(sid, {
+            id: sid,
+            primaryTabId: pt.id,
+            title: t?.title ?? 'Principal',
+            kind: (t?.kind as SubTabKind) ?? 'main'
+          })
+        })
+      })
+
+      const currP = primaryTabs.find((p) => p.id === activePrimaryTabId) ?? primaryTabs[0]
+      if (currP) loadPrimaryRequestToForm(currP)
+
       const validTabIdx = (idx: number) => (idx >= 0 && idx < n ? idx : 0)
-      if (saved.version === 2 && saved.layout) {
+      if ((saved.version === 2 || saved.version === 3) && saved.layout) {
         layout = mapLeaves(parseLayout(saved.layout), (leaf) => ({
           ...leaf,
           tabIdx: validTabIdx(leaf.tabIdx)
@@ -841,6 +1635,16 @@
             : leaf
         }
         layout = root ?? createLeaf(1, 0)
+      }
+      if (saved.panePrimaryMap) {
+        panePrimaryMap = new Map(
+          Object.entries(saved.panePrimaryMap).map(([k, v]) => [Number(k), v])
+        )
+      }
+      if (saved.paneActivePrimaryMap) {
+        paneActivePrimaryMap = new Map(
+          Object.entries(saved.paneActivePrimaryMap).map(([k, v]) => [Number(k), v])
+        )
       }
       activeLeafId = collectLeaves(layout)[0]?.id ?? 1
     }
@@ -1202,24 +2006,24 @@
     })
   }
 
-  /** Extract the selected JSON into a NEW tab, keeping the original document untouched. */
+  /** Extract the selected JSON into a Level 2 sub-tab, keeping the original document untouched. */
   function handleExtractToNewTab(extractedValue: unknown, pointer: string) {
     const text = JSON.stringify(extractedValue, null, 2)
     const suffix = (pointer || 'root').replace(/^\/+/, '').replace(/[^a-zA-Z0-9_.-]+/g, '-')
     const name = `extract-${suffix || 'root'}.json`
-    addTabWithContent(name, text, guessMode(name, text))
-    showDiskSaveLabel(`Extracted "${pointer || '/'}" into a new tab`)
+    addSubTabWithContent(name, text, guessMode(name, text), 'extract')
+    showDiskSaveLabel(`Extraído "${pointer || '/'}" como sub-aba (Nível 2)`)
   }
 
-  /** Open a primitive value in a preview tab (with the modal's full UI inline). */
+  /** Open a primitive value in a preview tab as a Level 2 sub-tab. */
   function handleEditWithPreview(props: EditWithPreviewProps) {
     const sourceTabId = tabIds[getActiveLeaf().tabIdx]
     const pointer = compileJSONPointer(props.path)
-    const idx = addTabWithContent(`Preview: ${props.pathLabel}`, props.value, Mode.text)
+    const title = `Preview: ${props.pathLabel}`
+    const idx = addSubTabWithContent(title, props.value, Mode.text, 'preview')
     previewTabInfo.set(tabIds[idx], {
       pathLabel: props.pathLabel,
       onSave: (value: string) => {
-        // keep the value as a string unless it parses as another JSON type
         let updated: unknown = value
         try {
           updated = JSON.parse(value)
@@ -1229,19 +2033,20 @@
         applyReplaceToSource(sourceTabId, pointer, updated)
       }
     })
-    showDiskSaveLabel(`Preview tab opened: "${props.pathLabel}"`)
+    showDiskSaveLabel(`Preview aberto como sub-aba (Nível 2): "${props.pathLabel}"`)
   }
 
-  /** Open nested object/array content in a regular tab, syncing edits back live. */
+  /** Open nested object/array content as a Level 2 sub-tab, syncing edits back live. */
   function handleEditNestedContent(props: JSONEditorModalCallback) {
     const pointer = compileJSONPointer(props.path)
     const sourceTabId = tabIds[getActiveLeaf().tabIdx]
     const text = isJSONContent(props.content)
       ? JSON.stringify(props.content.json, null, 2)
       : (props.content.text ?? '{}')
-    const idx = addTabWithContent(`Edit: ${pointer || '(root)'}`, text, Mode.tree)
+    const title = `Edit: ${pointer || '(root)'}`
+    const idx = addSubTabWithContent(title, text, Mode.tree, 'nested')
     nestedTabInfo.set(tabIds[idx], { pointer, sourceTabId, onClose: props.onClose })
-    showDiskSaveLabel(`Nested content tab opened: "${pointer || '/'}"`)
+    showDiskSaveLabel(`Edição aninhada aberta como sub-aba (Nível 2): "${pointer || '/'}"`)
   }
 
   // ---- Samples ----
@@ -1429,9 +2234,42 @@
         responseText: truncateText(text, MAX_RESPONSE_HISTORY)
       }
       reqHistory = [entry, ...reqHistory].slice(0, 20)
-      void saveRequestHistory(reqHistory)
       const name = responseName(method, resolvedUrl.resolved)
-      addTabWithContent(name, text, guessMode(name, text))
+      const pathPart =
+        resolvedUrl.resolved.split('?')[0].split('/').filter(Boolean).pop() || 'endpoint'
+      const displayTitle = `⚡ ${method} ${pathPart} [${res.status}]`
+
+      if (reqSendMode === 'same' && activePrimary.requestState.lastResponseTabId !== undefined) {
+        const lastRespId = activePrimary.requestState.lastResponseTabId
+        const existingIdx = getTabIdx(lastRespId)
+        if (existingIdx !== -1 && activePrimary.subTabIds.includes(lastRespId)) {
+          tabContents[existingIdx] = { text, json: undefined }
+          tabTitles[existingIdx] = displayTitle
+          tabModes[existingIdx] = guessMode(name, text)
+          tabLastSavedText[existingIdx] = text
+          bumpRevision(existingIdx)
+          activePrimary.activeSubTabId = lastRespId
+          primaryTabs = [...primaryTabs]
+          setActiveLeafTab(existingIdx)
+          showDiskSaveLabel(`Resposta atualizada na aba: ${displayTitle}`)
+          reqSending = false
+          return
+        }
+      }
+
+      const newSubId = nextTabId++
+      const newIdx = addDocWithId(newSubId, displayTitle, text, guessMode(name, text))
+      const { updatedPrimary, subTab } = addSubTabToPrimary(
+        activePrimary,
+        newSubId,
+        displayTitle,
+        'response'
+      )
+      subTabsMeta.set(newSubId, subTab)
+      updatedPrimary.requestState.lastResponseTabId = newSubId
+      primaryTabs = primaryTabs.map((p) => (p.id === updatedPrimary.id ? updatedPrimary : p))
+      setActiveLeafTab(newIdx)
+      showDiskSaveLabel(`Resposta aberta como nova sub-aba: ${displayTitle}`)
     } catch (err) {
       reqResult = {
         error: proxyTemplate
@@ -1452,14 +2290,112 @@
     reqBodyType = entry.body ? 'json' : 'none'
   }
 
-  // ---- Params / Headers row editors ----
+  // ---- Params / Headers row editors & cURL support ----
+  function applyCurlCommand(curlText: string): boolean {
+    const parsed = parseCurlCommand(curlText)
+    if (!parsed) return false
+
+    reqMethod = parsed.method
+    reqUrl = parsed.url
+    reqParams = parsed.params.length > 0 ? parsed.params : parseQueryParams(parsed.url)
+    reqHeaderRows = parsed.headerRows
+    reqHeaders = rowsToHeadersText(reqHeaderRows)
+    reqBody = parsed.body
+    reqBodyType = parsed.bodyType
+
+    if (parsed.auth) {
+      if (parsed.auth.type === 'bearer' && parsed.auth.token) {
+        reqAuthType = 'bearer'
+        authBearerToken = parsed.auth.token
+      } else if (parsed.auth.type === 'basic') {
+        reqAuthType = 'basic'
+        authBasicUser = parsed.auth.username ?? ''
+        authBasicPass = parsed.auth.password ?? ''
+      }
+    }
+
+    if (parsed.params.length > 0) {
+      reqActiveTab = 'params'
+    } else if (parsed.headerRows.length > 0) {
+      reqActiveTab = 'headers'
+    } else if (parsed.body) {
+      reqActiveTab = 'body'
+    }
+
+    showRequests = true
+    showDiskSaveLabel(`cURL imported: ${reqMethod} ${reqUrl}`)
+    return true
+  }
+
+  function onUrlPaste(e: ClipboardEvent) {
+    const text = e.clipboardData?.getData('text')
+    if (text && isCurlCommand(text)) {
+      e.preventDefault()
+      const applied = applyCurlCommand(text)
+      if (!applied) {
+        reqUrl = text
+        onUrlInput()
+      }
+    }
+  }
+
   function onUrlInput() {
+    if (isCurlCommand(reqUrl)) {
+      applyCurlCommand(reqUrl)
+      return
+    }
     reqParams = parseQueryParams(reqUrl)
+  }
+
+  function copyRequestAsCurl() {
+    const url = reqUrl.trim()
+    if (!url) {
+      showDiskSaveLabel('Request URL is empty')
+      return
+    }
+    const env = activeEnv as Record<string, string>
+    const authHeaders = buildAuthHeaders(env)
+    const headersObj: Record<string, string> = {}
+    for (const row of reqHeaderRows) {
+      if (row.enabled && row.key.trim()) {
+        headersObj[row.key.trim()] = row.value
+      }
+    }
+    const combinedHeaders = { ...headersObj, ...authHeaders }
+    const curl = buildCurlCommand({
+      method: reqMethod,
+      url,
+      headers: combinedHeaders,
+      body: reqBodyType !== 'none' && !['GET', 'HEAD'].includes(reqMethod) ? reqBody : undefined,
+      bodyType: reqBodyType
+    })
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(curl).then(
+        () => showDiskSaveLabel('cURL command copied to clipboard'),
+        () => showDiskSaveLabel('Failed to copy to clipboard')
+      )
+    } else {
+      showDiskSaveLabel('Clipboard not supported in this browser')
+    }
+  }
+
+  function syncBodyIfUrlEncoded() {
+    const isUrlEncoded = reqHeaderRows.some(
+      (h) =>
+        h.enabled &&
+        h.key.toLowerCase() === 'content-type' &&
+        h.value.toLowerCase().includes('application/x-www-form-urlencoded')
+    )
+    if (isUrlEncoded) {
+      reqBody = buildQueryParamsString(reqParams)
+      reqBodyType = 'text'
+    }
   }
 
   function onParamChange() {
     reqParams = [...reqParams]
     reqUrl = buildUrlWithQuery(reqUrl, reqParams)
+    syncBodyIfUrlEncoded()
   }
 
   function addParam() {
@@ -1469,6 +2405,7 @@
   function removeParam(index: number) {
     reqParams = reqParams.filter((_, i) => i !== index)
     reqUrl = buildUrlWithQuery(reqUrl, reqParams)
+    syncBodyIfUrlEncoded()
   }
 
   function onHeaderRowChange() {
@@ -1520,7 +2457,7 @@
       return
     }
     const name = responseName(entry.method, entry.url)
-    addTabWithContent(name, entry.responseText, guessMode(name, entry.responseText))
+    addSubTabWithContent(name, entry.responseText, guessMode(name, entry.responseText), 'response')
   }
 
   async function reSendRequest(entry: RequestHistoryEntry) {
@@ -1860,7 +2797,7 @@
           }
         ]
         const name = responseName(item.method, resolvedUrl)
-        addTabWithContent(name, text, guessMode(name, text))
+        addSubTabWithContent(name, text, guessMode(name, text), 'response')
         const entry: RequestHistoryEntry = {
           id: Date.now(),
           method: item.method,
@@ -1971,6 +2908,21 @@
       group: 'View',
       label: 'Toggle requests panel',
       run: () => (showRequests = !showRequests)
+    },
+    {
+      id: 'req-import-curl',
+      group: 'Requests',
+      label: 'Import cURL command…',
+      run: () => {
+        showRequests = true
+        showCurlModal = true
+      }
+    },
+    {
+      id: 'req-copy-curl',
+      group: 'Requests',
+      label: 'Copy request as cURL',
+      run: copyRequestAsCurl
     },
     {
       id: 'diff',
@@ -2224,97 +3176,216 @@
 
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="editor-area" on:dragover|preventDefault on:drop={onDropFiles}>
-      <!-- TAB BAR -->
-      <nav class="tab-bar">
-        {#each tabIds as id, i (id)}
-          <button
-            class="tab"
-            class:active={layoutLeaves.some((l) => l.tabIdx === i)}
-            on:click={() => setActiveLeafTab(i)}
-            on:dblclick={() => {
-              const n = prompt('Rename:', tabTitles[i])
-              if (n) renameTab(id, n)
-            }}
-            on:contextmenu|preventDefault={(e) =>
-              (tabMenu = { x: e.clientX, y: e.clientY, tabId: id })}
-            draggable="true"
-            on:dragstart={(e) => onTabDragStart(e, id)}
-            on:dragend={onTabDragEnd}
-            on:dragover={(e) => onTabDragOverReorder(e, id)}
-          >
-            <span class="tab-dirty" class:dirty={dirtyFlags[i]}></span>
-            <span class="tab-label">{tabTitles[i]}</span>
-            <span
-              class="tab-close"
-              title="Close tab (or middle-click)"
-              on:click|stopPropagation={() => closeTab(id)}
-              on:auxclick|stopPropagation={(e) => {
-                if (e.button === 1) closeTab(id)
-              }}>×</span
-            >
-          </button>
-        {/each}
-        <button class="tab tab-add" on:click={addTab} title="New tab">+</button>
-      </nav>
-
-      {#if tabDragActive && layoutLeaves.length < 4}
-        <div
-          class="drop-zone dz-right"
-          on:dragover|preventDefault
-          on:drop={(e) => {
-            e.preventDefault()
-            if (draggedTabId !== undefined) splitActiveLeaf('vertical', draggedTabId)
-          }}
-        >
-          Split right
-        </div>
-        <div
-          class="drop-zone dz-bottom"
-          on:dragover|preventDefault
-          on:drop={(e) => {
-            e.preventDefault()
-            if (draggedTabId !== undefined) splitActiveLeaf('horizontal', draggedTabId)
-          }}
-        >
-          Split down
-        </div>
-      {/if}
-
       <!-- PANES -->
       <div class="editor-panes" bind:this={panesEl}>
         {#each layoutRects.leaves as lr (lr.leafId)}
           {@const leaf = findLeaf(layout, lr.leafId) ?? layoutLeaves[0]}
-          {@const i = leaf.tabIdx}
+          {@const panePrimTabs = getPanePrimaryTabs(lr.leafId, tabsRenderVersion)}
+          {@const paneActivePrim = getPaneActivePrimary(lr.leafId, tabsRenderVersion)}
+          {@const paneSubTabs = getPaneSubTabs(paneActivePrim, tabsRenderVersion)}
+          {@const activeSubTabId = paneActivePrim?.activeSubTabId}
+          {@const i = getTabIdx(activeSubTabId)}
           <div
             class="editor-pane"
+            class:active-pane={lr.leafId === activeLeafId}
             style="left:{lr.x}%;top:{lr.y}%;width:{lr.width}%;height:{lr.height}%"
-            on:mousedown={() => (activeLeafId = lr.leafId)}
+            on:mousedown={() => {
+              activeLeafId = lr.leafId
+              if (paneActivePrim) {
+                activePrimaryTabId = paneActivePrim.id
+                loadPrimaryRequestToForm(paneActivePrim)
+              }
+            }}
             on:dragover={onPaneDragOver}
             on:drop={(e) => onPaneDrop(e, lr.leafId)}
           >
-            {#if layoutLeaves.length > 1}
-              <div class="pane-header">
+            <!-- TAB BAR LEVEL 1 (Abas Principais deste Painel) -->
+            <nav
+              class="tab-bar tab-bar-l1"
+              aria-label="Abas Principais (Nível 1)"
+              on:dragover={(e) => {
+                if (draggedPrimaryId !== undefined) {
+                  e.preventDefault()
+                  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+                  dragOverLeafId = lr.leafId
+                } else if (draggedTabId !== undefined && canPromoteSubTab(subTabsMeta.get(draggedTabId))) {
+                  e.preventDefault()
+                }
+              }}
+              on:drop={(e) => {
+                if (draggedPrimaryId !== undefined) {
+                  onPrimaryTabDrop(e, lr.leafId)
+                } else if (draggedTabId !== undefined && canPromoteSubTab(subTabsMeta.get(draggedTabId))) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  promoteSubTabInPane(lr.leafId, draggedTabId)
+                  onTabDragEnd()
+                }
+              }}
+            >
+              {#each panePrimTabs as pt (pt.id)}
                 <button
-                  class="pane-doc"
+                  class="tab tab-l1"
+                  class:active={pt.id === paneActivePrim?.id}
+                  class:drag-over-before={dragOverTargetPrimaryId === pt.id && dragOverTargetPrimaryPosition === 'before'}
+                  class:drag-over-after={dragOverTargetPrimaryId === pt.id && dragOverTargetPrimaryPosition === 'after'}
+                  on:click={() => selectPrimaryTabInPane(lr.leafId, pt.id)}
+                  on:dblclick={() => {
+                    const n = prompt('Renomear aba principal:', pt.title)
+                    if (n) renamePrimaryTab(pt.id, n)
+                  }}
+                  on:contextmenu|preventDefault={(e) =>
+                    (tabMenu = { x: e.clientX, y: e.clientY, tabId: pt.id, type: 'primary', leafId: lr.leafId })}
                   draggable="true"
-                  title="Drag to another pane to move this document"
-                  on:dragstart={(e) => onTabDragStart(e, tabIds[i])}
+                  on:dragstart={(e) => onPrimaryTabDragStartInPane(e, lr.leafId, pt.id)}
                   on:dragend={onTabDragEnd}
+                  on:dragover={(e) => onPrimaryTabDragOverInPane(e, lr.leafId, pt.id)}
+                  on:drop={(e) => onPrimaryTabDrop(e, lr.leafId, pt.id)}
                 >
-                  <span class="tab-dirty" class:dirty={dirtyFlags[i]}></span>
-                  <span class="pane-doc-name">{tabTitles[i]}</span>
-                </button>
-                {#if dirtyFlags[i]}
-                  <button
-                    class="pane-save"
-                    title="Quick save to disk (Ctrl+S)"
-                    on:click|stopPropagation={() => void saveToDisk(i)}>💾</button
+                  <span
+                    class="tab-dirty"
+                    class:dirty={pt.subTabIds.some((sid) => dirtyFlags[getTabIdx(sid)])}
+                  ></span>
+                  <span class="tab-l1-icon">📁</span>
+                  <span class="tab-label">{pt.title}</span>
+                  {#if pt.subTabIds.length > 1}
+                    <span class="tab-count-badge" title="{pt.subTabIds.length} sub-abas">{pt.subTabIds.length}</span>
+                  {/if}
+                  <span
+                    class="tab-close"
+                    title="Fechar aba principal (e suas sub-abas)"
+                    on:click|stopPropagation={() => closePrimaryTabInPane(lr.leafId, pt.id)}>×</span
                   >
-                {/if}
+                </button>
+              {/each}
+
+              <!-- Indicador de Mover para este Grid (mostrado na área vazia da barra ao arrastar de outro grid!) -->
+              {#if draggedPrimaryId !== undefined && draggedPrimarySourceLeafId !== lr.leafId}
+                <div
+                  class="tab-drop-move-pane"
+                  class:drag-hover={dragOverLeafId === lr.leafId && dragOverTargetPrimaryId === undefined}
+                  on:dragover|preventDefault={(e) => {
+                    e.stopPropagation()
+                    dragOverLeafId = lr.leafId
+                    dragOverTargetPrimaryId = undefined
+                    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+                  }}
+                  on:drop={(e) => onPrimaryTabDrop(e, lr.leafId)}
+                >
+                  <span class="tab-drop-icon">↳</span>
+                  <span>Mover para este grid</span>
+                </div>
+              {/if}
+
+              <!-- Área Azul para Subir Sub-abas para Nível 1 -->
+              {#if draggedTabId !== undefined && canPromoteSubTab(subTabsMeta.get(draggedTabId))}
+                <div
+                  class="tab-drop-promote"
+                  on:dragover|preventDefault
+                  on:drop={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    if (draggedTabId !== undefined) {
+                      promoteSubTabInPane(lr.leafId, draggedTabId)
+                      onTabDragEnd()
+                    }
+                  }}
+                >
+                  <span class="tab-drop-promote-icon">⇡</span>
+                  <span>Solte aqui para subir para Nível 1</span>
+                </div>
+              {/if}
+
+              <button
+                class="tab tab-add"
+                on:click={() => addPrimaryTabInPane(lr.leafId)}
+                title="Nova aba principal neste painel">+</button
+              >
+            </nav>
+
+            <!-- TAB BAR LEVEL 2 (Abas Secundárias do Editor Ativo deste Painel) -->
+            <nav
+              class="tab-bar tab-bar-l2"
+              aria-label="Abas Secundárias (Nível 2)"
+              on:dragover={(e) => {
+                if (draggedTabId !== undefined) {
+                  e.preventDefault()
+                  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+                }
+              }}
+              on:drop={(e) => {
+                if (paneActivePrim && draggedTabId !== undefined) {
+                  onSubTabDrop(e, paneActivePrim)
+                }
+              }}
+            >
+              {#each paneSubTabs as item (item.subTabId)}
+                <button
+                  class="tab tab-l2 tab-kind-{item.meta.kind}"
+                  class:active={item.subTabId === activeSubTabId}
+                  class:drag-over-before={dragOverTargetSubId === item.subTabId && dragOverTargetSubPosition === 'before'}
+                  class:drag-over-after={dragOverTargetSubId === item.subTabId && dragOverTargetSubPosition === 'after'}
+                  on:click={() => selectSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}
+                  on:dblclick={() => {
+                    const n = prompt('Renomear sub-aba:', tabTitles[item.idx])
+                    if (n) renameSubTab(item.subTabId, n)
+                  }}
+                  on:contextmenu|preventDefault={(e) =>
+                    (tabMenu = { x: e.clientX, y: e.clientY, tabId: item.subTabId, type: 'sub', leafId: lr.leafId })}
+                  draggable="true"
+                  on:dragstart={(e) => onSubTabDragStart(e, item.subTabId)}
+                  on:dragend={onTabDragEnd}
+                  on:dragover={(e) => onSubTabDragOver(e, item.subTabId)}
+                  on:drop={(e) => {
+                    if (paneActivePrim) onSubTabDrop(e, paneActivePrim, item.subTabId)
+                  }}
+                >
+                  <span class="tab-dirty" class:dirty={dirtyFlags[item.idx]}></span>
+                  <span class="tab-l2-icon" title={item.meta.kind}>
+                    {#if item.meta.kind === 'response'}⚡{:else if item.meta.kind === 'extract'}🔍{:else if item.meta.kind === 'nested'}✏️{:else if item.meta.kind === 'preview'}👁️{:else}📄{/if}
+                  </span>
+                  <span class="tab-label">{tabTitles[item.idx] || item.meta.title}</span>
+                  {#if canPromoteSubTab(item.meta)}
+                    <span
+                      class="tab-promote-btn"
+                      title="Promover para nova aba principal (Nível 1)"
+                      on:click|stopPropagation={() => promoteSubTabInPane(lr.leafId, item.subTabId)}>⇡</span
+                    >
+                  {/if}
+                  <span
+                    class="tab-close"
+                    title="Fechar sub-aba"
+                    on:click|stopPropagation={() => closeSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}>×</span
+                  >
+                </button>
+              {/each}
+              <button
+                class="tab tab-add tab-add-l2"
+                on:click={() => addSubTabInPane(lr.leafId, paneActivePrim)}
+                title="Nova sub-aba (Nível 2)">+ Sub-aba</button
+              >
+            </nav>
+
+            <!-- Drop zones for split inside this pane (dragging Level 1 primary tabs) -->
+            {#if draggedPrimaryId !== undefined && layoutLeaves.length < 4}
+              <div
+                class="drop-zone dz-right"
+                on:dragover|preventDefault
+                on:drop={(e) => onSplitDropPrimary(e, lr.leafId, 'vertical')}
+              >
+                Dividir à direita (Novo grid)
+              </div>
+              <div
+                class="drop-zone dz-bottom"
+                on:dragover|preventDefault
+                on:drop={(e) => onSplitDropPrimary(e, lr.leafId, 'horizontal')}
+              >
+                Dividir abaixo (Novo grid)
               </div>
             {/if}
+
             <div class="editor-wrapper">
-              {#if previewTabInfo.has(tabIds[i])}
+              {#if i >= 0 && previewTabInfo.has(tabIds[i])}
                 <PreviewModal
                   inline
                   windowId={String(tabIds[i])}
@@ -2325,9 +3396,9 @@
                     tabContents = [...tabContents]
                   }}
                   onSave={previewTabInfo.get(tabIds[i])?.onSave}
-                  onClose={() => closeTab(tabIds[i])}
+                  onClose={() => closeSubTabInPane(lr.leafId, paneActivePrim, tabIds[i])}
                 />
-              {:else}
+              {:else if i >= 0}
                 <form novalidate action="/" class="editor-form">
                   <JSONEditor
                     bind:this={tabRefs[i]}
@@ -2444,6 +3515,16 @@
                 />
               {/if}
             </div>
+            <button
+              class="sb-btn-status"
+              title="Import cURL command copied from Postman or terminal"
+              on:click={() => (showCurlModal = true)}>📥 Import cURL</button
+            >
+            <button
+              class="sb-btn-status"
+              title="Copy active request as cURL command"
+              on:click={copyRequestAsCurl}>📋 Copy cURL</button
+            >
             <span class="req-spacer"></span>
             <button
               class="problems-close"
@@ -2464,8 +3545,9 @@
               class="req-url"
               type="text"
               list="req-url-history"
-              placeholder="https://api.example.com/items"
+              placeholder="https://api.example.com/items (or paste cURL here)"
               bind:value={reqUrl}
+              on:paste={onUrlPaste}
               on:input={onUrlInput}
               on:keydown={(e) => {
                 if (e.key === 'Enter') void sendRequest()
@@ -2474,12 +3556,47 @@
             <datalist id="req-url-history">
               {#each urlSuggestions as suggestion}<option value={suggestion}></option>{/each}
             </datalist>
+            <div class="req-send-combo">
+              <button
+                type="button"
+                class="req-send-btn"
+                disabled={reqSending}
+                title="Enviar requisição (Enter no campo de URL)"
+                on:click={() => void sendRequest()}
+              >
+                {#if reqSending}
+                  <span class="req-spinner"></span>
+                  <span>Enviando…</span>
+                {:else}
+                  <svg class="req-send-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                  </svg>
+                  <span>Send</span>
+                {/if}
+              </button>
+              <div class="req-send-divider"></div>
+              <select
+                class="req-send-mode-select"
+                bind:value={reqSendMode}
+                title="Destino da resposta: Mesma aba ou Nova aba secundária"
+              >
+                <option value="same">Mesma aba</option>
+                <option value="new">Nova aba</option>
+              </select>
+            </div>
             <button
-              class="sb-btn-status req-send"
-              disabled={reqSending}
-              title="Send (Enter in the URL field)"
-              on:click={() => void sendRequest()}>{reqSending ? 'Sending…' : 'Send'}</button
+              type="button"
+              class="req-curl-btn"
+              title="Copiar requisição ativa como comando cURL"
+              on:click={copyRequestAsCurl}
             >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              <span>cURL</span>
+            </button>
           </div>
 
           <!-- Section tabs -->
@@ -3067,11 +4184,19 @@
 
   <CommandPalette bind:open={paletteOpen} actions={paletteActions} />
 
+  <CurlImportModal
+    open={showCurlModal}
+    onImport={(text) => applyCurlCommand(text)}
+    onClose={() => (showCurlModal = false)}
+  />
+
   {#if tabMenu}
     <TabContextMenu
       x={tabMenu.x}
       y={tabMenu.y}
-      items={buildTabMenuItems(tabMenu.tabId)}
+      items={tabMenu.type === 'primary'
+        ? buildPrimaryTabMenuItems(tabMenu.tabId)
+        : buildSubTabMenuItems(tabMenu.tabId)}
       onClose={() => (tabMenu = undefined)}
     />
   {/if}
@@ -3278,22 +4403,260 @@
     position: relative;
   }
 
-  .tab-bar {
+  .tab-bar-l1 {
     display: flex;
     align-items: center;
-    background: $bg2;
-    border-bottom: 1px solid $b;
+    background: #181818;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    height: 36px;
     flex-shrink: 0;
-    height: 34px;
     overflow-x: auto;
     user-select: none;
+    padding: 0 4px;
+    gap: 3px;
     &::-webkit-scrollbar {
       height: 3px;
+    }
+    &::-webkit-scrollbar-thumb {
+      background: #444;
+    }
+  }
+  .tab-l1 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px;
+    height: 30px;
+    border: none;
+    border-radius: 6px 6px 0 0;
+    background: #242424;
+    color: #969696;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s;
+    &.active {
+      background: #252526;
+      color: #ffffff;
+      border-bottom: 2px solid #007acc;
+      font-weight: 600;
+    }
+    &:hover:not(.active) {
+      background: #2c2c2c;
+      color: #dddddd;
+    }
+  }
+  .tab-l1-icon {
+    font-size: 11px;
+    opacity: 0.7;
+  }
+  .tab-count-badge {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #bbbbbb;
+    line-height: 1;
+  }
+  .tab-drop-promote {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 6px;
+    padding: 0 12px;
+    height: 28px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #ffffff;
+    border: 1.5px dashed #0098ff;
+    border-radius: 6px;
+    background: rgba(0, 152, 255, 0.18);
+    box-shadow: 0 0 12px rgba(0, 152, 255, 0.3);
+    white-space: nowrap;
+    animation: tab-pulse-blue 1.5s infinite ease-in-out;
+    cursor: copy;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    &:hover {
+      background: rgba(0, 152, 255, 0.35);
+      border-color: #38bdf8;
+      box-shadow: 0 0 16px rgba(0, 152, 255, 0.55);
+      transform: translateY(-1px);
+    }
+  }
+  .tab-drop-promote-icon {
+    font-size: 13px;
+    font-weight: 700;
+    color: #7dd3fc;
+  }
+  @keyframes tab-pulse-blue {
+    0%, 100% {
+      border-color: #0098ff;
+      background: rgba(0, 152, 255, 0.16);
+      box-shadow: 0 0 8px rgba(0, 152, 255, 0.2);
+    }
+    50% {
+      border-color: #38bdf8;
+      background: rgba(0, 152, 255, 0.3);
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.45);
+    }
+  }
+
+  .tab-l1.drag-over-before,
+  .tab-l2.drag-over-before {
+    position: relative;
+    &::before {
+      content: '';
+      position: absolute;
+      left: -2px;
+      top: 2px;
+      bottom: 2px;
+      width: 3px;
+      background: #0098ff;
+      box-shadow: 0 0 8px #0098ff;
+      border-radius: 2px;
+      z-index: 10;
+      pointer-events: none;
+    }
+  }
+
+  .tab-l1.drag-over-after,
+  .tab-l2.drag-over-after {
+    position: relative;
+    &::after {
+      content: '';
+      position: absolute;
+      right: -2px;
+      top: 2px;
+      bottom: 2px;
+      width: 3px;
+      background: #0098ff;
+      box-shadow: 0 0 8px #0098ff;
+      border-radius: 2px;
+      z-index: 10;
+      pointer-events: none;
+    }
+  }
+
+  .tab-drop-move-pane {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 6px;
+    padding: 0 10px;
+    height: 26px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #38bdf8;
+    border: 1.5px dashed rgba(56, 189, 248, 0.6);
+    border-radius: 6px;
+    background: rgba(56, 189, 248, 0.1);
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.15);
+    white-space: nowrap;
+    cursor: copy;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    animation: tab-pulse-pane 1.5s infinite ease-in-out;
+    &.drag-hover,
+    &:hover {
+      background: rgba(56, 189, 248, 0.28);
+      border-color: #38bdf8;
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.45);
+      transform: translateY(-1px);
+    }
+  }
+  .tab-drop-icon {
+    font-size: 12px;
+    font-weight: 700;
+  }
+  @keyframes tab-pulse-pane {
+    0%, 100% {
+      border-color: rgba(56, 189, 248, 0.5);
+      background: rgba(56, 189, 248, 0.08);
+    }
+    50% {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.2);
+    }
+  }
+
+  .tab-bar-l2 {
+    display: flex;
+    align-items: center;
+    background: #252526;
+    border-bottom: 1px solid $b;
+    height: 29px;
+    flex-shrink: 0;
+    overflow-x: auto;
+    user-select: none;
+    padding: 0 6px;
+    gap: 2px;
+    &::-webkit-scrollbar {
+      height: 2px;
     }
     &::-webkit-scrollbar-thumb {
       background: #555;
     }
   }
+  .tab-l2 {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 9px;
+    height: 23px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #999999;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.1s, color 0.1s;
+    &.active {
+      background: #37373d;
+      color: #ffffff;
+      font-weight: 500;
+    }
+    &:hover:not(.active) {
+      background: rgba(255, 255, 255, 0.05);
+      color: #cccccc;
+    }
+  }
+  .tab-l2-icon {
+    font-size: 11px;
+    line-height: 1;
+  }
+  .tab-promote-btn {
+    font-size: 11px;
+    padding: 0 3px;
+    border-radius: 2px;
+    opacity: 0;
+    color: #4ec9b0;
+    cursor: pointer;
+    transition: opacity 0.1s, background 0.1s;
+    &:hover {
+      background: rgba(78, 201, 176, 0.2);
+    }
+  }
+  .tab-l2:hover .tab-promote-btn {
+    opacity: 0.7;
+  }
+  .tab-promote-btn:hover {
+    opacity: 1 !important;
+  }
+  .tab-add-l2 {
+    font-size: 11px;
+    padding: 0 8px;
+    height: 22px;
+    color: $td;
+    border-radius: 3px;
+    &:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+
   .tab {
     display: flex;
     align-items: center;
@@ -3334,14 +4697,21 @@
       background: rgba(255, 255, 255, 0.1);
     }
   }
+  .tab-l1:hover .tab-close,
+  .tab-l1.active .tab-close,
+  .tab-l2:hover .tab-close,
+  .tab-l2.active .tab-close,
   .tab:hover .tab-close,
   .tab.active .tab-close {
-    opacity: 0.5;
+    opacity: 0.6;
   }
   .tab-add {
     font-size: 16px;
     padding: 0 10px;
     color: $td;
+    background: transparent;
+    border: none;
+    cursor: pointer;
     &:hover {
       color: #fff;
     }
@@ -3377,7 +4747,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    max-width: 100%;
+    max-width: 80%;
     height: 100%;
     padding: 0 8px;
     border: none;
@@ -3394,6 +4764,11 @@
       background: rgba(255, 255, 255, 0.06);
     }
   }
+  .pane-grab-icon {
+    font-size: 11px;
+    opacity: 0.6;
+    letter-spacing: -1px;
+  }
   .pane-doc-name {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3408,6 +4783,103 @@
     flex-shrink: 0;
     &:hover {
       color: #fff;
+    }
+  }
+  .pane-spacer {
+    flex: 1;
+  }
+  .pane-close-btn {
+    border: none;
+    background: transparent;
+    color: $td;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 6px;
+    height: 100%;
+    &:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+    }
+  }
+
+  .req-send-combo {
+    display: inline-flex;
+    align-items: stretch;
+    height: 28px;
+    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    overflow: hidden;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    &:hover {
+      background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+      box-shadow: 0 2px 10px rgba(2, 132, 199, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    }
+  }
+
+  .req-send-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s;
+    &:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.12);
+    }
+    &:active:not(:disabled) {
+      background: rgba(0, 0, 0, 0.15);
+    }
+    &:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+  }
+
+  .req-send-icon {
+    flex-shrink: 0;
+  }
+
+  .req-send-divider {
+    width: 1px;
+    background: rgba(255, 255, 255, 0.25);
+    height: 100%;
+  }
+
+  .req-send-mode-select {
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 0 22px 0 8px;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 7px center;
+    transition: background-color 0.12s;
+    &:hover {
+      background-color: rgba(255, 255, 255, 0.12);
+    }
+    option {
+      background: #1e222b;
+      color: #f1f5f9;
+      font-size: 12px;
+      padding: 6px 10px;
     }
   }
   .editor-wrapper {
@@ -3503,32 +4975,105 @@
   .requests-form {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
+    gap: 8px;
+    padding: 8px 10px;
     flex-shrink: 0;
+    background: rgba(0, 0, 0, 0.15);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
   .req-method {
     flex-shrink: 0;
+    height: 28px;
+    border-radius: 6px;
+    padding: 0 22px 0 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background-color: #1a1c23;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    transition: all 0.12s ease;
+    &:focus {
+      border-color: #0284c7;
+      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2);
+    }
+    &.req-method-get { color: #10b981; }
+    &.req-method-post { color: #f59e0b; }
+    &.req-method-put { color: #3b82f6; }
+    &.req-method-patch { color: #a855f7; }
+    &.req-method-delete { color: #ef4444; }
+    option {
+      background: #1a1c23;
+      color: #f1f5f9;
+      font-weight: 600;
+      padding: 4px 8px;
+    }
   }
   .req-url {
     flex: 1;
-    padding: 3px 6px;
+    height: 28px;
+    padding: 0 10px;
     font-size: 12px;
-    background: $bg;
-    color: $t;
-    border: 1px solid $b;
-    border-radius: 3px;
+    font-family: Consolas, 'Cascadia Code', monospace;
+    background: #13151b;
+    color: #f8fafc;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
     outline: none;
+    transition: all 0.12s ease;
     &:focus {
-      border-color: $ac;
+      border-color: #0284c7;
+      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.25);
+      background: #0f1116;
+    }
+    &::placeholder {
+      color: #64748b;
     }
   }
-  .req-send {
+  .req-curl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 11px;
+    background: #252830;
+    color: #e2e8f0;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.12s ease;
     flex-shrink: 0;
-    &:disabled {
-      opacity: 0.6;
-      cursor: default;
+    &:hover {
+      background: #323642;
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.28);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
     }
+    &:active {
+      transform: translateY(1px);
+    }
+  }
+  .req-spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: req-spin 0.6s linear infinite;
+  }
+  @keyframes req-spin {
+    to { transform: rotate(360deg); }
   }
   .requests-fields {
     display: flex;
