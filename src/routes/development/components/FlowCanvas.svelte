@@ -22,7 +22,6 @@
     withContentType,
     extractValueByPath,
     fetchWithProxy,
-    proxyUrl,
     parseQueryParams,
     buildUrlWithQuery,
     headersToRows,
@@ -30,10 +29,7 @@
     parseCurlCommand,
     buildCurlCommand,
     formatBytes,
-    relativeTime,
-    responseName,
-    type QueryParam,
-    type HeaderRow
+    relativeTime
   } from '../requestsUtils.js'
 
   export let flowGraph: FlowGraph = createDefaultFlowGraph()
@@ -1541,7 +1537,6 @@
               {@const x2 = toNode.x}
               {@const y2 = toNode.y + 45}
               {@const pathD = getBezierPath(x1, y1, x2, y2)}
-              {@const mid = getPathMidpoint(x1, y1, x2, y2)}
               {@const isRunning = fromNode.status === 'running' || toNode.status === 'running'}
               {@const isSelected = selectedConnection?.id === conn.id}
 
@@ -1884,13 +1879,6 @@
             </button>
           </div>
         </div>
-
-        <!-- cURL Import (shared system modal) -->
-        <CurlImportModal
-          open={showCurlImport && selectedNode.type === 'rest'}
-          onImport={importCurlIntoNode}
-          onClose={() => (showCurlImport = false)}
-        />
 
         <!-- REST Node URL Bar (when REST) -->
         {#if selectedNode.type === 'rest' && selectedNode.restData}
@@ -2654,6 +2642,15 @@
   </div>
 </div>
 
+<!-- cURL Import Modal (placed at component root to escape side-panel and toolbar stacking contexts) -->
+{#if showCurlImport && selectedNode && selectedNode.type === 'rest'}
+  <CurlImportModal
+    open={true}
+    onImport={importCurlIntoNode}
+    onClose={() => (showCurlImport = false)}
+  />
+{/if}
+
 <style>
   .flow-container {
     display: flex;
@@ -3394,17 +3391,20 @@
     color: #cbd5e1;
   }
   .node-quick-btn {
-    background: rgba(2, 132, 199, 0.15);
-    border: 1px solid rgba(2, 132, 199, 0.35);
+    background: #2d2d30;
+    border: 1px solid #3e3e42;
     color: #3883fa;
     font-size: 9px;
     font-weight: 600;
     padding: 1px 6px;
-    border-radius: 4px;
+    border-radius: 3px;
     cursor: pointer;
+    transition: all 0.12s;
   }
   .node-quick-btn:hover {
-    background: rgba(2, 132, 199, 0.3);
+    background: #383838;
+    border-color: #3883fa;
+    color: #60a5fa;
   }
 
   /* Resizer Separator between Canvas and Side Panel */
@@ -3505,27 +3505,31 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    background: #23283a;
+    background: #2d2d30;
     border: 1px solid #3e3e42;
-    color: #e2e8f0;
+    color: #cccccc;
     font-size: 11px;
     font-weight: 500;
     padding: 3px 8px;
-    border-radius: 5px;
+    border-radius: 4px;
     cursor: pointer;
     transition: all 0.12s;
   }
   .side-action-btn:hover {
-    background: #2e354d;
-    color: #fff;
+    background: #383838;
+    border-color: #4f4f54;
+    color: #ffffff;
   }
   .side-run-btn {
-    background: rgba(16, 185, 129, 0.2);
-    border-color: rgba(16, 185, 129, 0.4);
-    color: #34d399;
+    background: #2d2d30;
+    border: 1px solid #3e3e42;
+    color: #4ec9b0;
+    font-weight: 600;
   }
   .side-run-btn:hover {
-    background: rgba(16, 185, 129, 0.3);
+    background: #383838;
+    border-color: #4ec9b0;
+    color: #4ec9b0;
   }
   .side-close-btn {
     background: transparent;
@@ -3566,23 +3570,67 @@
   }
   .side-method-select {
     height: 28px;
-    border-radius: 5px;
+    border-radius: 4px;
     font-size: 11px;
     font-weight: 700;
     padding: 0 6px;
-    background: #23283a;
+    background: #2d2d30;
     border: 1px solid #3e3e42;
-    color: #f1f5f9;
+    color: #cccccc;
     outline: none;
     cursor: pointer;
+    transition: all 0.12s;
+  }
+  .side-method-select:hover {
+    background: #383838;
+    border-color: #4f4f54;
+  }
+  .side-method-select:focus {
+    border-color: #3883fa;
+  }
+  .side-method-select.side-method-get {
+    color: #10b981;
+  }
+  .side-method-select.side-method-post {
+    color: #f59e0b;
+  }
+  .side-method-select.side-method-put {
+    color: #3b82f6;
+  }
+  .side-method-select.side-method-patch {
+    color: #a855f7;
+  }
+  .side-method-select.side-method-delete {
+    color: #ef4444;
+  }
+  .side-method-select option {
+    background-color: #252526;
+    color: #cccccc;
+    font-weight: 600;
+    padding: 4px 8px;
+  }
+  .side-method-select option[value='GET'] {
+    color: #10b981;
+  }
+  .side-method-select option[value='POST'] {
+    color: #f59e0b;
+  }
+  .side-method-select option[value='PUT'] {
+    color: #3b82f6;
+  }
+  .side-method-select option[value='PATCH'] {
+    color: #a855f7;
+  }
+  .side-method-select option[value='DELETE'] {
+    color: #ef4444;
   }
   .side-url-input {
     flex: 1;
     height: 28px;
     background: #1e1e1e;
     border: 1px solid #3e3e42;
-    border-radius: 5px;
-    color: #f8fafc;
+    border-radius: 4px;
+    color: #cccccc;
     font-size: 11px;
     font-family: Consolas, monospace;
     padding: 0 8px;
@@ -3593,14 +3641,27 @@
   }
   .side-proxy-select {
     height: 28px;
-    background: #23283a;
+    background: #2d2d30;
     border: 1px solid #3e3e42;
-    border-radius: 5px;
-    color: #cbd5e1;
+    border-radius: 4px;
+    color: #cccccc;
     font-size: 10px;
     padding: 0 6px;
     outline: none;
     cursor: pointer;
+    transition: all 0.12s;
+  }
+  .side-proxy-select:hover {
+    background: #383838;
+    border-color: #4f4f54;
+  }
+  .side-proxy-select:focus {
+    border-color: #3883fa;
+  }
+  .side-proxy-select option {
+    background-color: #252526;
+    color: #cccccc;
+    padding: 4px 8px;
   }
   .side-custom-proxy-row {
     display: flex;
@@ -3691,26 +3752,34 @@
     gap: 8px;
   }
   .pane-mode-toggle {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #94a3b8;
+    background: #2d2d30;
+    border: 1px solid #3e3e42;
+    color: #cccccc;
     font-size: 10px;
     padding: 2px 7px;
     border-radius: 4px;
     cursor: pointer;
+    transition: all 0.12s;
+  }
+  .pane-mode-toggle:hover {
+    background: #383838;
+    color: #ffffff;
   }
   .pane-action-mini-btn {
-    background: rgba(2, 132, 199, 0.15);
-    border: 1px solid rgba(2, 132, 199, 0.3);
+    background: #2d2d30;
+    border: 1px solid #3e3e42;
     color: #3883fa;
     font-size: 10px;
     font-weight: 600;
     padding: 3px 8px;
     border-radius: 4px;
     cursor: pointer;
+    transition: all 0.12s;
   }
   .pane-action-mini-btn:hover {
-    background: rgba(2, 132, 199, 0.25);
+    background: #383838;
+    border-color: #3883fa;
+    color: #60a5fa;
   }
 
   /* Key-Value Tables (Params & Headers) */
@@ -3872,35 +3941,39 @@
     gap: 6px;
   }
   .body-tool-btn {
-    background: #23283a;
+    background: #2d2d30;
     border: 1px solid #3e3e42;
-    color: #e2e8f0;
+    color: #cccccc;
     font-size: 10px;
     font-weight: 500;
     padding: 3px 8px;
     border-radius: 4px;
     cursor: pointer;
+    transition: all 0.12s;
   }
   .body-tool-btn:hover {
-    background: #2d344d;
-    color: #fff;
+    background: #383838;
+    border-color: #4f4f54;
+    color: #ffffff;
   }
   .body-editor-launch-btn {
-    background: rgba(2, 132, 199, 0.15);
-    border-color: rgba(2, 132, 199, 0.35);
+    background: #2d2d30;
+    border: 1px solid #3883fa;
     color: #3883fa;
     font-weight: 600;
+    transition: all 0.12s;
   }
   .body-editor-launch-btn:hover {
-    background: rgba(2, 132, 199, 0.3);
+    background: #383838;
+    color: #60a5fa;
   }
   .body-code-textarea {
     width: 100%;
     height: 220px;
     background: #1e1e1e;
     border: 1px solid #3e3e42;
-    border-radius: 6px;
-    color: #f1f5f9;
+    border-radius: 4px;
+    color: #cccccc;
     font-family: Consolas, monospace;
     font-size: 11px;
     padding: 8px;
@@ -3922,12 +3995,27 @@
   }
   .auth-select {
     height: 28px;
-    background: #1e2232;
+    background: #2d2d30;
     border: 1px solid #3e3e42;
-    border-radius: 5px;
-    color: #fff;
+    border-radius: 4px;
+    color: #cccccc;
     font-size: 11px;
     padding: 0 8px;
+    outline: none;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+  .auth-select:hover {
+    background: #383838;
+    border-color: #4f4f54;
+  }
+  .auth-select:focus {
+    border-color: #3883fa;
+  }
+  .auth-select option {
+    background-color: #252526;
+    color: #cccccc;
+    padding: 4px 8px;
   }
   .auth-info-card {
     background: rgba(255, 255, 255, 0.04);

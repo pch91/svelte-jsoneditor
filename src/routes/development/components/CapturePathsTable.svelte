@@ -7,7 +7,6 @@
   export let compact = false
 
   let testResults: Record<number, { found: boolean; preview: string }> = {}
-  let testTested = false
 
   function addRow() {
     captures = [...captures, { path: '', name: '', enabled: true }]
@@ -20,7 +19,6 @@
 
   function testCaptures() {
     testResults = {}
-    testTested = true
     if (!sampleJsonText.trim()) return
 
     try {
@@ -42,7 +40,7 @@
         }
       })
     } catch {
-      testTested = true
+      // Ignore JSON parse errors during test
     }
   }
 </script>

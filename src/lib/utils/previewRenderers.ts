@@ -77,7 +77,7 @@ export function renderMarkdown(value: string): string {
   html = html.replace(/^(---|\*\*\*|___)$/gm, '<hr />')
 
   // Unordered lists
-  html = html.replace(/^[\*\-] (.+)$/gm, '<li>$1</li>')
+  html = html.replace(/^[*-] (.+)$/gm, '<li>$1</li>')
   html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
 
   // Ordered lists
@@ -95,7 +95,9 @@ export function renderMarkdown(value: string): string {
   })
 
   // Restore code blocks and inline code
+  // eslint-disable-next-line no-control-regex
   html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, idx) => codeBlocks[Number(idx)] || '')
+  // eslint-disable-next-line no-control-regex
   html = html.replace(/\x00INLINECODE(\d+)\x00/g, (_match, idx) => inlineCodes[Number(idx)] || '')
 
   return `<div class="jse-preview-markdown">${html}</div>`

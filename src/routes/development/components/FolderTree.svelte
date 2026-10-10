@@ -23,7 +23,7 @@
       {/if}
     {:else}
       <button type="button" class="ft-row ft-file" on:click={() => onOpen(entry)}>
-        <span class="ft-caret" />
+        <span class="ft-caret"></span>
         <span class="ft-name" title={entry.path}>📄 {entry.name}</span>
       </button>
     {/if}

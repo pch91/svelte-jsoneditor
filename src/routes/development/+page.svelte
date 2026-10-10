@@ -1,4 +1,5 @@
 <script lang="ts">
+  /* eslint-disable @typescript-eslint/no-unused-vars */
   import {
     type Content,
     type ContextMenuItem,
@@ -316,7 +317,6 @@
   }
 
   $: activePrimary = getPaneActivePrimary(activeLeafId, tabsRenderVersion)
-  $: activePrimarySubTabs = getPaneSubTabs(activePrimary, tabsRenderVersion)
 
   $: {
     if (layoutLeaves.length > 0) {
@@ -3405,24 +3405,24 @@
       title="Command palette (Ctrl+Shift+P)">⌕</button
     >
     <div class="tb-group">
-      <label class="tb-label">Theme</label>
-      <select class="tb-select" bind:value={$selectedTheme} on:change={refresh}
+      <label class="tb-label" for="tb-theme-select">Theme</label>
+      <select id="tb-theme-select" class="tb-select" bind:value={$selectedTheme} on:change={refresh}
         >{#each themes as t}<option value={t.value}>{t.label}</option>{/each}</select
       >
     </div>
     <div class="tb-group">
-      <label class="tb-label">Indent</label>
-      <select class="tb-select" bind:value={$selectedIndent}
+      <label class="tb-label" for="tb-indent-select">Indent</label>
+      <select id="tb-indent-select" class="tb-select" bind:value={$selectedIndent}
         >{#each indentations as i}<option value={i.value}>{i.label}</option>{/each}</select
       >
     </div>
     <div class="tb-group">
-      <label class="tb-label">Parser</label>
-      <select class="tb-select" bind:value={$selectedParserId}
+      <label class="tb-label" for="tb-parser-select">Parser</label>
+      <select id="tb-parser-select" class="tb-select" bind:value={$selectedParserId}
         >{#each parsers as p}<option value={p.id}>{p.label}</option>{/each}</select
       >
     </div>
-    <div class="tb-spacer" />
+    <div class="tb-spacer"></div>
     <div class="tb-group">
       <button
         class="tb-btn"
@@ -3606,7 +3606,6 @@
       <!-- PANES -->
       <div class="editor-panes" bind:this={panesEl}>
         {#each layoutRects.leaves as lr (lr.leafId)}
-          {@const leaf = findLeaf(layout, lr.leafId) ?? layoutLeaves[0]}
           {@const panePrimTabs = getPanePrimaryTabs(lr.leafId, tabsRenderVersion)}
           {@const paneActivePrim = getPaneActivePrimary(lr.leafId, tabsRenderVersion)}
           {@const paneSubTabs = getPaneSubTabs(paneActivePrim, tabsRenderVersion)}
@@ -3694,6 +3693,7 @@
                       >{pt.subTabIds.length}</span
                     >
                   {/if}
+                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <span
                     class="tab-close"
                     title="Close main tab (and its sub-tabs)"
@@ -3798,6 +3798,7 @@
                   </span>
                   <span class="tab-label">{tabTitles[item.idx] || item.meta.title}</span>
                   {#if canPromoteSubTab(item.meta)}
+                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                     <span
                       class="tab-promote-btn"
                       title="Promote to new main tab (Level 1)"
@@ -3806,6 +3807,7 @@
                     >
                   {/if}
                   {#if canCloseSubTab(item.meta)}
+                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                     <span
                       class="tab-close"
                       title="Close sub-tab"
@@ -4649,6 +4651,7 @@
                 </div>
                 {#if $historyOpen}
                   {#each reqHistory as entry (entry.id)}
+                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                     <div
                       class="req-history-item"
                       title="Open response in the editor and load the request into the form"
@@ -5822,13 +5825,13 @@
   .req-method {
     flex-shrink: 0;
     height: 28px;
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 0 22px 0 10px;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.4px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background-color: #1a1c23;
+    border: 1px solid $b;
+    background-color: $bg2;
     outline: none;
     cursor: pointer;
     appearance: none;
@@ -5839,8 +5842,8 @@
     background-position: right 8px center;
     transition: all 0.12s ease;
     &:focus {
-      border-color: #0284c7;
-      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2);
+      border-color: $ac;
+      box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.2);
     }
     &.req-method-get {
       color: #10b981;
@@ -5858,8 +5861,8 @@
       color: #ef4444;
     }
     option {
-      background: #1a1c23;
-      color: #f1f5f9;
+      background: $bg2;
+      color: $t;
       font-weight: 600;
       padding: 4px 8px;
     }
@@ -5870,19 +5873,19 @@
     padding: 0 10px;
     font-size: 12px;
     font-family: Consolas, 'Cascadia Code', monospace;
-    background: #13151b;
-    color: #f8fafc;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 6px;
+    background: $bg;
+    color: $t;
+    border: 1px solid $b;
+    border-radius: 4px;
     outline: none;
     transition: all 0.12s ease;
     &:focus {
-      border-color: #0284c7;
-      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.25);
-      background: #0f1116;
+      border-color: $ac;
+      box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.25);
+      background: $bg;
     }
     &::placeholder {
-      color: #64748b;
+      color: $td;
     }
   }
   .req-curl-btn {
@@ -5891,10 +5894,10 @@
     gap: 5px;
     height: 28px;
     padding: 0 11px;
-    background: #252830;
-    color: #e2e8f0;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 6px;
+    background: $bg3;
+    color: $t;
+    border: 1px solid $b;
+    border-radius: 4px;
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
@@ -5902,7 +5905,7 @@
     transition: all 0.12s ease;
     flex-shrink: 0;
     &:hover {
-      background: #323642;
+      background: #3a3d41;
       color: #ffffff;
       border-color: rgba(255, 255, 255, 0.28);
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
@@ -6403,12 +6406,13 @@
   }
   .req-proxy-select {
     max-width: 140px;
-    background-color: #0f172a;
-    color: #f8fafc;
-    border: 1px solid #334155;
+    background-color: $bg2;
+    color: $t;
+    border: 1px solid $b;
+    border-radius: 4px;
     option {
-      background-color: #0f172a;
-      color: #f8fafc;
+      background-color: $bg2;
+      color: $t;
       padding: 6px 10px;
       font-size: 12px;
     }

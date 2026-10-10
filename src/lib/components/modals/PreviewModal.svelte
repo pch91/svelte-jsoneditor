@@ -206,6 +206,7 @@
           <div class="jse-preview-panel-header">Preview</div>
           <div class="jse-preview-render-content">
             {#if previewHtml}
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
               {@html previewHtml}
             {:else}
               <div class="jse-preview-empty">Enter a value to preview</div>

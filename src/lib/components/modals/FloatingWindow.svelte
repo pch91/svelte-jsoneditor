@@ -3,7 +3,7 @@
    * FloatingWindow - A draggable, resizable, minimizable window component.
    * Used as the base for preview modals.
    */
-  import { onMount, onDestroy, createEventDispatcher } from 'svelte'
+  import { onDestroy, createEventDispatcher } from 'svelte'
   import {
     faTimes,
     faWindowMinimize,
@@ -32,9 +32,6 @@
     move: { x: number; y: number }
     resize: { width: number; height: number; x: number; y: number }
   }>()
-
-  // Saved state before maximize
-  let savedState = { x: 100, y: 100, width: 800, height: 500 }
 
   // Dragging state
   let dragging = false
@@ -134,7 +131,6 @@
     if (maximized) {
       dispatch('restore')
     } else {
-      savedState = { x, y, width, height }
       dispatch('maximize')
     }
   }
@@ -169,9 +165,11 @@
     "
     on:mousedown={handleFocus}
     role="dialog"
+    tabindex="-1"
     aria-label={title}
   >
     <!-- Header -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="jse-floating-header" on:mousedown={handleDragStart}>
       <span class="jse-floating-title">{title}</span>
       <div class="jse-floating-actions">
@@ -215,18 +213,21 @@
 
     <!-- Resize handles -->
     {#if !maximized}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="jse-resize-handle jse-resize-right"
         on:mousedown={(e) => handleResizeStart(e, 'right')}
-      />
+      ></div>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="jse-resize-handle jse-resize-bottom"
         on:mousedown={(e) => handleResizeStart(e, 'bottom')}
-      />
+      ></div>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="jse-resize-handle jse-resize-bottom-right"
         on:mousedown={(e) => handleResizeStart(e, 'bottom-right')}
-      />
+      ></div>
     {/if}
   </div>
 {/if}

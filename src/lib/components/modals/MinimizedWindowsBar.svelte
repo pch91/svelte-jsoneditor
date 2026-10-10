@@ -4,7 +4,7 @@
    * Similar to LinkedIn's chat minimized windows bar.
    */
   import { previewWindows, type PreviewWindowState } from '$lib/stores/previewWindows.js'
-  import { faWindowMaximize, faTimes } from '@fortawesome/free-solid-svg-icons'
+  import { faTimes } from '@fortawesome/free-solid-svg-icons'
   import Icon from 'svelte-awesome'
 
   let windows: PreviewWindowState[] = []
@@ -35,6 +35,7 @@
           title="Restore: {win.pathLabel}"
         >
           <span class="jse-minimized-label">{win.pathLabel || 'Preview'}</span>
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <span class="jse-minimized-close" on:click={(e) => handleClose(win.id, e)} title="Close">
             <Icon data={faTimes} scale={0.6} />
           </span>

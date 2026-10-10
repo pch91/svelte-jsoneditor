@@ -28,6 +28,7 @@
 
 <svelte:window on:mousedown={onClose} on:blur={onClose} />
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="tab-menu" style="left:{clampX(x)}; top:{clampY(y)}" on:mousedown|stopPropagation>
   {#each items as item (item.label)}
     <button type="button" class="tab-menu-item" disabled={item.disabled} on:click={() => run(item)}
