@@ -101,6 +101,16 @@ describe('2-level tabs (Primary and Secondary)', () => {
     expect(canPromoteSubTab(undefined)).toBe(false)
   })
 
+  it('allows closing only for non-main subtabs (root Level 2 page cannot be closed)', async () => {
+    const { canCloseSubTab } = await import('./tabUtils.js')
+    expect(canCloseSubTab({ id: 1, primaryTabId: 1, title: 'Principal', kind: 'main' })).toBe(false)
+    expect(canCloseSubTab({ id: 2, primaryTabId: 1, title: 'Extract', kind: 'extract' })).toBe(true)
+    expect(canCloseSubTab({ id: 3, primaryTabId: 1, title: 'Response', kind: 'response' })).toBe(true)
+    expect(canCloseSubTab({ id: 4, primaryTabId: 1, title: 'Nested', kind: 'nested' })).toBe(true)
+    expect(canCloseSubTab({ id: 5, primaryTabId: 1, title: 'Preview', kind: 'preview' })).toBe(true)
+    expect(canCloseSubTab(undefined)).toBe(false)
+  })
+
   it('moves primary tab between panes and detects empty source pane', async () => {
     const { movePrimaryTabToPane } = await import('./tabUtils.js')
     const initialMap = new Map<number, number[]>([

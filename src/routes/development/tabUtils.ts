@@ -30,6 +30,12 @@ export function moveBefore(count: number, from: number, to: number): ReorderResu
 
 export type SubTabKind = 'main' | 'extract' | 'nested' | 'preview' | 'response' | 'custom'
 
+export interface CaptureRule {
+  path: string
+  name: string
+  enabled?: boolean
+}
+
 export interface PrimaryTabRequestContext {
   method: string
   url: string
@@ -38,6 +44,15 @@ export interface PrimaryTabRequestContext {
   bodyType: 'none' | 'json' | 'text'
   sendMode: 'same' | 'new'
   lastResponseTabId?: number
+  authType?: 'none' | 'bearer' | 'basic' | 'apikey'
+  authBearerToken?: string
+  authBasicUser?: string
+  authBasicPass?: string
+  authApiKeyName?: string
+  authApiKeyValue?: string
+  proxyMode?: 'inherit' | 'direct' | 'corsproxy' | 'allorigins' | 'custom'
+  customProxyUrl?: string
+  captures?: CaptureRule[]
 }
 
 export interface PrimaryTabState {
@@ -62,7 +77,16 @@ export function createDefaultRequestContext(): PrimaryTabRequestContext {
     headers: '',
     body: '',
     bodyType: 'json',
-    sendMode: 'same'
+    sendMode: 'same',
+    authType: 'none',
+    authBearerToken: '{{token}}',
+    authBasicUser: '',
+    authBasicPass: '',
+    authApiKeyName: 'X-API-Key',
+    authApiKeyValue: '',
+    proxyMode: 'inherit',
+    customProxyUrl: '',
+    captures: []
   }
 }
 
@@ -196,6 +220,14 @@ export function promoteSubTabToPrimary(
  * can be promoted to a Level 1 editor. The root main tab stays with the editor.
  */
 export function canPromoteSubTab(subTab: SubTabState | undefined): boolean {
+  return Boolean(subTab && subTab.kind !== 'main')
+}
+
+/**
+ * The main/root sub-tab of Level 2 represents Level 1's main document and cannot be closed.
+ * Only secondary / derived sub-tabs can be closed.
+ */
+export function canCloseSubTab(subTab: SubTabState | undefined): boolean {
   return Boolean(subTab && subTab.kind !== 'main')
 }
 

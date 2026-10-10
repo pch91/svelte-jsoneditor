@@ -176,36 +176,40 @@
 {/if}
 
 <style>
+  /* Matches the svelte-jsoneditor native modal (e.g. Transform): blue header, light body */
   .curl-modal-backdrop {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.45);
-    z-index: 1000;
+    z-index: 9999;
     display: flex;
     align-items: center;
     justify-content: center;
-    backdrop-filter: blur(2px);
+    padding: 20px;
   }
   .curl-modal {
-    width: 620px;
-    max-width: 94vw;
-    background: #1e1e1e;
-    border: 1px solid #3c3c3c;
-    border-radius: 8px;
-    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+    width: 640px;
+    max-width: 95vw;
+    max-height: 90vh;
+    background: #f5f5f5;
+    border-radius: 4px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    color: #cccccc;
-    font-size: 13px;
+    color: #4d4d4d;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
   }
   .curl-modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
-    background: #252526;
-    border-bottom: 1px solid #333333;
+    padding: 0 12px;
+    height: 38px;
+    background: #3883fa;
+    color: #ffffff;
+    user-select: none;
   }
   .curl-modal-title-row {
     display: flex;
@@ -213,48 +217,51 @@
     gap: 8px;
   }
   .curl-modal-icon {
-    font-size: 15px;
+    display: none;
   }
   .curl-modal-title {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
-    color: #e0e0e0;
+    color: #ffffff;
   }
   .curl-modal-badge {
     font-size: 10px;
-    background: rgba(9, 132, 227, 0.2);
-    color: #4fa3ff;
-    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    padding: 2px 8px;
     border-radius: 10px;
-    border: 1px solid rgba(9, 132, 227, 0.35);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
   .curl-modal-close {
     background: transparent;
     border: none;
-    color: #888888;
-    font-size: 18px;
-    cursor: pointer;
+    color: #ffffff;
+    font-size: 20px;
     line-height: 1;
-    padding: 0 4px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
     border-radius: 3px;
-    &:hover {
-      color: #ffffff;
-      background: rgba(255, 255, 255, 0.1);
-    }
+  }
+  .curl-modal-close:hover {
+    background: rgba(255, 255, 255, 0.2);
   }
   .curl-modal-body {
-    padding: 14px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
+    overflow-y: auto;
   }
   .curl-modal-desc {
     margin: 0;
-    font-size: 12px;
-    color: #999999;
-    line-height: 1.4;
+    font-size: 13px;
+    color: #4d4d4d;
+    line-height: 1.45;
   }
   .curl-modal-toolbar {
     display: flex;
@@ -262,44 +269,43 @@
     gap: 8px;
   }
   .curl-tool-btn {
-    background: #2d2d30;
-    color: #cccccc;
-    border: 1px solid #3e3e42;
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 11px;
+    background: #e8e8e8;
+    color: #4d4d4d;
+    border: 1px solid #d0d0d0;
+    border-radius: 3px;
+    padding: 4px 10px;
+    font-size: 12px;
     cursor: pointer;
-    transition: background 0.1s;
-    &:hover {
-      background: #3e3e42;
-      color: #ffffff;
-    }
+  }
+  .curl-tool-btn:hover {
+    background: #dcdcdc;
   }
   .curl-textarea {
     width: 100%;
     box-sizing: border-box;
     padding: 8px 10px;
-    font-family: Consolas, 'Courier New', monospace;
-    font-size: 12px;
-    background: #181818;
-    color: #e2e2e2;
-    border: 1px solid #3c3c3c;
-    border-radius: 5px;
+    font-family: 'dejavu sans mono', 'droid sans mono', consolas, monaco, 'lucida console',
+      'courier new', courier, monospace, sans-serif;
+    font-size: 13px;
+    background: #ffffff;
+    color: #4d4d4d;
+    border: 1px solid #d8dbdf;
+    border-radius: 3px;
     outline: none;
     resize: vertical;
-    min-height: 120px;
+    min-height: 140px;
     line-height: 1.45;
-    &:focus {
-      border-color: #0e639c;
-    }
-    &::placeholder {
-      color: #666666;
-    }
+  }
+  .curl-textarea:focus {
+    border-color: #3883fa;
+  }
+  .curl-textarea::placeholder {
+    color: #9a9a9a;
   }
   .curl-preview {
-    background: #252526;
-    border: 1px solid #383838;
-    border-radius: 5px;
+    background: #ffffff;
+    border: 1px solid #d8dbdf;
+    border-radius: 3px;
     padding: 8px 10px;
     display: flex;
     flex-direction: column;
@@ -311,10 +317,9 @@
     justify-content: space-between;
   }
   .curl-preview-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: #888888;
+    font-size: 12px;
+    font-weight: 700;
+    color: #4d4d4d;
   }
   .curl-preview-row {
     display: flex;
@@ -323,48 +328,33 @@
     min-width: 0;
   }
   .curl-method-badge {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     padding: 2px 6px;
     border-radius: 3px;
-    letter-spacing: 0.4px;
     flex-shrink: 0;
+    color: #ffffff;
+    background: #6c757d;
   }
   .method-get {
-    background: rgba(78, 201, 176, 0.2);
-    color: #4ec9b0;
-    border: 1px solid rgba(78, 201, 176, 0.4);
+    background: #1e9e6a;
   }
   .method-post {
-    background: rgba(9, 132, 227, 0.2);
-    color: #4fa3ff;
-    border: 1px solid rgba(9, 132, 227, 0.4);
+    background: #3883fa;
   }
   .method-put {
-    background: rgba(229, 142, 38, 0.2);
-    color: #e58e26;
-    border: 1px solid rgba(229, 142, 38, 0.4);
+    background: #e58e26;
   }
   .method-patch {
-    background: rgba(162, 155, 254, 0.2);
-    color: #a29bfe;
-    border: 1px solid rgba(162, 155, 254, 0.4);
+    background: #8a6df0;
   }
   .method-delete {
-    background: rgba(241, 76, 76, 0.2);
-    color: #f14c4c;
-    border: 1px solid rgba(241, 76, 76, 0.4);
-  }
-  .method-head,
-  .method-options {
-    background: rgba(180, 180, 180, 0.2);
-    color: #dcdcdc;
-    border: 1px solid rgba(180, 180, 180, 0.4);
+    background: #e0443e;
   }
   .curl-preview-url {
-    font-family: Consolas, monospace;
+    font-family: 'dejavu sans mono', consolas, monospace;
     font-size: 12px;
-    color: #dcdcdc;
+    color: #4d4d4d;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -376,39 +366,37 @@
     gap: 6px;
   }
   .curl-tag {
-    font-size: 10px;
-    padding: 2px 6px;
-    background: #333333;
-    color: #aaaaaa;
+    font-size: 11px;
+    padding: 2px 8px;
+    background: #e8e8e8;
+    color: #4d4d4d;
     border-radius: 3px;
   }
   .curl-tag-body {
-    background: rgba(38, 162, 105, 0.2);
-    color: #89d185;
+    background: #d9f2e6;
+    color: #1a7a4f;
   }
   .curl-tag-auth {
-    background: rgba(230, 126, 34, 0.2);
-    color: #f39c12;
+    background: #fdebd0;
+    color: #a65f0b;
   }
   .curl-invalid-hint {
-    font-size: 11px;
-    color: #f48771;
-    background: rgba(244, 135, 113, 0.1);
+    font-size: 12px;
+    color: #b3261e;
+    background: #fdecea;
     padding: 6px 10px;
-    border-radius: 4px;
-    border: 1px solid rgba(244, 135, 113, 0.25);
+    border-radius: 3px;
+    border: 1px solid #f5c2be;
   }
   .curl-modal-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
-    background: #252526;
-    border-top: 1px solid #333333;
+    padding: 10px 16px 14px;
   }
   .curl-shortcut-hint {
-    font-size: 11px;
-    color: #777777;
+    font-size: 12px;
+    color: #8a8a8a;
   }
   .curl-footer-actions {
     display: flex;
@@ -416,32 +404,30 @@
     gap: 8px;
   }
   .curl-btn {
-    padding: 5px 12px;
-    font-size: 12px;
-    border-radius: 4px;
+    padding: 8px 18px;
+    font-size: 14px;
+    border-radius: 3px;
     cursor: pointer;
     border: none;
-    transition: background 0.1s;
   }
   .curl-btn-cancel {
-    background: #2d2d30;
-    color: #cccccc;
-    border: 1px solid #3e3e42;
-    &:hover {
-      background: #3e3e42;
-      color: #ffffff;
-    }
+    background: #e8e8e8;
+    color: #4d4d4d;
+    border: 1px solid #d0d0d0;
+  }
+  .curl-btn-cancel:hover {
+    background: #dcdcdc;
   }
   .curl-btn-primary {
-    background: #0e639c;
+    background: #3883fa;
     color: #ffffff;
     font-weight: 500;
-    &:hover:not(:disabled) {
-      background: #1177bb;
-    }
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
+  }
+  .curl-btn-primary:hover:not(:disabled) {
+    background: #2f72dd;
+  }
+  .curl-btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

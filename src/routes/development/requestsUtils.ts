@@ -143,6 +143,36 @@ export function proxyUrl(url: string, proxyTemplate: string): string {
     : `${template}/${encodeURIComponent(url)}`
 }
 
+/** Try the URL directly, then fall back to the CORS proxy when configured. */
+export async function fetchWithProxy(
+  url: string,
+  init: RequestInit,
+  proxyTemplate: string
+): Promise<{ res: Response; viaProxy: boolean }> {
+  const attempts = [url]
+  if (proxyTemplate) attempts.push(proxyUrl(url, proxyTemplate))
+  let lastError: unknown
+  for (let index = 0; index < attempts.length; index++) {
+    try {
+      return { res: await fetch(attempts[index], init), viaProxy: index > 0 }
+    } catch (err) {
+      lastError = err
+    }
+  }
+  throw lastError
+}
+
+/** Add a default Content-Type automatically when a body is sent without one. */
+export function withContentType(
+  headers: Record<string, string>,
+  body: string | undefined,
+  contentType = 'application/json'
+): Record<string, string> {
+  if (!body) return headers
+  const has = Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')
+  return has ? headers : { ...headers, 'Content-Type': contentType }
+}
+
 /** Generate a tab title for a response, e.g. "GET-api.example.com-users-42.json". */
 export function responseName(method: string, url: string): string {
   try {
@@ -161,17 +191,19 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Replace `{{variable}}` placeholders using an environment. Missing variables
- * are left untouched and reported, so the user can fix them.
+ * Replace `{{variable}}` placeholders using an environment (and fallback to globalEnv).
+ * Missing variables are left untouched and reported, so the user can fix them.
  */
 export function resolveVariables(
   text: string,
-  env: Record<string, string>
+  env: Record<string, string>,
+  globalEnv: Record<string, string> = {}
 ): { resolved: string; missing: string[] } {
   const missing: string[] = []
   const resolved = text.replace(/\{\{([^{}]+)\}\}/g, (match, name: string) => {
     const key = name.trim()
     if (key in env) return env[key]
+    if (key in globalEnv) return globalEnv[key]
     missing.push(key)
     return match
   })

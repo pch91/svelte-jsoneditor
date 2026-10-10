@@ -38,10 +38,27 @@
     type JSONPath
   } from 'immutable-json-patch'
   import { loadWorkspace, saveWorkspace } from './workspaceStorage.js'
+  import type { StoredWorkspace } from './workspaceStorage.js'
+  import {
+    WORKSPACE_FILE_EXT,
+    parseWorkspaceFile,
+    serializeWorkspaceFile,
+    type WorkspaceBundle
+  } from './workspaceFile.js'
   import CommandPalette from './components/CommandPalette.svelte'
   import FolderTree from './components/FolderTree.svelte'
   import TabContextMenu from './components/TabContextMenu.svelte'
   import CurlImportModal from './components/CurlImportModal.svelte'
+  import FlowCanvas from './components/FlowCanvas.svelte'
+  import EnvironmentManagerModal from './components/EnvironmentManagerModal.svelte'
+  import CapturePathsTable from './components/CapturePathsTable.svelte'
+  import {
+    type FlowGraph,
+    type FlowNode,
+    createDefaultFlowGraph,
+    migrateChainToFlowGraph
+  } from './flowTypes.js'
+  import type { CaptureRule } from './tabUtils.js'
   import {
     computeDiffPaths,
     contentToValue,
@@ -56,6 +73,7 @@
     removeSubTabFromPrimary,
     promoteSubTabToPrimary,
     canPromoteSubTab,
+    canCloseSubTab,
     movePrimaryTabToPane,
     reorderTabIds,
     movePrimaryTabBetweenPanes,
@@ -89,6 +107,7 @@
     buildUrlWithQuery,
     encodeBasicAuth,
     extractValueByPath,
+    fetchWithProxy,
     formatBytes,
     headersToRows,
     isCurlCommand,
@@ -340,18 +359,38 @@
     activePrimary.requestState.body = reqBody
     activePrimary.requestState.bodyType = reqBodyType
     activePrimary.requestState.sendMode = reqSendMode
+    activePrimary.requestState.authType = reqAuthType
+    activePrimary.requestState.authBearerToken = authBearerToken
+    activePrimary.requestState.authBasicUser = authBasicUser
+    activePrimary.requestState.authBasicPass = authBasicPass
+    activePrimary.requestState.authApiKeyName = authApiKeyName
+    activePrimary.requestState.authApiKeyValue = authApiKeyValue
+    activePrimary.requestState.proxyMode = reqProxyMode
+    activePrimary.requestState.customProxyUrl = reqCustomProxyUrl
+    activePrimary.requestState.captures = reqCaptures
   }
-  let reqActiveTab: 'params' | 'headers' | 'body' | 'auth' | 'env' = 'params'
+  let reqActiveTab: 'params' | 'headers' | 'body' | 'auth' | 'captures' | 'env' = 'params'
   let reqParams: QueryParam[] = []
   let reqHeaderRows: HeaderRow[] = []
   let reqBodyType: 'none' | 'json' | 'text' = 'json'
   let reqAuthType: 'none' | 'bearer' | 'basic' | 'apikey' = 'none'
-  let authBearerToken = ''
+  let authBearerToken = '{{token}}'
   let authBasicUser = ''
   let authBasicPass = ''
   let authApiKeyName = 'X-API-Key'
   let authApiKeyValue = ''
+  let authValidationMessage: { ok: boolean; text: string } | null = null
+  let reqProxyMode: 'inherit' | 'direct' | 'corsproxy' | 'allorigins' | 'custom' = 'inherit'
+  let reqCustomProxyUrl = ''
+  let reqCaptures: CaptureRule[] = []
   let reqResponseText = ''
+
+  const requestsViewMode = useLocalStorage('svelte-jsoneditor-demo-requests-view-mode', 'form')
+  const flowGraphStore = useLocalStorage(
+    'svelte-jsoneditor-demo-flow-graph',
+    createDefaultFlowGraph()
+  )
+
   const chainOpen = useLocalStorage('svelte-jsoneditor-demo-chain-open', true)
   const historyOpen = useLocalStorage('svelte-jsoneditor-demo-history-open', true)
   const sidebarAdvancedOpen = useLocalStorage('svelte-jsoneditor-demo-sidebar-advanced', false)
@@ -374,6 +413,8 @@
   // ---- Environments, tokens and execution chain ----
   const environments = useLocalStorage('svelte-jsoneditor-demo-environments', {})
   const activeEnvName = useLocalStorage('svelte-jsoneditor-demo-active-env', '')
+  const globalEnvironment = useLocalStorage('svelte-jsoneditor-demo-global-env', {})
+  let envManagerOpen = false
 
   /**
    * Pre-registered example chain (Rick and Morty API):
@@ -695,6 +736,16 @@
     reqSendMode = rs.sendMode || 'same'
     reqParams = parseQueryParams(reqUrl)
     reqHeaderRows = headersToRows(reqHeaders)
+    reqAuthType = rs.authType || 'none'
+    authBearerToken = rs.authBearerToken || '{{token}}'
+    authBasicUser = rs.authBasicUser || ''
+    authBasicPass = rs.authBasicPass || ''
+    authApiKeyName = rs.authApiKeyName || 'X-API-Key'
+    authApiKeyValue = rs.authApiKeyValue || ''
+    reqProxyMode = rs.proxyMode || 'inherit'
+    reqCustomProxyUrl = rs.customProxyUrl || ''
+    reqCaptures = rs.captures ? [...rs.captures] : []
+    authValidationMessage = null
   }
 
   function closePrimaryTabInPane(leafId: number, primaryId: number) {
@@ -758,16 +809,13 @@
   }
 
   function closeSubTabInPane(leafId: number, primary: PrimaryTabState, subTabId: number) {
+    const meta = subTabsMeta.get(subTabId)
+    if (!canCloseSubTab(meta)) {
+      showDiskSaveLabel('The main page cannot be closed')
+      return
+    }
+
     if (primary.subTabIds.length <= 1) {
-      const idx = getTabIdx(subTabId)
-      if (idx !== -1) {
-        tabContents[idx] = { text: '{}', json: undefined }
-        tabTitles[idx] = 'Principal'
-        tabContents = [...tabContents]
-        tabTitles = [...tabTitles]
-        tabsRenderVersion++
-        scheduleAutosave()
-      }
       return
     }
 
@@ -789,7 +837,7 @@
   function promoteSubTabInPane(leafId: number, subTabId: number) {
     const meta = subTabsMeta.get(subTabId)
     if (!canPromoteSubTab(meta)) {
-      showDiskSaveLabel('A aba principal não pode ser promovida')
+      showDiskSaveLabel('The main tab cannot be promoted')
       return
     }
     const fromPrimary = primaryTabs.find((p) => p.subTabIds.includes(subTabId))
@@ -828,7 +876,7 @@
 
     tabsRenderVersion++
     selectPrimaryTabInPane(leafId, newPrimId)
-    showDiskSaveLabel(`Sub-aba "${subTitle}" promovida para Nível 1 ✓`)
+    showDiskSaveLabel(`Sub-tab "${subTitle}" promoted to Level 1 ✓`)
   }
 
   function promoteSubTab(subTabId: number) {
@@ -1082,7 +1130,7 @@
         action: () => splitActiveLeaf('horizontal')
       },
       {
-        label: 'Fechar Aba Principal',
+        label: 'Close Main Tab',
         disabled: isSingle,
         action: () => closePrimaryTabInPane(effectiveLeafId, primaryId)
       }
@@ -1092,6 +1140,7 @@
   function buildSubTabMenuItems(subTabId: number, leafId?: number) {
     const meta = subTabsMeta.get(subTabId)
     const canPromote = canPromoteSubTab(meta)
+    const canClose = canCloseSubTab(meta)
     const effectiveLeafId = leafId ?? activeLeafId
     const primary = primaryTabs.find((p) => p.subTabIds.includes(subTabId))
     const isSingle = (primary?.subTabIds.length ?? 0) <= 1
@@ -1099,7 +1148,7 @@
       ...(canPromote
         ? [
             {
-              label: '⇡ Promover para Aba Principal (Nível 1)',
+              label: '⇡ Promote to Main Tab (Level 1)',
               disabled: false,
               action: () => promoteSubTabInPane(effectiveLeafId, subTabId)
             }
@@ -1114,13 +1163,17 @@
           if (n) renameSubTab(subTabId, n)
         }
       },
-      {
-        label: 'Fechar Sub-aba',
-        disabled: isSingle,
-        action: () => {
-          if (primary) closeSubTabInPane(effectiveLeafId, primary, subTabId)
-        }
-      }
+      ...(canClose
+        ? [
+            {
+              label: 'Close Sub-tab',
+              disabled: isSingle,
+              action: () => {
+                if (primary) closeSubTabInPane(effectiveLeafId, primary, subTabId)
+              }
+            }
+          ]
+        : [])
     ]
   }
 
@@ -1568,8 +1621,8 @@
     updateDirtyFlags()
   }
 
-  onMount(async () => {
-    const saved = await loadWorkspace()
+  /** Replace the whole Level 1 workspace (tabs, sub-tabs, layout) with a stored snapshot. */
+  function applyWorkspace(saved: StoredWorkspace | undefined) {
     if (saved && saved.tabs.length > 0) {
       const n = saved.tabs.length
       tabIds = saved.tabs.map((t) => t.id)
@@ -1647,7 +1700,126 @@
         )
       }
       activeLeafId = collectLeaves(layout)[0]?.id ?? 1
+      tabsRenderVersion++
     }
+  }
+
+  // ---- Workspace file (.jsew): whole Level 1 workspace + Spatial Flow + environments ----
+  type WorkspacePickerWindow = Window & {
+    showOpenFilePicker?: (opts?: unknown) => Promise<FileSystemFileHandle[]>
+    showSaveFilePicker?: (opts?: unknown) => Promise<FileSystemFileHandle>
+  }
+  const WORKSPACE_PICKER_TYPES = [
+    {
+      description: 'JSON Editor Workspace',
+      accept: { 'application/json': [WORKSPACE_FILE_EXT] }
+    }
+  ]
+  let workspaceFileHandle: FileSystemFileHandle | null = null
+  let workspaceFileName = ''
+
+  function buildWorkspaceBundle(): WorkspaceBundle {
+    return {
+      workspace: workspaceSnapshot,
+      flowGraph: ($flowGraphStore as FlowGraph) ?? createDefaultFlowGraph(),
+      environments: $environments as Record<string, Record<string, string>>,
+      globalEnvironment: $globalEnvironment as Record<string, string>,
+      activeEnvName: $activeEnvName as string
+    }
+  }
+
+  function applyWorkspaceBundle(bundle: WorkspaceBundle) {
+    fileHandles.clear()
+    applyWorkspace(bundle.workspace)
+    if (bundle.flowGraph) $flowGraphStore = bundle.flowGraph
+    if (bundle.environments) $environments = bundle.environments
+    if (bundle.globalEnvironment) $globalEnvironment = bundle.globalEnvironment
+    if (bundle.activeEnvName !== undefined) $activeEnvName = bundle.activeEnvName
+    envJsonText = $activeEnvName ? JSON.stringify($environments[$activeEnvName] ?? {}, null, 2) : ''
+    scheduleAutosave()
+  }
+
+  function downloadWorkspaceFile(text: string) {
+    const name = workspaceFileName || `workspace${WORKSPACE_FILE_EXT}`
+    const blob = new Blob([text], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    showDiskSaveLabel(`Exported ${name}`)
+  }
+
+  async function saveWorkspaceFile(saveAs = false) {
+    const text = serializeWorkspaceFile(buildWorkspaceBundle())
+    const w = window as WorkspacePickerWindow
+    if (!w.showSaveFilePicker) {
+      downloadWorkspaceFile(text)
+      return
+    }
+    try {
+      let handle = workspaceFileHandle
+      if (!handle || saveAs) {
+        handle = await w.showSaveFilePicker({
+          suggestedName: workspaceFileName || `workspace${WORKSPACE_FILE_EXT}`,
+          types: WORKSPACE_PICKER_TYPES
+        })
+        workspaceFileHandle = handle
+        workspaceFileName = handle.name
+      }
+      const writable = await handle.createWritable()
+      await writable.write(text)
+      await writable.close()
+      showDiskSaveLabel(`Workspace saved: ${handle.name}`)
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') showDiskSaveLabel('Could not save workspace')
+    }
+  }
+
+  function loadWorkspaceText(text: string, name: string) {
+    try {
+      applyWorkspaceBundle(parseWorkspaceFile(text))
+      workspaceFileName = name
+      showDiskSaveLabel(`Workspace opened: ${name}`)
+    } catch (err) {
+      showDiskSaveLabel(err instanceof Error ? err.message : 'Could not open workspace')
+    }
+  }
+
+  async function openWorkspaceFile() {
+    if (
+      dirtyFlags.some(Boolean) &&
+      !confirm('Opening a workspace replaces the current tabs. Continue?')
+    ) {
+      return
+    }
+    const w = window as WorkspacePickerWindow
+    if (w.showOpenFilePicker) {
+      try {
+        const [handle] = await w.showOpenFilePicker({ types: WORKSPACE_PICKER_TYPES })
+        const file = await handle.getFile()
+        loadWorkspaceText(await file.text(), file.name)
+        workspaceFileHandle = handle
+      } catch (err) {
+        if ((err as Error)?.name !== 'AbortError') showDiskSaveLabel('Could not open workspace')
+      }
+      return
+    }
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = `${WORKSPACE_FILE_EXT},application/json`
+    input.onchange = async () => {
+      const file = input.files?.[0]
+      if (file) loadWorkspaceText(await file.text(), file.name)
+    }
+    input.click()
+  }
+
+  onMount(async () => {
+    applyWorkspace(await loadWorkspace())
     hydrated = true
 
     // Restore file handles so documents can be saved back to disk
@@ -2012,7 +2184,7 @@
     const suffix = (pointer || 'root').replace(/^\/+/, '').replace(/[^a-zA-Z0-9_.-]+/g, '-')
     const name = `extract-${suffix || 'root'}.json`
     addSubTabWithContent(name, text, guessMode(name, text), 'extract')
-    showDiskSaveLabel(`Extraído "${pointer || '/'}" como sub-aba (Nível 2)`)
+    showDiskSaveLabel(`Extracted "${pointer || '/'}" as sub-tab (Level 2)`)
   }
 
   /** Open a primitive value in a preview tab as a Level 2 sub-tab. */
@@ -2033,7 +2205,7 @@
         applyReplaceToSource(sourceTabId, pointer, updated)
       }
     })
-    showDiskSaveLabel(`Preview aberto como sub-aba (Nível 2): "${props.pathLabel}"`)
+    showDiskSaveLabel(`Preview opened as sub-tab (Level 2): "${props.pathLabel}"`)
   }
 
   /** Open nested object/array content as a Level 2 sub-tab, syncing edits back live. */
@@ -2046,7 +2218,7 @@
     const title = `Edit: ${pointer || '(root)'}`
     const idx = addSubTabWithContent(title, text, Mode.tree, 'nested')
     nestedTabInfo.set(tabIds[idx], { pointer, sourceTabId, onClose: props.onClose })
-    showDiskSaveLabel(`Edição aninhada aberta como sub-aba (Nível 2): "${pointer || '/'}"`)
+    showDiskSaveLabel(`Nested edit opened as sub-tab (Level 2): "${pointer || '/'}"`)
   }
 
   // ---- Samples ----
@@ -2132,40 +2304,24 @@
   }
 
   /** Build the Authorization (or API-key) headers from the Auth section. */
-  function buildAuthHeaders(env: Record<string, string>): Record<string, string> {
+  function buildAuthHeaders(
+    env: Record<string, string>,
+    globalEnv: Record<string, string> = {}
+  ): Record<string, string> {
     const auth: Record<string, string> = {}
     if (reqAuthType === 'bearer') {
-      const token = resolveVariables(authBearerToken, env).resolved.trim()
+      const token = resolveVariables(authBearerToken, env, globalEnv).resolved.trim()
       if (token) auth.Authorization = `Bearer ${token}`
     } else if (reqAuthType === 'basic') {
-      const user = resolveVariables(authBasicUser, env).resolved
-      const pass = resolveVariables(authBasicPass, env).resolved
+      const user = resolveVariables(authBasicUser, env, globalEnv).resolved
+      const pass = resolveVariables(authBasicPass, env, globalEnv).resolved
       if (user || pass) auth.Authorization = `Basic ${encodeBasicAuth(user, pass)}`
     } else if (reqAuthType === 'apikey') {
-      const name = resolveVariables(authApiKeyName, env).resolved.trim()
-      const value = resolveVariables(authApiKeyValue, env).resolved
+      const name = resolveVariables(authApiKeyName, env, globalEnv).resolved.trim()
+      const value = resolveVariables(authApiKeyValue, env, globalEnv).resolved
       if (name && value) auth[name] = value
     }
     return auth
-  }
-
-  /** Try the URL directly, then fall back to the CORS proxy when configured. */
-  async function fetchWithProxy(
-    url: string,
-    init: RequestInit,
-    proxyTemplate: string
-  ): Promise<{ res: Response; viaProxy: boolean }> {
-    const attempts = [url]
-    if (proxyTemplate) attempts.push(proxyUrl(url, proxyTemplate))
-    let lastError: unknown
-    for (let index = 0; index < attempts.length; index++) {
-      try {
-        return { res: await fetch(attempts[index], init), viaProxy: index > 0 }
-      } catch (err) {
-        lastError = err
-      }
-    }
-    throw lastError
   }
 
   async function sendRequest() {
@@ -2177,12 +2333,13 @@
     const started = performance.now()
     const method = reqMethod
     const env = activeEnv as Record<string, string>
-    const resolvedUrl = resolveVariables(url, env)
-    const resolvedHeaders = resolveVariables(reqHeaders, env)
-    const resolvedBody = resolveVariables(reqBody, env)
-    const authHeaders = buildAuthHeaders(env)
+    const globalEnv = ($globalEnvironment ?? {}) as Record<string, string>
+    const resolvedUrl = resolveVariables(url, env, globalEnv)
+    const resolvedHeaders = resolveVariables(reqHeaders, env, globalEnv)
+    const resolvedBody = resolveVariables(reqBody, env, globalEnv)
+    const authHeaders = buildAuthHeaders(env, globalEnv)
     const authValues = Object.values(authHeaders).join(' ')
-    const authMissing = resolveVariables(authValues, env).missing
+    const authMissing = resolveVariables(authValues, env, globalEnv).missing
     const missing = [
       ...new Set([
         ...resolvedUrl.missing,
@@ -2199,7 +2356,16 @@
       body,
       contentType
     )
-    const proxyTemplate = String($corsProxy).trim()
+    let proxyTemplate = String($corsProxy).trim()
+    if (reqProxyMode === 'direct') {
+      proxyTemplate = ''
+    } else if (reqProxyMode === 'corsproxy') {
+      proxyTemplate = 'https://corsproxy.io/?url={url}'
+    } else if (reqProxyMode === 'allorigins') {
+      proxyTemplate = 'https://api.allorigins.win/raw?url={url}'
+    } else if (reqProxyMode === 'custom' && reqCustomProxyUrl) {
+      proxyTemplate = reqCustomProxyUrl.trim()
+    }
 
     try {
       const { res, viaProxy } = await fetchWithProxy(
@@ -2218,6 +2384,31 @@
         sizeBytes,
         missing,
         viaProxy
+      }
+
+      // Process response captures into active environment
+      if ($activeEnvName && reqCaptures && reqCaptures.length > 0) {
+        try {
+          const jsonRes: unknown = JSON.parse(text)
+          const envUpdates: Record<string, string> = { ...env }
+          const capturedNames: string[] = []
+          for (const rule of reqCaptures) {
+            if (!rule.enabled || !rule.path.trim() || !rule.name.trim()) continue
+            const val = extractValueByPath(jsonRes, rule.path.trim())
+            if (val !== undefined) {
+              envUpdates[rule.name.trim()] = String(val)
+              capturedNames.push(`${rule.name.trim()}=${String(val).slice(0, 20)}`)
+            }
+          }
+          if (capturedNames.length > 0) {
+            $environments = { ...$environments, [$activeEnvName]: envUpdates }
+            envJsonText = JSON.stringify($environments[$activeEnvName], null, 2)
+            updateEnvTabContent()
+            showDiskSaveLabel(`Captured into environment: ${capturedNames.join(', ')}`)
+          }
+        } catch {
+          // non-JSON
+        }
       }
       const entry: RequestHistoryEntry = {
         id: Date.now(),
@@ -2251,7 +2442,7 @@
           activePrimary.activeSubTabId = lastRespId
           primaryTabs = [...primaryTabs]
           setActiveLeafTab(existingIdx)
-          showDiskSaveLabel(`Resposta atualizada na aba: ${displayTitle}`)
+          showDiskSaveLabel(`Response updated in tab: ${displayTitle}`)
           reqSending = false
           return
         }
@@ -2269,7 +2460,7 @@
       updatedPrimary.requestState.lastResponseTabId = newSubId
       primaryTabs = primaryTabs.map((p) => (p.id === updatedPrimary.id ? updatedPrimary : p))
       setActiveLeafTab(newIdx)
-      showDiskSaveLabel(`Resposta aberta como nova sub-aba: ${displayTitle}`)
+      showDiskSaveLabel(`Response opened as new sub-tab: ${displayTitle}`)
     } catch (err) {
       reqResult = {
         error: proxyTemplate
@@ -2435,11 +2626,12 @@
   const PROXY_PLACEHOLDER = 'https://my-proxy/?url={url}'
   const BEARER_PLACEHOLDER = 'token (use {{token}} for the env token)'
   const TOKEN_VAR = '{{token}}'
-  const REQ_TABS: Array<['params' | 'headers' | 'body' | 'auth' | 'env', string]> = [
+  const REQ_TABS: Array<['params' | 'headers' | 'body' | 'auth' | 'captures' | 'env', string]> = [
     ['params', 'Params'],
     ['headers', 'Headers'],
     ['body', 'Body'],
     ['auth', 'Auth'],
+    ['captures', 'Captures'],
     ['env', 'Env']
   ]
   const AUTH_METHODS: Array<['none' | 'bearer' | 'basic' | 'apikey', string, string]> = [
@@ -2448,6 +2640,73 @@
     ['basic', 'Basic', 'Adds Authorization: Basic (base64 of user:password)'],
     ['apikey', 'API Key', 'Adds a custom header with the key']
   ]
+
+  function validateAndRevalidateAuth() {
+    const env = (activeEnv as Record<string, string>) || {}
+    const globalEnv = ($globalEnvironment ?? {}) as Record<string, string>
+    if (reqAuthType === 'none') {
+      authValidationMessage = { ok: true, text: 'No authentication required (None).' }
+      return
+    }
+
+    if (reqAuthType === 'bearer') {
+      const rawToken = authBearerToken.trim()
+      if (!rawToken) {
+        authValidationMessage = { ok: false, text: 'Bearer token not configured.' }
+        return
+      }
+      const resolved = resolveVariables(rawToken, env, globalEnv).resolved.trim()
+      if (!resolved || resolved === '{{token}}') {
+        if (tokenUrl.trim()) {
+          authValidationMessage = { ok: true, text: 'Revalidating token via configured URL...' }
+          void fetchToken()
+          return
+        }
+        authValidationMessage = {
+          ok: false,
+          text: `Variable ${rawToken} is empty in the active environment "${$activeEnvName || 'none'}". Fill in the token or configure the Token URL.`
+        }
+        return
+      }
+      const isJwt = resolved.split('.').length === 3
+      authValidationMessage = {
+        ok: true,
+        text: `✓ Valid Bearer Token! (${resolved.slice(0, 16)}...${isJwt ? ' - JWT format detected' : ''})`
+      }
+      showDiskSaveLabel('Bearer authentication validated successfully')
+      return
+    }
+
+    if (reqAuthType === 'basic') {
+      const user = resolveVariables(authBasicUser, env, globalEnv).resolved.trim()
+      const pass = resolveVariables(authBasicPass, env, globalEnv).resolved
+      if (!user && !pass) {
+        authValidationMessage = { ok: false, text: 'Username and password not provided for Basic Auth.' }
+        return
+      }
+      authValidationMessage = {
+        ok: true,
+        text: `✓ Basic Auth configurado: [${user} : ****] → Header: Basic ${encodeBasicAuth(user, pass).slice(0, 14)}...`
+      }
+      showDiskSaveLabel('Basic Auth validado')
+      return
+    }
+
+    if (reqAuthType === 'apikey') {
+      const name = resolveVariables(authApiKeyName, env, globalEnv).resolved.trim()
+      const val = resolveVariables(authApiKeyValue, env, globalEnv).resolved.trim()
+      if (!name || !val) {
+        authValidationMessage = { ok: false, text: 'Header name or API Key value is missing.' }
+        return
+      }
+      authValidationMessage = {
+        ok: true,
+        text: `✓ API Key configurada: [${name}: ${val.slice(0, 8)}...]`
+      }
+      showDiskSaveLabel('API Key validada')
+      return
+    }
+  }
 
   /** Open the stored response as a new editor tab AND load the request into the form. */
   function openHistoryResponse(entry: RequestHistoryEntry) {
@@ -2734,7 +2993,8 @@
       // Read the environment fresh at every step, so values captured by
       // previous steps (e.g. tokens) are available to the next one.
       const env = ($environments[$activeEnvName] ?? {}) as Record<string, string>
-      const resolvedUrl = resolveVariables(item.url, env).resolved
+      const globalEnv = ($globalEnvironment ?? {}) as Record<string, string>
+      const resolvedUrl = resolveVariables(item.url, env, globalEnv).resolved
       const started = performance.now()
       try {
         const { res, viaProxy } = await fetchWithProxy(
@@ -2742,14 +3002,14 @@
           {
             method: item.method,
             headers: withContentType(
-              parseHeadersText(resolveVariables(item.headers, env).resolved),
+              parseHeadersText(resolveVariables(item.headers, env, globalEnv).resolved),
               ['GET', 'HEAD'].includes(item.method)
                 ? undefined
-                : resolveVariables(item.body, env).resolved
+                : resolveVariables(item.body, env, globalEnv).resolved
             ),
             body: ['GET', 'HEAD'].includes(item.method)
               ? undefined
-              : resolveVariables(item.body, env).resolved
+              : resolveVariables(item.body, env, globalEnv).resolved
           },
           proxyTemplate
         )
@@ -2832,6 +3092,115 @@
     chainRunningIndex = -1
   }
 
+  /** Add the active request in the form as a new REST block in the spatial flow. */
+  function addCurrentFormToFlow() {
+    const currentGraph = ($flowGraphStore as FlowGraph) ?? createDefaultFlowGraph()
+    const offset = currentGraph.nodes.length * 40
+    const segments = reqUrl.split('?')[0].split('/').filter(Boolean)
+    const namePart = segments.pop() || 'Request'
+
+    const newNode: FlowNode = {
+      id: `node_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'rest',
+      title: `${reqMethod} ${namePart}`,
+      x: 80 + (offset % 280),
+      y: 80 + (offset % 200),
+      status: 'idle',
+      restData: {
+        method: reqMethod,
+        url: reqUrl,
+        queryParams: parseQueryParams(reqUrl),
+        headers: reqHeaders,
+        headerRows: headersToRows(reqHeaders),
+        body: reqBody,
+        bodyType: reqBodyType,
+        proxyMode: reqProxyMode,
+        customProxyUrl: reqCustomProxyUrl,
+        authType: reqAuthType,
+        authBearerToken: authBearerToken,
+        authBasicUser: authBasicUser,
+        authBasicPass: authBasicPass,
+        authApiKeyName: authApiKeyName,
+        authApiKeyValue: authApiKeyValue,
+        captures: [...reqCaptures]
+      },
+      history: []
+    }
+
+    $flowGraphStore = {
+      ...currentGraph,
+      nodes: [...currentGraph.nodes, newNode]
+    }
+    showDiskSaveLabel(`Block "${newNode.title}" added to the Spatial Flow!`)
+  }
+
+  /** Add a request from history as a new REST block in the spatial flow. */
+  function addHistoryEntryToFlow(entry: RequestHistoryEntry) {
+    const currentGraph = ($flowGraphStore as FlowGraph) ?? createDefaultFlowGraph()
+    const offset = currentGraph.nodes.length * 40
+    const segments = entry.url.split('?')[0].split('/').filter(Boolean)
+    const namePart = segments.pop() || 'Request'
+
+    const newNode: FlowNode = {
+      id: `node_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'rest',
+      title: `${entry.method} ${namePart}`,
+      x: 80 + (offset % 280),
+      y: 80 + (offset % 200),
+      status: typeof entry.status === 'number' && entry.status < 400 ? 'success' : 'idle',
+      restData: {
+        method: entry.method,
+        url: entry.url,
+        queryParams: parseQueryParams(entry.url),
+        headers: entry.headers || '',
+        headerRows: headersToRows(entry.headers || ''),
+        body: entry.body || '',
+        bodyType: entry.body ? 'json' : 'none',
+        proxyMode: entry.viaProxy ? 'corsproxy' : 'inherit',
+        authType: 'inherit',
+        captures: []
+      },
+      lastRun: entry.responseText
+        ? {
+            durationMs: entry.durationMs,
+            status: entry.status,
+            timestamp: entry.timestamp,
+            responseText: entry.responseText,
+            sizeBytes: entry.sizeBytes,
+            viaProxy: entry.viaProxy
+          }
+        : undefined,
+      history: entry.responseText
+        ? [
+            {
+              id: String(entry.timestamp),
+              timestamp: entry.timestamp,
+              status: entry.status,
+              durationMs: entry.durationMs,
+              responseText: entry.responseText,
+              sizeBytes: entry.sizeBytes,
+              viaProxy: entry.viaProxy
+            }
+          ]
+        : []
+    }
+
+    $flowGraphStore = {
+      ...currentGraph,
+      nodes: [...currentGraph.nodes, newNode]
+    }
+    showDiskSaveLabel(`History "${newNode.title}" added to the Flow!`)
+  }
+
+  /** Load the sample spatial flow and open the Requests panel. */
+  function loadFlowSample() {
+    ensureExampleEnv()
+    $flowGraphStore = createDefaultFlowGraph()
+    $requestsViewMode = 'flow'
+    showRequests = true
+    showDiskSaveLabel('Rick & Morty flow loaded!')
+  }
+
   /** Write back to disk every tab that has a file handle and unsaved changes. */
   function saveAllToDisk() {
     let count = 0
@@ -2882,6 +3251,24 @@
     },
     { id: 'download-all', group: 'File', label: 'Download all tabs', run: downloadAllTabs },
     { id: 'save-all', group: 'File', label: 'Save all files to disk', run: saveAllToDisk },
+    {
+      id: 'workspace-open',
+      group: 'File',
+      label: 'Open workspace file (.jsew)…',
+      run: () => void openWorkspaceFile()
+    },
+    {
+      id: 'workspace-save',
+      group: 'File',
+      label: 'Save workspace file (.jsew)',
+      run: () => void saveWorkspaceFile(false)
+    },
+    {
+      id: 'workspace-save-as',
+      group: 'File',
+      label: 'Save workspace file as…',
+      run: () => void saveWorkspaceFile(true)
+    },
     { id: 'popout', group: 'File', label: 'Popout active editor', run: openInWindow },
     {
       id: 'sidebar',
@@ -3091,6 +3478,24 @@
           >
           <button class="sb-btn" on:click={saveAllToDisk}>💾 Save all files</button>
           <button class="sb-btn" on:click={downloadAllTabs}>⬇ Download all tabs</button>
+          <p class="sb-note">
+            Workspace file (<code>{WORKSPACE_FILE_EXT}</code>): all main tabs, sub-tabs, Spatial Flow
+            and environments in one file.
+          </p>
+          <button
+            class="sb-btn"
+            title="Open a workspace file (replaces the current tabs and flow)"
+            on:click={() => void openWorkspaceFile()}>🗂 Open workspace…</button
+          >
+          <button
+            class="sb-btn"
+            title={workspaceFileName ? `Save to ${workspaceFileName}` : 'Save the whole workspace to a file'}
+            on:click={() => void saveWorkspaceFile(false)}
+            >💾 Save workspace{workspaceFileName ? `: ${workspaceFileName}` : ''}</button
+          >
+          <button class="sb-btn" on:click={() => void saveWorkspaceFile(true)}
+            >📝 Save workspace as…</button
+          >
         </section>
         <section class="sb-section">
           <h3 class="sb-title">👁 Editor</h3>
@@ -3166,8 +3571,8 @@
             <button class="sb-btn" on:click={() => loadSample('invalid')}>Invalid JSON</button>
             <button
               class="sb-btn"
-              title="Load a ready-to-run chain using the Rick and Morty API and open the Requests panel"
-              on:click={loadChainSample}>⛓ Chain · Rick & Morty</button
+              title="Load full example into the Spatial Flow and open the requests panel"
+              on:click={loadFlowSample}>🔀 Flow · Rick & Morty</button
             >
           </section>
         {/if}
@@ -3202,7 +3607,7 @@
             <!-- TAB BAR LEVEL 1 (Abas Principais deste Painel) -->
             <nav
               class="tab-bar tab-bar-l1"
-              aria-label="Abas Principais (Nível 1)"
+              aria-label="Main Tabs (Level 1)"
               on:dragover={(e) => {
                 if (draggedPrimaryId !== undefined) {
                   e.preventDefault()
@@ -3253,7 +3658,7 @@
                   {/if}
                   <span
                     class="tab-close"
-                    title="Fechar aba principal (e suas sub-abas)"
+                    title="Close main tab (and its sub-tabs)"
                     on:click|stopPropagation={() => closePrimaryTabInPane(lr.leafId, pt.id)}>×</span
                   >
                 </button>
@@ -3292,7 +3697,7 @@
                   }}
                 >
                   <span class="tab-drop-promote-icon">⇡</span>
-                  <span>Solte aqui para subir para Nível 1</span>
+                  <span>Drop here to move up to Level 1</span>
                 </div>
               {/if}
 
@@ -3306,7 +3711,7 @@
             <!-- TAB BAR LEVEL 2 (Abas Secundárias do Editor Ativo deste Painel) -->
             <nav
               class="tab-bar tab-bar-l2"
-              aria-label="Abas Secundárias (Nível 2)"
+              aria-label="Secondary Tabs (Level 2)"
               on:dragover={(e) => {
                 if (draggedTabId !== undefined) {
                   e.preventDefault()
@@ -3348,21 +3753,23 @@
                   {#if canPromoteSubTab(item.meta)}
                     <span
                       class="tab-promote-btn"
-                      title="Promover para nova aba principal (Nível 1)"
+                      title="Promote to new main tab (Level 1)"
                       on:click|stopPropagation={() => promoteSubTabInPane(lr.leafId, item.subTabId)}>⇡</span
                     >
                   {/if}
-                  <span
-                    class="tab-close"
-                    title="Fechar sub-aba"
-                    on:click|stopPropagation={() => closeSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}>×</span
-                  >
+                  {#if canCloseSubTab(item.meta)}
+                    <span
+                      class="tab-close"
+                      title="Close sub-tab"
+                      on:click|stopPropagation={() => closeSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}>×</span
+                    >
+                  {/if}
                 </button>
               {/each}
               <button
                 class="tab tab-add tab-add-l2"
                 on:click={() => addSubTabInPane(lr.leafId, paneActivePrim)}
-                title="Nova sub-aba (Nível 2)">+ Sub-aba</button
+                title="New sub-tab (Level 2)">+ Sub-tab</button
               >
             </nav>
 
@@ -3373,14 +3780,14 @@
                 on:dragover|preventDefault
                 on:drop={(e) => onSplitDropPrimary(e, lr.leafId, 'vertical')}
               >
-                Dividir à direita (Novo grid)
+                Split right (New grid)
               </div>
               <div
                 class="drop-zone dz-bottom"
                 on:dragover|preventDefault
                 on:drop={(e) => onSplitDropPrimary(e, lr.leafId, 'horizontal')}
               >
-                Dividir abaixo (Novo grid)
+                Split below (New grid)
               </div>
             {/if}
 
@@ -3489,126 +3896,263 @@
             on:mousedown={startRequestsResize}
           ></div>
           <div class="requests-header">
-            <span class="requests-title">Requests</span>
-            <div class="requests-proxy">
-              <span
-                class="req-label"
-                title="CORS proxy: used as fallback when a direct request fails">🛡 Proxy</span
-              >
-              <select
-                class="tb-select req-proxy-select"
-                value={proxyPresetValue}
-                on:change={onProxyPresetChange}
-              >
-                {#each PROXY_PRESETS as preset}
-                  <option value={preset.value}>{preset.label}</option>
-                {/each}
-                <option value="custom">Custom…</option>
-              </select>
-              {#if proxyPresetValue === 'custom'}
-                <input
-                  class="req-proxy-input"
-                  type="text"
-                  placeholder={PROXY_PLACEHOLDER}
-                  title="The placeholder is replaced by the request URL"
-                  bind:value={$corsProxy}
-                />
-              {/if}
-            </div>
-            <button
-              class="sb-btn-status"
-              title="Import cURL command copied from Postman or terminal"
-              on:click={() => (showCurlModal = true)}>📥 Import cURL</button
-            >
-            <button
-              class="sb-btn-status"
-              title="Copy active request as cURL command"
-              on:click={copyRequestAsCurl}>📋 Copy cURL</button
-            >
-            <span class="req-spacer"></span>
-            <button
-              class="problems-close"
-              on:click={() => (showRequests = false)}
-              title="Close requests panel">×</button
-            >
-          </div>
+            <div class="requests-header-left">
+              <div class="requests-brand">
+                <span class="requests-brand-icon">⚡</span>
+                <span class="requests-brand-text">REQUESTS</span>
+              </div>
 
-          <!-- Request row -->
-          <div class="requests-form">
-            <select
-              class="tb-select req-method req-method-{reqMethod.toLowerCase()}"
-              bind:value={reqMethod}
-            >
-              {#each ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as m}<option>{m}</option>{/each}
-            </select>
-            <input
-              class="req-url"
-              type="text"
-              list="req-url-history"
-              placeholder="https://api.example.com/items (or paste cURL here)"
-              bind:value={reqUrl}
-              on:paste={onUrlPaste}
-              on:input={onUrlInput}
-              on:keydown={(e) => {
-                if (e.key === 'Enter') void sendRequest()
-              }}
-            />
-            <datalist id="req-url-history">
-              {#each urlSuggestions as suggestion}<option value={suggestion}></option>{/each}
-            </datalist>
-            <div class="req-send-combo">
+              <!-- View Mode Toggle: Form vs Spatial Flow -->
+              <div class="req-view-toggle">
+                <button
+                  type="button"
+                  class="req-view-btn"
+                  class:active={$requestsViewMode === 'form'}
+                  on:click={() => ($requestsViewMode = 'form')}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <line x1="9" y1="3" x2="9" y2="21"/>
+                  </svg>
+                  <span>Form</span>
+                </button>
+                <button
+                  type="button"
+                  class="req-view-btn"
+                  class:active={$requestsViewMode === 'flow'}
+                  on:click={() => ($requestsViewMode = 'flow')}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="6" cy="6" r="3"/>
+                    <circle cx="18" cy="18" r="3"/>
+                    <line x1="8.5" y1="8.5" x2="15.5" y2="15.5"/>
+                  </svg>
+                  <span>Spatial Flow</span>
+                  {#if $flowGraphStore?.nodes?.length > 0}
+                    <span class="req-badge-pill">{$flowGraphStore.nodes.length}</span>
+                  {/if}
+                </button>
+              </div>
+            </div>
+
+            <div class="requests-header-right">
+              <!-- Environment Manager Pill (Postman style) -->
+              <div class="requests-env-pill">
+                <span class="req-env-icon" title="Environments">🌍</span>
+                <span class="req-env-label">Environment:</span>
+                <select
+                  class="tb-select req-env-select"
+                  bind:value={$activeEnvName}
+                  title="Select active environment"
+                >
+                  <option value="">(No Environment)</option>
+                  {#each Object.keys($environments) as envName}
+                    <option value={envName}>{envName}</option>
+                  {/each}
+                </select>
+                <button
+                  type="button"
+                  class="req-env-manage-btn"
+                  on:click={() => (envManagerOpen = true)}
+                  title="Manage Environments & Globals (Postman style)"
+                >
+                  ⚙️
+                </button>
+              </div>
+
+              <!-- Global Proxy Pill -->
+              <div class="requests-proxy-pill">
+                <span class="req-proxy-icon" title="CORS Proxy Global">🛡</span>
+                <span class="req-proxy-label">Proxy Geral:</span>
+                <select
+                  class="tb-select req-proxy-select"
+                  value={proxyPresetValue}
+                  on:change={onProxyPresetChange}
+                >
+                  {#each PROXY_PRESETS as preset}
+                    <option value={preset.value}>{preset.label}</option>
+                  {/each}
+                  <option value="custom">Custom…</option>
+                </select>
+                {#if proxyPresetValue === 'custom'}
+                  <input
+                    class="req-proxy-input"
+                    type="text"
+                    placeholder={PROXY_PLACEHOLDER}
+                    title="The placeholder is replaced by the request URL"
+                    bind:value={$corsProxy}
+                  />
+                {/if}
+              </div>
+
+              <!-- Import cURL Button -->
               <button
                 type="button"
-                class="req-send-btn"
-                disabled={reqSending}
-                title="Enviar requisição (Enter no campo de URL)"
-                on:click={() => void sendRequest()}
+                class="req-top-btn req-btn-import"
+                title="Import cURL command copied from Postman or terminal"
+                on:click={() => (showCurlModal = true)}
               >
-                {#if reqSending}
-                  <span class="req-spinner"></span>
-                  <span>Enviando…</span>
-                {:else}
-                  <svg class="req-send-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13"/>
-                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                  </svg>
-                  <span>Send</span>
-                {/if}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span>Import cURL</span>
               </button>
-              <div class="req-send-divider"></div>
-              <select
-                class="req-send-mode-select"
-                bind:value={reqSendMode}
-                title="Destino da resposta: Mesma aba ou Nova aba secundária"
+
+              <!-- Copy cURL Button -->
+              <button
+                type="button"
+                class="req-top-btn req-btn-copy"
+                title="Copy active request as cURL command"
+                on:click={copyRequestAsCurl}
               >
-                <option value="same">Mesma aba</option>
-                <option value="new">Nova aba</option>
-              </select>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                <span>Copy cURL</span>
+              </button>
+
+              <!-- Close Button -->
+              <button
+                type="button"
+                class="requests-close-btn"
+                on:click={() => (showRequests = false)}
+                title="Close requests panel"
+              >×</button>
             </div>
-            <button
-              type="button"
-              class="req-curl-btn"
-              title="Copiar requisição ativa como comando cURL"
-              on:click={copyRequestAsCurl}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-              </svg>
-              <span>cURL</span>
-            </button>
           </div>
 
-          <!-- Section tabs -->
-          <div class="req-tabs">
-            {#each REQ_TABS as [tab, label]}
-              <button
-                class="req-tab"
-                class:active={reqActiveTab === tab}
-                on:click={() => (reqActiveTab = tab)}>{label}</button
+          {#if $requestsViewMode === 'flow'}
+            <div class="requests-flow-container">
+              <FlowCanvas
+                bind:flowGraph={$flowGraphStore}
+                bind:environments={$environments}
+                bind:globalEnvironment={$globalEnvironment}
+                activeEnvName={$activeEnvName}
+                globalProxy={String($corsProxy).trim()}
+                onSaveGraph={(g) => ($flowGraphStore = g)}
+                onManageEnvironments={() => (envManagerOpen = true)}
+                onOpenInEditor={(title, text) => {
+                  const mode = guessMode(title, text)
+                  addSubTabWithContent(title, text, mode, 'response')
+                  showDiskSaveLabel(`Aberto no editor: "${title}"`)
+                }}
+              />
+            </div>
+          {:else}
+            <!-- Request row -->
+            <div class="requests-form">
+              <select
+                class="tb-select req-method req-method-{reqMethod.toLowerCase()}"
+                bind:value={reqMethod}
               >
-            {/each}
-          </div>
+                {#each ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as m}<option>{m}</option>{/each}
+              </select>
+              <input
+                class="req-url"
+                type="text"
+                list="req-url-history"
+                placeholder="https://api.example.com/items (or paste cURL here)"
+                bind:value={reqUrl}
+                on:paste={onUrlPaste}
+                on:input={onUrlInput}
+                on:keydown={(e) => {
+                  if (e.key === 'Enter') void sendRequest()
+                }}
+              />
+              <datalist id="req-url-history">
+                {#each urlSuggestions as suggestion}<option value={suggestion}></option>{/each}
+              </datalist>
+
+              <!-- Proxy Per Request Option -->
+              <div class="req-proxy-select-wrap">
+                <span class="req-proxy-icon" title="Proxy for this request">🛡</span>
+                <select
+                  class="tb-select req-item-proxy-select"
+                  bind:value={reqProxyMode}
+                  title="Specific proxy for this request"
+                >
+                  <option value="inherit">Proxy: Geral</option>
+                  <option value="direct">Proxy: Direto</option>
+                  <option value="corsproxy">Proxy: corsproxy.io</option>
+                  <option value="allorigins">Proxy: allorigins.win</option>
+                  <option value="custom">Proxy: Customizado…</option>
+                </select>
+                {#if reqProxyMode === 'custom'}
+                  <input
+                    class="req-proxy-input-inline"
+                    type="text"
+                    placeholder="https://proxy/?url=&#123;url&#125;"
+                    bind:value={reqCustomProxyUrl}
+                    title="URL do proxy com &#123;url&#125;"
+                  />
+                {/if}
+              </div>
+
+              <div class="req-send-combo">
+                <button
+                  type="button"
+                  class="req-send-btn"
+                  disabled={reqSending}
+                  title="Send request (Enter in URL field)"
+                  on:click={() => void sendRequest()}
+                >
+                  {#if reqSending}
+                    <span class="req-spinner"></span>
+                    <span>Enviando…</span>
+                  {:else}
+                    <svg class="req-send-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="22" y1="2" x2="11" y2="13"/>
+                      <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                    </svg>
+                    <span>Send</span>
+                  {/if}
+                </button>
+                <div class="req-send-divider"></div>
+                <select
+                  class="req-send-mode-select"
+                  bind:value={reqSendMode}
+                  title="Response target: same tab or new secondary tab"
+                >
+                  <option value="same">Mesma aba</option>
+                  <option value="new">Nova aba</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                class="req-curl-btn"
+                title="Copy active request as cURL command"
+                on:click={copyRequestAsCurl}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                <span>cURL</span>
+              </button>
+              <button
+                type="button"
+                class="req-curl-btn req-add-to-flow-btn"
+                title="Add this request as a block in the Spatial Flow"
+                on:click={addCurrentFormToFlow}
+              >
+                <span style="font-size: 11px;">➕</span>
+                <span>Add to Flow</span>
+              </button>
+            </div>
+
+            <!-- Section tabs -->
+            <div class="req-tabs">
+              {#each REQ_TABS as [tab, label]}
+                <button
+                  class="req-tab"
+                  class:active={reqActiveTab === tab}
+                  on:click={() => (reqActiveTab = tab)}>{label}</button
+                >
+              {/each}
+            </div>
 
           <!-- Section content -->
           <div class="req-section-content">
@@ -3846,6 +4390,32 @@
                     </label>
                   </div>
                 {/if}
+                <div class="req-auth-actions-bar">
+                  <button
+                    type="button"
+                    class="sb-btn-status auth-validate-btn"
+                    title="Audit and validate the configured authentication"
+                    on:click={validateAndRevalidateAuth}
+                  >
+                    ⚡ Testar / Validar Auth
+                  </button>
+                  {#if authValidationMessage}
+                    <span
+                      class="auth-validation-badge"
+                      class:ok={authValidationMessage.ok}
+                      class:bad={!authValidationMessage.ok}
+                    >
+                      {authValidationMessage.text}
+                    </span>
+                  {/if}
+                </div>
+              </div>
+            {:else if reqActiveTab === 'captures'}
+              <div class="req-captures-pane">
+                <CapturePathsTable
+                  bind:captures={reqCaptures}
+                  sampleJsonText={reqResponseText}
+                />
               </div>
             {:else}
               <div class="req-env">
@@ -3859,6 +4429,13 @@
                   <button class="sb-btn-status" title="New environment" on:click={newEnvironment}
                     >＋ Env</button
                   >
+                  <button
+                    class="sb-btn-status"
+                    title="Manage Environments & Globals (Postman style)"
+                    on:click={() => (envManagerOpen = true)}
+                  >
+                    ⚙️ Gerenciar
+                  </button>
                 </div>
                 <label class="req-field">
                   <span class="req-label-row">
@@ -3924,162 +4501,35 @@
             {/if}
           {/if}
 
-          <!-- Chain (collapsible) -->
-          <div class="req-chain">
-            <div
-              class="req-section-head"
-              role="button"
-              tabindex="0"
-              on:click={() => ($chainOpen = !$chainOpen)}
-              on:keydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') $chainOpen = !$chainOpen
-              }}
-            >
-              <span class="req-caret">{$chainOpen ? '▾' : '▸'}</span>
-              <span class="req-label"
-                >Chain{#if chainItems.length > 0}
-                  ({chainItems.length}){/if}</span
-              >
-              <span class="req-spacer"></span>
-              <button
-                class="sb-btn-status"
-                disabled={chainRunning || chainItems.length === 0}
-                title="Run the chain"
-                on:click|stopPropagation={() => void runChain()}
-                >{chainRunning ? 'Running…' : '▶ Run'}</button
-              >
-            </div>
-            {#if $chainOpen}
-              <div class="req-chain-body">
-                {#if chainItems.length === 0}
-                  <div class="req-chain-empty">
-                    <p class="req-note">
-                      The chain runs several requests in sequence. Add the current request as a
-                      step, then press Run.
-                    </p>
-                    <button
-                      class="sb-btn-status"
-                      title="Load a ready-to-run example chain: uses baseUrl from the environment and captures id into charId"
-                      on:click={loadExampleChain}>⛓ Load example chain</button
-                    >
-                  </div>
-                {:else}
-                  <table class="req-rows req-chain-table">
-                    <thead>
-                      <tr><th>#</th><th>Method</th><th>URL</th><th>Capture</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {#each chainItems as item, ci (ci)}
-                        <tr
-                          class="req-chain-row"
-                          class:editing={ci === editingChainIndex}
-                          class:running={ci === chainRunningIndex}
-                        >
-                          <td>{ci + 1}</td>
-                          <td><span class="req-method-tag">{item.method}</span></td>
-                          <td class="req-chain-url">{item.url}</td>
-                          <td>
-                            {#if itemCaptureNames(item)}
-                              <span class="req-capture-badge">→ {itemCaptureNames(item)}</span>
-                            {:else}—{/if}
-                          </td>
-                          <td class="req-chain-actions">
-                            <button
-                              class="req-mini-btn"
-                              title="Move step up"
-                              disabled={ci === 0}
-                              on:click={() => moveChainItem(ci, -1)}>↑</button
-                            >
-                            <button
-                              class="req-mini-btn"
-                              title="Move step down"
-                              disabled={ci === chainItems.length - 1}
-                              on:click={() => moveChainItem(ci, 1)}>↓</button
-                            >
-                            <button
-                              class="req-mini-btn"
-                              title="Edit this step (loads it into the form)"
-                              on:click={() => editChainItem(ci)}>✎</button
-                            >
-                            <button
-                              class="req-mini-btn"
-                              title="Remove from chain"
-                              on:click={() => removeFromChain(ci)}>×</button
-                            >
-                          </td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                {/if}
-                <div class="req-chain-toolbar">
-                  {#if editingChainIndex >= 0}
-                    <span class="req-note">Editing step {editingChainIndex + 1}:</span>
-                    <input
-                      class="req-capture"
-                      type="text"
-                      placeholder="capture paths (data.token, data.id)"
-                      bind:value={capturePath}
-                    />
-                    <span class="req-arrow">→</span>
-                    <input
-                      class="req-capture req-var"
-                      type="text"
-                      placeholder="vars (token, userId)"
-                      bind:value={captureVar}
-                    />
-                    <button class="sb-btn-status" title="Save this step" on:click={addToChain}
-                      >✎ Update step</button
-                    >
-                    <button class="req-mini-btn" title="Stop editing" on:click={cancelChainEdit}
-                      >Cancel</button
-                    >
-                  {:else}
-                    <span class="req-note">Capture (optional):</span>
-                    <input
-                      class="req-capture"
-                      type="text"
-                      placeholder="capture paths (data.token, data.id)"
-                      bind:value={capturePath}
-                    />
-                    <span class="req-arrow">→</span>
-                    <input
-                      class="req-capture req-var"
-                      type="text"
-                      placeholder="vars (token, userId)"
-                      bind:value={captureVar}
-                    />
-                    <button
-                      class="sb-btn-status"
-                      title="Add current request to the execution chain"
-                      on:click={addToChain}>⛓ Add step</button
-                    >
-                  {/if}
-                  {#if chainItems.length > 0}
-                    <button class="req-mini-btn" title="Clear chain" on:click={clearChain}
-                      >Clear</button
-                    >
-                  {/if}
-                </div>
-                <p class="req-note">
-                  Capture: save values from the step's JSON response into the environment — path in
-                  the response (e.g. <code>data.token</code>) → variable name (e.g.
-                  <code>token</code>).
-                </p>
-                {#each chainResults as result (result.method + result.url + result.durationMs)}
-                  <span
-                    class="req-chain-result"
-                    class:ok={typeof result.status === 'number' && result.status < 400}
-                    class:bad={result.status === 'error' ||
-                      (typeof result.status === 'number' && result.status >= 400)}
-                  >
-                    {result.method}
-                    {result.status} · {result.durationMs} ms{#if result.captured}
-                      → {result.captured} ✓{/if}
-                  </span>
-                {/each}
+          <!-- Fluxograma Espacial (Substitui o antigo Chain) -->
+          <div class="req-flow-banner">
+            <div class="flow-banner-left">
+              <span class="flow-banner-icon">🔀</span>
+              <div class="flow-banner-text">
+                <span class="flow-banner-title">Spatial Flow (Chain replacement)</span>
+                <span class="flow-banner-sub">
+                  Visual chaining with REST and JS blocks, solid (wait/join) and dotted (async) arrows, and an integrated side panel.
+                </span>
               </div>
-            {/if}
+            </div>
+            <div class="flow-banner-actions">
+              <button
+                type="button"
+                class="flow-banner-btn-secondary"
+                title="Add the active request as a block in the flow"
+                on:click={addCurrentFormToFlow}
+              >
+                ➕ Add to Flow
+              </button>
+              <button
+                type="button"
+                class="flow-banner-btn-primary"
+                title="Open the visual flow editor"
+                on:click={() => ($requestsViewMode = 'flow')}
+              >
+                Open Spatial Flow →
+              </button>
+            </div>
           </div>
 
           <!-- History (collapsible) -->
@@ -4128,6 +4578,11 @@
                     <span class="req-history-actions">
                       <button
                         class="req-mini-btn"
+                        title="Add this request as a block in the Spatial Flow"
+                        on:click|stopPropagation={() => addHistoryEntryToFlow(entry)}>＋ Flow</button
+                      >
+                      <button
+                        class="req-mini-btn"
                         title="Load request into form"
                         on:click|stopPropagation={() => loadRequestIntoForm(entry)}>✎</button
                       >
@@ -4146,6 +4601,7 @@
                 {/each}
               {/if}
             </div>
+          {/if}
           {/if}
         </div>
       {/if}
@@ -4188,6 +4644,19 @@
     open={showCurlModal}
     onImport={(text) => applyCurlCommand(text)}
     onClose={() => (showCurlModal = false)}
+  />
+
+  <EnvironmentManagerModal
+    bind:open={envManagerOpen}
+    bind:environments={$environments}
+    bind:globalEnvironment={$globalEnvironment}
+    bind:activeEnvName={$activeEnvName}
+    onOpenInEditor={(filename, content) => {
+      const mode = guessMode(filename, content)
+      addSubTabWithContent(filename, content, mode, 'custom')
+      showDiskSaveLabel(`Environment opened in editor: "${filename}"`)
+    }}
+    onClose={() => (envManagerOpen = false)}
   />
 
   {#if tabMenu}
@@ -4952,9 +5421,277 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 2px 8px;
+    padding: 6px 14px;
     flex-shrink: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: #141721;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    gap: 16px;
+  }
+  .requests-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .requests-brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(2, 132, 199, 0.12);
+    border: 1px solid rgba(2, 132, 199, 0.25);
+  }
+  .requests-brand-icon {
+    font-size: 12px;
+    color: #38bdf8;
+  }
+  .requests-brand-text {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    color: #38bdf8;
+  }
+  .req-view-toggle {
+    display: flex;
+    align-items: center;
+    background: #0d0f15;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 7px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .req-view-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    background: transparent;
+    color: #94a3b8;
+    border: none;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    &:hover {
+      color: #f1f5f9;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    &.active {
+      background: #252836;
+      color: #38bdf8;
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+  }
+  .req-badge-pill {
+    background: #38bdf8;
+    color: #0b0d13;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 10px;
+    padding: 0 5px;
+    line-height: 14px;
+  }
+  .requests-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .requests-env-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #1a1d27;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 2px 8px;
+  }
+  .req-env-icon {
+    font-size: 12px;
+  }
+  .req-env-label {
+    font-size: 11px;
+    color: #94a3b8;
+    font-weight: 500;
+  }
+  .req-env-select {
+    min-width: 135px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 22px 3px 8px;
+    background-color: #0f172a;
+    border: 1px solid #334155;
+    color: #f8fafc;
+    border-radius: 4px;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%2394a3b8' viewBox='0 0 20 20'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E");
+    background-position: right 5px center;
+    background-repeat: no-repeat;
+    background-size: 13px;
+    transition: all 0.15s ease;
+    &:focus {
+      outline: none;
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+    }
+    &:hover {
+      border-color: #475569;
+    }
+  }
+  .req-env-select option {
+    background-color: #0f172a;
+    color: #f8fafc;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .req-env-manage-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 12px;
+    border-radius: 4px;
+    color: #94a3b8;
+    transition: all 0.15s ease;
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #38bdf8;
+    }
+  }
+  .requests-proxy-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #1a1d27;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 2px 8px;
+  }
+  .req-proxy-icon {
+    font-size: 12px;
+    color: #38bdf8;
+  }
+  .req-proxy-label {
+    font-size: 11px;
+    color: #94a3b8;
+    font-weight: 500;
+  }
+  .req-top-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 11px;
+    background: #1e222e;
+    color: #e2e8f0;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    &:hover {
+      background: #2a3040;
+      border-color: rgba(255, 255, 255, 0.25);
+      color: #fff;
+    }
+  }
+  .requests-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1;
+    &:hover {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+    }
+  }
+  .requests-flow-container {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .req-proxy-select-wrap {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+  .req-item-proxy-select {
+    height: 28px;
+    border-radius: 6px;
+    padding: 0 10px;
+    font-size: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: #1a1c23;
+    color: #cbd5e1;
+    outline: none;
+    cursor: pointer;
+    &:focus {
+      border-color: #0284c7;
+    }
+  }
+  .req-proxy-input-inline {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 11px;
+    font-family: Consolas, monospace;
+    background: #111318;
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    outline: none;
+    width: 140px;
+  }
+  .req-auth-actions-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .auth-validate-btn {
+    background: rgba(2, 132, 199, 0.2);
+    border: 1px solid rgba(2, 132, 199, 0.4);
+    color: #38bdf8;
+    padding: 4px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    &:hover {
+      background: rgba(2, 132, 199, 0.3);
+    }
+  }
+  .auth-validation-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: Consolas, monospace;
+    &.ok {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    &.bad {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+  }
+  .req-captures-pane {
+    padding: 4px 0;
   }
   .requests-resizer {
     height: 5px;
@@ -4965,12 +5702,6 @@
     &:hover {
       background: rgba(255, 255, 255, 0.14);
     }
-  }
-  .requests-title {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: $td;
   }
   .requests-form {
     display: flex;
@@ -5216,6 +5947,89 @@
     align-items: center;
     justify-content: space-between;
     padding: 2px 4px;
+  }
+  .req-add-to-flow-btn {
+    border-color: rgba(56, 189, 248, 0.35) !important;
+    color: #38bdf8 !important;
+    &:hover {
+      background: rgba(2, 132, 199, 0.18) !important;
+    }
+  }
+  .req-flow-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 8px 12px;
+    padding: 8px 12px;
+    background: linear-gradient(135deg, rgba(2, 132, 199, 0.1) 0%, rgba(168, 85, 247, 0.1) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 7px;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .flow-banner-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+  .flow-banner-icon {
+    font-size: 16px;
+  }
+  .flow-banner-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .flow-banner-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #38bdf8;
+  }
+  .flow-banner-sub {
+    font-size: 10px;
+    color: #94a3b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .flow-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .flow-banner-btn-primary {
+    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 0.12s;
+    &:hover {
+      background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+      transform: translateY(-1px);
+    }
+  }
+  .flow-banner-btn-secondary {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #cbd5e1;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.12s;
+    &:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
   }
   .req-chain {
     display: flex;
@@ -5470,6 +6284,15 @@
   }
   .req-proxy-select {
     max-width: 140px;
+    background-color: #0f172a;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    option {
+      background-color: #0f172a;
+      color: #f8fafc;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
   }
   .req-proxy-input {
     width: 220px;
