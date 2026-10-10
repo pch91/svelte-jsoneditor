@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import type { JSONPatchReplace } from 'immutable-json-patch'
 import {
   buildVisualColumns,
   buildVisualRows,
@@ -183,7 +184,7 @@ describe('tableJsonExpansion', () => {
     const transformed = transformOperationsForStringJson(ops, testData)
     expect(transformed[0].op).toBe('replace')
     expect(transformed[0].path).toBe('/0/endereco')
-    expect(transformed[0].value).toBe(JSON.stringify({ rua: 'Rua Nova', cidade: 'Porto' }))
+    expect((transformed[0] as JSONPatchReplace).value).toBe(JSON.stringify({ rua: 'Rua Nova', cidade: 'Porto' }))
   })
 
   test('getRowSortValue extracts values from plain fields, string JSON, and arrays', () => {
@@ -201,13 +202,13 @@ describe('tableJsonExpansion', () => {
     // Lisboa (id: 2) comes before Porto (id: 1) alphabetically
     const patchAsc = sortJsonWithExpansion(testData, [], ['endereco', 'cidade'], 1)
     expect(patchAsc[0].op).toBe('replace')
-    const sortedAsc = patchAsc[0].value as typeof testData
+    const sortedAsc = (patchAsc[0] as JSONPatchReplace).value as typeof testData
     expect(sortedAsc[0].id).toBe(2)
     expect(sortedAsc[1].id).toBe(1)
 
     // Descending: Porto (id: 1) before Lisboa (id: 2)
     const patchDesc = sortJsonWithExpansion(testData, [], ['endereco', 'cidade'], -1)
-    const sortedDesc = patchDesc[0].value as typeof testData
+    const sortedDesc = (patchDesc[0] as JSONPatchReplace).value as typeof testData
     expect(sortedDesc[0].id).toBe(1)
     expect(sortedDesc[1].id).toBe(2)
   })
@@ -215,13 +216,13 @@ describe('tableJsonExpansion', () => {
   test('sortJsonWithExpansion correctly sorts by array sub-column', () => {
     // 'claro' (id: 2) comes before 'escuro' (id: 1)
     const patchAsc = sortJsonWithExpansion(testData, [], ['configuracao', 'tema'], 1)
-    const sortedAsc = patchAsc[0].value as typeof testData
+    const sortedAsc = (patchAsc[0] as JSONPatchReplace).value as typeof testData
     expect(sortedAsc[0].id).toBe(2)
     expect(sortedAsc[1].id).toBe(1)
 
     // Descending: 'escuro' (id: 1) before 'claro' (id: 2)
     const patchDesc = sortJsonWithExpansion(testData, [], ['configuracao', 'tema'], -1)
-    const sortedDesc = patchDesc[0].value as typeof testData
+    const sortedDesc = (patchDesc[0] as JSONPatchReplace).value as typeof testData
     expect(sortedDesc[0].id).toBe(1)
     expect(sortedDesc[1].id).toBe(2)
   })

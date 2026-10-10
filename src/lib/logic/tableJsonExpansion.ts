@@ -1,4 +1,4 @@
-import type { JSONPatchOperation, JSONPath } from 'immutable-json-patch'
+import type { JSONPatchOperation, JSONPatchReplace, JSONPath } from 'immutable-json-patch'
 import { compileJSONPointer, getIn, parseJSONPointer } from 'immutable-json-patch'
 import { stringifyJSONPath } from '$lib/utils/pathUtils.js'
 import { isObjectOrArray } from '$lib/utils/typeUtils.js'
@@ -290,7 +290,7 @@ export function createVisualCellPatch(
   visualRow: VisualRow,
   visualColumn: VisualColumn,
   newValue: unknown
-): JSONPatchOperation {
+): JSONPatchReplace {
   const rowPathStr = String(visualRow.originalRowIndex)
 
   if (!visualColumn.isExpandedSubColumn) {
@@ -507,6 +507,8 @@ export function createExpandedRowComparator(propertyPath: JSONPath, direction: 1
 
     // Order two numbers, two strings, or two booleans
     if (typeof valueA === 'number' || typeof valueA === 'boolean') {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
       return valueA > valueB ? direction : valueA < valueB ? -direction : 0
     }
 
