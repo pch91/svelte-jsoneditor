@@ -5422,7 +5422,9 @@
     border-right: 1px solid $b-subtle;
     white-space: nowrap;
     flex-shrink: 0;
-    transition: background 0.1s, color 0.1s;
+    transition:
+      background 0.1s,
+      color 0.1s;
     &.active {
       background: $bg-editor;
       color: $t-bright;

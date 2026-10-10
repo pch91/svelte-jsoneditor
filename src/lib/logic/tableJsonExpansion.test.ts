@@ -184,7 +184,9 @@ describe('tableJsonExpansion', () => {
     const transformed = transformOperationsForStringJson(ops, testData)
     expect(transformed[0].op).toBe('replace')
     expect(transformed[0].path).toBe('/0/endereco')
-    expect((transformed[0] as JSONPatchReplace).value).toBe(JSON.stringify({ rua: 'Rua Nova', cidade: 'Porto' }))
+    expect((transformed[0] as JSONPatchReplace).value).toBe(
+      JSON.stringify({ rua: 'Rua Nova', cidade: 'Porto' })
+    )
   })
 
   test('getRowSortValue extracts values from plain fields, string JSON, and arrays', () => {

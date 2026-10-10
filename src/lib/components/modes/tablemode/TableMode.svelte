@@ -111,7 +111,6 @@
     removeEditModeFromSelection
   } from '$lib/logic/selection.js'
   import ColumnHeader from './ColumnHeader.svelte'
-  import { sortJson } from '$lib/logic/sort.js'
   import { keyComboFromEvent } from '$lib/utils/keyBindings.js'
   import { createFocusTracker } from '$lib/components/controls/createFocusTracker.js'
   import { flushSync, getContext, onDestroy, onMount } from 'svelte'
@@ -162,9 +161,7 @@
     getVisualCellValue,
     isColumnExpandable,
     sortJsonWithExpansion,
-    transformOperationsForStringJson,
-    type VisualColumn,
-    type VisualRow
+    transformOperationsForStringJson
   } from '$lib/logic/tableJsonExpansion.js'
   import createColumnContextMenuItems from './contextmenu/createColumnContextMenuItems.js'
 
@@ -1983,7 +1980,12 @@
             </tr>
             {#each visibleSection.visibleItems as item, visibleIndex}
               {@const vRow = isExpandedView
-                ? (item as VisualRow)
+                ? (item as {
+                    originalRowIndex: number
+                    subRowIndex: number
+                    isSubRow: boolean
+                    subRowTotal: number
+                  })
                 : {
                     originalRowIndex: visibleSection.startIndex + visibleIndex,
                     subRowIndex: 0,

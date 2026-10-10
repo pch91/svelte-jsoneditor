@@ -2969,7 +2969,11 @@
     height: 4000px;
     position: relative;
     transform-origin: 0 0;
-    background: radial-gradient(circle, var(--theme-b-subtle, rgba(255, 255, 255, 0.08)) 1px, transparent 1px);
+    background: radial-gradient(
+      circle,
+      var(--theme-b-subtle, rgba(255, 255, 255, 0.08)) 1px,
+      transparent 1px
+    );
     background-size: 24px 24px;
   }
   .flow-svg-layer {

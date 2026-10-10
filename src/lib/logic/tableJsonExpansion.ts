@@ -404,13 +404,16 @@ export function transformOperationsForStringJson(
             cloned = {}
           }
 
-          let target: any = cloned
+          let target = (cloned && typeof cloned === 'object' ? cloned : {}) as Record<
+            string,
+            unknown
+          >
           for (let k = 0; k < remainderPath.length - 1; k++) {
             const key = remainderPath[k]
             if (target[key] === undefined || target[key] === null) {
               target[key] = {}
             }
-            target = target[key]
+            target = target[key] as Record<string, unknown>
           }
           const lastKey = remainderPath[remainderPath.length - 1]
           target[lastKey] = (op as { value: unknown }).value
