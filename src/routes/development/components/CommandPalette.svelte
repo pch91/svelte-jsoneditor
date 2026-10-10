@@ -86,11 +86,11 @@
   </div>
 {/if}
 
-<style>
+<style lang="scss">
   .palette-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.35);
+    background: var(--theme-bg-overlay, rgba(0, 0, 0, 0.45));
     z-index: 1000;
   }
   .palette {
@@ -100,25 +100,25 @@
     transform: translateX(-50%);
     width: 540px;
     max-width: 92vw;
-    background: #252526;
-    border: 1px solid #454545;
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-main, #454545);
     border-radius: 8px;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--theme-shadow-lg, 0 8px 30px rgba(0, 0, 0, 0.45));
     overflow: hidden;
   }
   .palette-input {
     width: 100%;
     box-sizing: border-box;
-    padding: 10px 12px;
+    padding: 10px 14px;
     font-size: 14px;
-    background: #333338;
-    color: #e8e8e8;
+    background: var(--theme-bg-input, #333338);
+    color: var(--theme-t-bright, #e8e8e8);
     border: none;
-    border-bottom: 1px solid #454545;
+    border-bottom: 1px solid var(--theme-b-subtle, #454545);
     outline: none;
   }
   .palette-input::placeholder {
-    color: #888;
+    color: var(--theme-t-muted, #888888);
   }
   .palette-list {
     max-height: 46vh;
@@ -130,7 +130,7 @@
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    color: #777;
+    color: var(--theme-t-muted, #777777);
   }
   .palette-item {
     display: flex;
@@ -138,28 +138,33 @@
     justify-content: space-between;
     gap: 12px;
     width: 100%;
-    padding: 6px 12px;
+    padding: 7px 12px;
     border: none;
     background: transparent;
-    color: #ccc;
+    color: var(--theme-t-main, #cccccc);
     font-size: 13px;
     text-align: left;
     cursor: pointer;
+    transition: background 0.1s ease;
+
+    &:hover:not(.active) {
+      background: var(--theme-bg-hover, rgba(128, 128, 128, 0.08));
+    }
   }
   .palette-item.active {
-    background: #04395e;
-    color: #fff;
+    background: var(--theme-bg-selected, #04395e);
+    color: var(--theme-t-bright, #ffffff);
   }
   .palette-hint {
     font-size: 11px;
-    color: #888;
+    color: var(--theme-t-muted, #888888);
   }
   .palette-item.active .palette-hint {
-    color: #9cdcfe;
+    color: var(--theme-accent-text, #9cdcfe);
   }
   .palette-empty {
     padding: 12px;
-    color: #888;
+    color: var(--theme-t-muted, #888888);
     font-size: 12px;
   }
 </style>

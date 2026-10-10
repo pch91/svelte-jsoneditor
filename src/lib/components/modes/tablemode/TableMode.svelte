@@ -156,6 +156,17 @@
   import JSONValue from '../treemode/JSONValue.svelte'
   import { isTreeHistoryItem } from 'svelte-jsoneditor'
   import { previewWindows } from '$lib/stores/previewWindows.js'
+  import {
+    buildVisualColumns,
+    buildVisualRows,
+    getVisualCellValue,
+    isColumnExpandable,
+    sortJsonWithExpansion,
+    transformOperationsForStringJson,
+    type VisualColumn,
+    type VisualRow
+  } from '$lib/logic/tableJsonExpansion.js'
+  import createColumnContextMenuItems from './contextmenu/createColumnContextMenuItems.js'
 
   const debug = createDebug('jsoneditor:TableMode')
   const { openAbsolutePopup, closeAbsolutePopup } =
@@ -279,6 +290,82 @@
     ? maintainColumnOrder(getColumns(json, flattenColumns, maxSampleCount), columns)
     : []
 
+  let expandedColumns: Record<string, boolean> = {}
+
+  $: isExpandedView = Object.values(expandedColumns).some(Boolean)
+
+  $: expandableColumnsMap = isJSONArray(json)
+    ? (columns as JSONPath[]).reduce(
+        (acc, col) => {
+          const key = compileJSONPointer(col)
+          acc[key] = isColumnExpandable(json as unknown[], col)
+          return acc
+        },
+        {} as Record<string, boolean>
+      )
+    : ({} as Record<string, boolean>)
+
+  $: visualColumns = isJSONArray(json)
+    ? buildVisualColumns(columns, expandedColumns, json as unknown[])
+    : []
+
+  $: visualRows =
+    isJSONArray(json) && isExpandedView ? buildVisualRows(json as unknown[], visualColumns) : []
+
+  function toggleExpandColumn(columnPath: JSONPath) {
+    const colKey = compileJSONPointer(columnPath)
+    itemHeightsCache = {}
+    expandedColumns = {
+      ...expandedColumns,
+      [colKey]: !expandedColumns[colKey]
+    }
+  }
+
+  function openColumnContextMenu(event: MouseEvent, columnPath: JSONPath, parentPath: JSONPath) {
+    const parentKey = compileJSONPointer(parentPath)
+    const isExpanded = !!expandedColumns[parentKey]
+    const isExpandable = !!expandableColumnsMap[parentKey]
+
+    const defaultItems: ContextMenuItem[] = createColumnContextMenuItems({
+      columnPath,
+      parentPath,
+      isExpanded,
+      isExpandable,
+      readOnly,
+      sortedColumn,
+      onToggleExpand: () => toggleExpandColumn(parentPath),
+      onSort: onSortByHeader
+    })
+
+    const items = onRenderContextMenu(defaultItems) ?? defaultItems
+    if (items === false) {
+      return
+    }
+
+    const props = {
+      items,
+      onRequestClose: function () {
+        closeAbsolutePopup(popupId)
+        focus()
+      }
+    }
+
+    const options = {
+      left: event.clientX,
+      top: event.clientY,
+      width: CONTEXT_MENU_WIDTH,
+      height: CONTEXT_MENU_HEIGHT,
+      closeOnOuterClick: true,
+      onClose: () => {
+        modalOpen = false
+        focus()
+      }
+    }
+
+    modalOpen = true
+    const popupId = openAbsolutePopup(ContextMenu, props, options)
+  }
+
   let containsValidArray: boolean
   $: containsValidArray = !!(json && !isEmpty(columns))
   $: showRefreshButton = Array.isArray(json) && json.length > maxSampleCount
@@ -299,7 +386,7 @@
   $: visibleSection = calculateVisibleSection(
     scrollTop,
     viewPortHeight,
-    json,
+    isExpandedView && visualRows.length > 0 ? visualRows : json,
     itemHeightsCache, // warning: itemHeightsCache is mutated and is not responsive itself
     defaultItemHeight,
     showSearch ? SEARCH_BOX_HEIGHT : 0
@@ -370,7 +457,8 @@
 
     const rootPath: JSONPath = []
     const direction = newSortedColumn.sortDirection === SortDirection.desc ? -1 : 1
-    const operations = sortJson(json, rootPath, newSortedColumn.path, direction)
+    const operations = sortJsonWithExpansion(json, rootPath, newSortedColumn.path, direction)
+    itemHeightsCache = {}
     handlePatch(operations, (_, patchedState) => {
       return {
         state: patchedState,
@@ -392,10 +480,12 @@
     findNextInside,
     focus,
     onPatch: (operations, afterPatch) => {
+      // When editing a nested property of a stringified JSON field, serialize it back to string
+      const transformedOps = transformOperationsForStringJson(operations, json)
       // When having flattened table columns and having inserted a new row, it is possible that
       // we edit a nested value of which the parent object is not existing. Therefore, we call
       // replaceNestedValue to create the parent object(s) first.
-      return handlePatch(createNestedValueOperations(operations, json), afterPatch)
+      return handlePatch(createNestedValueOperations(transformedOps, json), afterPatch)
     },
     onSelect: handleSelect,
     onFind: openFind,
@@ -1852,9 +1942,25 @@
                   {/if}
                 {/if}
               </th>
-              {#each columns as column}
+              {#each visualColumns as vCol}
+                {@const colKey = compileJSONPointer(vCol.parentPath)}
+                {@const isOriginalExpandable = !!expandableColumnsMap[colKey]}
+                {@const isColExpanded = !!expandedColumns[colKey]}
                 <th class="jse-table-cell jse-table-cell-header">
-                  <ColumnHeader path={column} {sortedColumn} {readOnly} onSort={onSortByHeader} />
+                  <ColumnHeader
+                    path={vCol.fullPath}
+                    displayName={vCol.displayName}
+                    parentName={vCol.parentName}
+                    colorIndex={vCol.colorIndex}
+                    isArrayElement={vCol.isArrayElement}
+                    isExpandable={!vCol.isExpandedSubColumn && isOriginalExpandable}
+                    isExpanded={vCol.isExpandedSubColumn && isColExpanded}
+                    onToggleExpand={() => toggleExpandColumn(vCol.parentPath)}
+                    onContextMenu={(e) => openColumnContextMenu(e, vCol.fullPath, vCol.parentPath)}
+                    {sortedColumn}
+                    {readOnly}
+                    onSort={onSortByHeader}
+                  />
                 </th>
               {/each}
               {#if showRefreshButton}
@@ -1872,10 +1978,21 @@
               class="jse-table-invisible-start-section"
               class:jse-search-box-background={showSearch}
             >
-              <td style:height={visibleSection.startHeight + 'px'} colspan={columns.length}></td>
+              <td style:height={visibleSection.startHeight + 'px'} colspan={visualColumns.length}
+              ></td>
             </tr>
             {#each visibleSection.visibleItems as item, visibleIndex}
-              {@const rowIndex = visibleSection.startIndex + visibleIndex}
+              {@const vRow = isExpandedView
+                ? (item as VisualRow)
+                : {
+                    originalRowIndex: visibleSection.startIndex + visibleIndex,
+                    subRowIndex: 0,
+                    isSubRow: false,
+                    subRowTotal: 1
+                  }}
+              {@const rowIndex = vRow.originalRowIndex}
+              {@const originalRowItem =
+                isExpandedView && Array.isArray(json) ? json[rowIndex] : item}
               {@const validationErrorsByRow = groupedValidationErrors.rows[rowIndex]}
               {@const validationError = mergeValidationErrors(
                 [String(rowIndex)],
@@ -1884,30 +2001,47 @@
               {@const searchResultByRow = getInRecursiveState(json, searchResults, [
                 String(rowIndex)
               ])}
-              <tr class="jse-table-row">
-                {#key rowIndex}
+              <tr class="jse-table-row" class:jse-sub-row={vRow.isSubRow}>
+                {#key `${rowIndex}_${vRow.subRowIndex}`}
                   <th
                     class="jse-table-cell jse-table-cell-gutter"
-                    use:resizeObserver={(element) => handleResizeRow(element, rowIndex)}
+                    class:jse-dimmed-index={vRow.isSubRow}
+                    use:resizeObserver={(element) =>
+                      handleResizeRow(element, visibleSection.startIndex + visibleIndex)}
                   >
-                    {rowIndex}
-                    {#if validationError}
+                    {vRow.subRowTotal > 1 ? `${rowIndex}.${vRow.subRowIndex}` : rowIndex}
+                    {#if validationError && !vRow.isSubRow}
                       <ValidationErrorIcon {validationError} onExpand={noop} />
                     {/if}
                   </th>
                 {/key}
-                {#each columns as column, columnIndex}
-                  {@const path = [String(rowIndex)].concat(column)}
-                  {@const value = getIn(item, column)}
+                {#each visualColumns as vCol, columnIndex}
+                  {@const cellValue =
+                    isExpandedView && Array.isArray(json)
+                      ? getVisualCellValue(json, vRow, vCol)
+                      : getIn(item, vCol.parentPath)}
+                  {@const cellPath = isExpandedView
+                    ? vCol.isExpandedSubColumn && vCol.isArrayElement && vCol.subKey
+                      ? [
+                          String(rowIndex),
+                          ...vCol.parentPath,
+                          String(vRow.subRowIndex),
+                          vCol.subKey
+                        ]
+                      : [String(rowIndex), ...vCol.fullPath]
+                    : [String(rowIndex), ...vCol.parentPath]}
                   {@const isSelected =
-                    isValueSelection(selection) && pathStartsWith(selection.path, path)}
+                    isValueSelection(selection) && pathStartsWith(selection.path, cellPath)}
                   {@const validationErrorsByColumn = validationErrorsByRow?.columns[columnIndex]}
-                  {@const validationError = mergeValidationErrors(path, validationErrorsByColumn)}
-                  <td class="jse-table-cell" data-path={encodeDataPath(path)}>
+                  {@const validationError = mergeValidationErrors(
+                    cellPath,
+                    validationErrorsByColumn
+                  )}
+                  <td class="jse-table-cell" data-path={encodeDataPath(cellPath)}>
                     <div class="jse-value-outer" class:jse-selected-value={isSelected}>
-                      {#if isObjectOrArray(value)}
+                      {#if isObjectOrArray(cellValue)}
                         {@const searchResultsByCell = flattenSearchResults(
-                          getInRecursiveState(item, searchResultByRow, column)
+                          getInRecursiveState(originalRowItem, searchResultByRow, vCol.fullPath)
                         )}
 
                         {@const containsActiveSearchResult = searchResultsByCell
@@ -1915,8 +2049,8 @@
                           : false}
 
                         <InlineValue
-                          {path}
-                          {value}
+                          path={cellPath}
+                          value={cellValue}
                           {parser}
                           {isSelected}
                           containsSearchResult={!isEmpty(searchResultsByCell)}
@@ -1926,13 +2060,13 @@
                         {@const searchResultItemsByCell = getInRecursiveState(
                           json,
                           searchResults,
-                          path
+                          cellPath
                         )?.searchResults}
 
                         <JSONValue
-                          {path}
-                          value={value !== undefined ? value : ''}
-                          enforceString={getEnforceString(json, documentState, path)}
+                          path={cellPath}
+                          value={cellValue !== undefined ? cellValue : ''}
+                          enforceString={getEnforceString(json, documentState, cellPath)}
                           selection={isSelected ? selection : undefined}
                           searchResultItems={searchResultItemsByCell}
                           {context}
@@ -1954,7 +2088,8 @@
             {/each}
 
             <tr class="jse-table-invisible-end-section">
-              <td style:height={visibleSection.endHeight + 'px'} colspan={columns.length}></td>
+              <td style:height={visibleSection.endHeight + 'px'} colspan={visualColumns.length}
+              ></td>
             </tr>
           </tbody>
         </table>

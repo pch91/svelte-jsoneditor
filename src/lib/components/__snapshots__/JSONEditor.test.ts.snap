@@ -313,11 +313,15 @@ exports[`JSONEditor > render table mode 1`] = `
                   title="id (Click to sort the data by this column)"
                   type="button"
                 >
+                  <!---->
+                   
                   <span
                     class="jse-column-name"
                   >
                     id
                   </span>
+                   
+                  <!---->
                    
                   <!---->
                 </button>
@@ -331,11 +335,15 @@ exports[`JSONEditor > render table mode 1`] = `
                   title="name (Click to sort the data by this column)"
                   type="button"
                 >
+                  <!---->
+                   
                   <span
                     class="jse-column-name"
                   >
                     name
                   </span>
+                   
+                  <!---->
                    
                   <!---->
                 </button>

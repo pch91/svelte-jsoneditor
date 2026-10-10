@@ -280,9 +280,9 @@
     padding: 0 8px;
     font-size: 11px;
     font-family: Consolas, monospace;
-    background: #111318;
-    color: #f8fafc;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: var(--theme-bg-input, #111318);
+    color: var(--theme-t-bright, #f8fafc);
+    border: 1px solid var(--theme-b-input, rgba(255, 255, 255, 0.14));
     border-radius: 4px;
     outline: none;
     transition: border-color 0.12s ease;

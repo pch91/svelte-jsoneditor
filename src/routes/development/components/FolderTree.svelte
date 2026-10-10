@@ -30,7 +30,7 @@
   </div>
 {/each}
 
-<style>
+<style lang="scss">
   .ft-item {
     font-size: 11px;
   }
@@ -39,21 +39,21 @@
     align-items: center;
     gap: 3px;
     width: 100%;
-    padding: 1px 4px;
+    padding: 2px 4px;
     border: none;
     background: transparent;
-    color: #cccccc;
+    color: var(--theme-t-main, #cccccc);
     text-align: left;
     cursor: pointer;
     border-radius: 2px;
     &:hover {
-      background: rgba(255, 255, 255, 0.06);
+      background: var(--theme-bg-hover, rgba(128, 128, 128, 0.1));
     }
   }
   .ft-caret {
     width: 10px;
     font-size: 8px;
-    color: #888;
+    color: var(--theme-t-muted, #888);
     flex-shrink: 0;
   }
   .ft-name {
@@ -62,7 +62,8 @@
     white-space: nowrap;
   }
   .ft-dir {
-    color: #dcdcaa;
+    color: var(--theme-t-bright, #dcdcaa);
+    font-weight: 600;
   }
   .ft-file {
     padding-left: 14px;

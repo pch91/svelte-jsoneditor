@@ -241,10 +241,13 @@
     position: fixed;
     display: flex;
     flex-direction: column;
-    background: defaults.$background-color;
-    border: defaults.$main-border;
+    background: var(--jse-background-color, defaults.$background-color);
+    border: 1px solid var(--jse-panel-border, var(--theme-b-main, #3c3c3c));
     border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    box-shadow: var(
+      --theme-shadow-lg,
+      (0 12px 36px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06))
+    );
     overflow: hidden;
     min-width: 300px;
     min-height: 200px;
@@ -259,9 +262,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 10px;
-    background: defaults.$panel-background;
-    border-bottom: defaults.$main-border;
+    padding: 6px 12px;
+    background: var(--jse-header-background, var(--jse-panel-background, #202021));
+    border-bottom: 1px solid var(--jse-panel-border, var(--theme-b-main, #2d2d2d));
     cursor: move;
     user-select: none;
     flex-shrink: 0;
@@ -275,16 +278,17 @@
   .jse-floating-title {
     font-size: 13px;
     font-weight: 600;
-    color: defaults.$text-color;
+    color: var(--jse-header-text, var(--jse-panel-color, #ffffff));
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
+    letter-spacing: -0.2px;
   }
 
   .jse-floating-actions {
     display: flex;
-    gap: 2px;
+    gap: 4px;
     margin-left: 8px;
     flex-shrink: 0;
   }
@@ -297,13 +301,17 @@
     height: 22px;
     border: none;
     background: transparent;
-    color: defaults.$text-color;
+    color: var(--jse-header-action-color, var(--jse-panel-color, #cccccc));
     cursor: pointer;
     border-radius: 4px;
     padding: 0;
+    transition:
+      background 0.12s,
+      color 0.12s;
 
     &:hover {
-      background: rgba(128, 128, 128, 0.2);
+      background: var(--theme-bg-hover, rgba(128, 128, 128, 0.15));
+      color: var(--theme-t-bright, inherit);
     }
 
     &.jse-floating-close:hover {

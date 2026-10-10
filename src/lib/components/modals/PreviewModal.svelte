@@ -331,14 +331,13 @@
       }
 
       .jse-preview-panel-header {
-        padding: 4px 10px;
+        padding: 6px 12px;
         font-size: 11px;
         font-weight: 600;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
-        color: defaults.$text-color;
-        opacity: 0.7;
-        background: defaults.$panel-background;
+        letter-spacing: 0.6px;
+        color: var(--jse-panel-button-color-highlight, defaults.$text-color);
+        background: var(--jse-panel-background, defaults.$panel-background);
         border-bottom: defaults.$main-border;
         flex-shrink: 0;
       }

@@ -176,11 +176,11 @@
 {/if}
 
 <style>
-  /* Matches the svelte-jsoneditor native modal (e.g. Transform): blue header, light body */
+  /* Matches the svelte-jsoneditor modal standard with dark IDE theme by default */
   .curl-modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.45);
+    background: rgba(0, 0, 0, 0.6);
     z-index: 99999;
     display: flex;
     align-items: center;
@@ -191,13 +191,14 @@
     width: 640px;
     max-width: 95vw;
     max-height: 90vh;
-    background: #f5f5f5;
-    border-radius: 4px;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-main, #3e3e42);
+    border-radius: 6px;
+    box-shadow: var(--theme-shadow-lg, 0 16px 40px rgba(0, 0, 0, 0.65));
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    color: #4d4d4d;
+    color: var(--theme-t-main, #cccccc);
     font-family:
       -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     font-size: 14px;
@@ -261,7 +262,7 @@
   .curl-modal-desc {
     margin: 0;
     font-size: 13px;
-    color: #4d4d4d;
+    color: #999999;
     line-height: 1.45;
   }
   .curl-modal-toolbar {
@@ -270,16 +271,18 @@
     gap: 8px;
   }
   .curl-tool-btn {
-    background: #e8e8e8;
-    color: #4d4d4d;
-    border: 1px solid #d0d0d0;
+    background: var(--theme-bg-panel, #323233);
+    color: var(--theme-t-main, #cccccc);
+    border: 1px solid var(--theme-b-input, #3e3e42);
     border-radius: 3px;
     padding: 4px 10px;
     font-size: 12px;
     cursor: pointer;
+    transition: all 0.12s ease;
   }
   .curl-tool-btn:hover {
-    background: #dcdcdc;
+    background: var(--theme-bg-hover, #3c3c3d);
+    color: var(--theme-t-bright, #ffffff);
   }
   .curl-textarea {
     width: 100%;
@@ -289,24 +292,25 @@
       'dejavu sans mono', 'droid sans mono', consolas, monaco, 'lucida console', 'courier new',
       courier, monospace, sans-serif;
     font-size: 13px;
-    background: #ffffff;
-    color: #4d4d4d;
-    border: 1px solid #d8dbdf;
+    background: var(--theme-bg-input, #1e1e1e);
+    color: var(--theme-t-bright, #cccccc);
+    border: 1px solid var(--theme-b-input, #3e3e42);
     border-radius: 3px;
     outline: none;
     resize: vertical;
     min-height: 140px;
     line-height: 1.45;
+    transition: border-color 0.12s ease;
   }
   .curl-textarea:focus {
-    border-color: #3883fa;
+    border-color: var(--theme-ac, #0078d4);
   }
   .curl-textarea::placeholder {
-    color: #9a9a9a;
+    color: var(--theme-t-muted, #666666);
   }
   .curl-preview {
-    background: #ffffff;
-    border: 1px solid #d8dbdf;
+    background: var(--theme-bg-input, #1e1e1e);
+    border: 1px solid var(--theme-b-subtle, #3e3e42);
     border-radius: 3px;
     padding: 8px 10px;
     display: flex;
@@ -321,7 +325,7 @@
   .curl-preview-label {
     font-size: 12px;
     font-weight: 700;
-    color: #4d4d4d;
+    color: #cccccc;
   }
   .curl-preview-row {
     display: flex;
@@ -356,7 +360,7 @@
   .curl-preview-url {
     font-family: 'dejavu sans mono', consolas, monospace;
     font-size: 12px;
-    color: #4d4d4d;
+    color: #cccccc;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -370,35 +374,36 @@
   .curl-tag {
     font-size: 11px;
     padding: 2px 8px;
-    background: #e8e8e8;
-    color: #4d4d4d;
+    background: #323233;
+    color: #cccccc;
     border-radius: 3px;
   }
   .curl-tag-body {
-    background: #d9f2e6;
-    color: #1a7a4f;
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
   }
   .curl-tag-auth {
-    background: #fdebd0;
-    color: #a65f0b;
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
   }
   .curl-invalid-hint {
     font-size: 12px;
-    color: #b3261e;
-    background: #fdecea;
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.15);
     padding: 6px 10px;
     border-radius: 3px;
-    border: 1px solid #f5c2be;
+    border: 1px solid rgba(239, 68, 68, 0.3);
   }
   .curl-modal-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 10px 16px 14px;
+    border-top: 1px solid var(--theme-b-subtle, #3e3e42);
   }
   .curl-shortcut-hint {
     font-size: 12px;
-    color: #8a8a8a;
+    color: var(--theme-t-muted, #777777);
   }
   .curl-footer-actions {
     display: flex;
@@ -411,25 +416,100 @@
     border-radius: 3px;
     cursor: pointer;
     border: none;
+    transition: all 0.12s ease;
   }
   .curl-btn-cancel {
-    background: #e8e8e8;
-    color: #4d4d4d;
-    border: 1px solid #d0d0d0;
+    background: var(--theme-bg-panel, #323233);
+    color: var(--theme-t-main, #cccccc);
+    border: 1px solid var(--theme-b-input, #3e3e42);
   }
   .curl-btn-cancel:hover {
-    background: #dcdcdc;
+    background: var(--theme-bg-hover, #3c3c3d);
+    color: var(--theme-t-bright, #ffffff);
   }
   .curl-btn-primary {
-    background: #3883fa;
+    background: var(--theme-ac, #3883fa);
     color: #ffffff;
     font-weight: 500;
   }
   .curl-btn-primary:hover:not(:disabled) {
-    background: #2f72dd;
+    background: var(--theme-ac-hover, #2f72dd);
   }
   .curl-btn-primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Optional override when theme is explicitly set to Default (light) */
+  :global(.jse-theme-default) .curl-modal {
+    background: #f5f5f5;
+    border-color: #d0d0d0;
+    color: #4d4d4d;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+  }
+  :global(.jse-theme-default) .curl-modal-desc {
+    color: #4d4d4d;
+  }
+  :global(.jse-theme-default) .curl-tool-btn {
+    background: #e8e8e8;
+    color: #4d4d4d;
+    border-color: #d0d0d0;
+  }
+  :global(.jse-theme-default) .curl-tool-btn:hover {
+    background: #dcdcdc;
+    color: #333333;
+  }
+  :global(.jse-theme-default) .curl-textarea {
+    background: #ffffff;
+    color: #4d4d4d;
+    border-color: #d8dbdf;
+  }
+  :global(.jse-theme-default) .curl-textarea:focus {
+    border-color: #3883fa;
+  }
+  :global(.jse-theme-default) .curl-textarea::placeholder {
+    color: #9a9a9a;
+  }
+  :global(.jse-theme-default) .curl-preview {
+    background: #ffffff;
+    border-color: #d8dbdf;
+  }
+  :global(.jse-theme-default) .curl-preview-label {
+    color: #4d4d4d;
+  }
+  :global(.jse-theme-default) .curl-preview-url {
+    color: #4d4d4d;
+  }
+  :global(.jse-theme-default) .curl-tag {
+    background: #e8e8e8;
+    color: #4d4d4d;
+  }
+  :global(.jse-theme-default) .curl-tag-body {
+    background: #d9f2e6;
+    color: #1a7a4f;
+  }
+  :global(.jse-theme-default) .curl-tag-auth {
+    background: #fdebd0;
+    color: #a65f0b;
+  }
+  :global(.jse-theme-default) .curl-invalid-hint {
+    background: #fdecea;
+    color: #b3261e;
+    border-color: #f5c2be;
+  }
+  :global(.jse-theme-default) .curl-modal-footer {
+    border-top-color: transparent;
+  }
+  :global(.jse-theme-default) .curl-shortcut-hint {
+    color: #8a8a8a;
+  }
+  :global(.jse-theme-default) .curl-btn-cancel {
+    background: #e8e8e8;
+    color: #4d4d4d;
+    border-color: #d0d0d0;
+  }
+  :global(.jse-theme-default) .curl-btn-cancel:hover {
+    background: #dcdcdc;
+    color: #333333;
   }
 </style>

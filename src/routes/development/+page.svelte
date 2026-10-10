@@ -27,6 +27,7 @@
   } from 'svelte-jsoneditor'
   import { useLocalStorage } from '$lib/utils/localStorageUtils.js'
   import PreviewModal from '$lib/components/modals/PreviewModal.svelte'
+  import MinimizedWindowsBar from '$lib/components/modals/MinimizedWindowsBar.svelte'
   import type { EditWithPreviewProps, JSONEditorModalCallback } from '$lib/types.js'
   import { range } from 'lodash-es'
   import { mount, onMount, tick } from 'svelte'
@@ -4767,29 +4768,177 @@
       onClose={() => (tabMenu = undefined)}
     />
   {/if}
+
+  <MinimizedWindowsBar />
 </div>
 
 {#if false}<slot />{/if}
 
 <style lang="scss">
+  @import '../../lib/themes/jse-theme-default.css';
   @import '../../lib/themes/jse-theme-dark.css';
   @import '../themes/jse-theme-big.css';
 
-  $bg: #1e1e1e;
-  $bg2: #252526;
-  $bg3: #323233;
-  $b: #3e3e42;
-  $t: #cccccc;
-  $td: #888;
-  $ac: #0078d4;
+  .app-shell {
+    // Base Tokens (Dark Modern default)
+    --theme-bg-chrome: #181818;
+    --theme-bg-editor: #1e1e1e;
+    --theme-bg-panel: #202021;
+    --theme-bg-card: #252526;
+    --theme-bg-hover: rgba(255, 255, 255, 0.08);
+    --theme-bg-active: rgba(255, 255, 255, 0.12);
+    --theme-bg-selected: #04395e;
+    --theme-bg-input: #202022;
+    --theme-bg-overlay: rgba(0, 0, 0, 0.65);
+
+    --theme-b-subtle: #282828;
+    --theme-b-main: #333333;
+    --theme-b-input: #3c3c3c;
+    --theme-b-input-hover: #4e4e4e;
+
+    --theme-t-bright: #ffffff;
+    --theme-t-main: #d4d4d4;
+    --theme-t-muted: #9d9d9d;
+    --theme-t-inverse: #181818;
+
+    --theme-ac: #0078d4;
+    --theme-ac-hover: #1177bb;
+    --theme-ac-subtle: rgba(0, 120, 212, 0.18);
+    --theme-accent-text: #38bdf8;
+
+    --theme-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --theme-shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    --theme-shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.07);
+
+    color-scheme: dark;
+
+    &.jse-theme-dark {
+      --theme-bg-chrome: #181818;
+      --theme-bg-editor: #1e1e1e;
+      --theme-bg-panel: #202021;
+      --theme-bg-card: #252526;
+      --theme-bg-hover: rgba(255, 255, 255, 0.08);
+      --theme-bg-active: rgba(255, 255, 255, 0.12);
+      --theme-bg-selected: #04395e;
+      --theme-bg-input: #202022;
+      --theme-bg-overlay: rgba(0, 0, 0, 0.65);
+
+      --theme-b-subtle: #282828;
+      --theme-b-main: #333333;
+      --theme-b-input: #3c3c3c;
+      --theme-b-input-hover: #4e4e4e;
+
+      --theme-t-bright: #ffffff;
+      --theme-t-main: #d4d4d4;
+      --theme-t-muted: #9d9d9d;
+      --theme-t-inverse: #181818;
+
+      --theme-ac: #0078d4;
+      --theme-ac-hover: #1177bb;
+      --theme-ac-subtle: rgba(0, 120, 212, 0.18);
+      --theme-accent-text: #38bdf8;
+
+      color-scheme: dark;
+    }
+
+    &.jse-theme-default,
+    &.jse-theme-light {
+      --theme-bg-chrome: #f8fafc;
+      --theme-bg-editor: #ffffff;
+      --theme-bg-panel: #f1f5f9;
+      --theme-bg-card: #ffffff;
+      --theme-bg-hover: rgba(15, 23, 42, 0.06);
+      --theme-bg-active: rgba(15, 23, 42, 0.1);
+      --theme-bg-selected: #e0ecfd;
+      --theme-bg-input: #ffffff;
+      --theme-bg-overlay: rgba(15, 23, 42, 0.45);
+
+      --theme-b-subtle: #e2e8f0;
+      --theme-b-main: #cbd5e1;
+      --theme-b-input: #cbd5e1;
+      --theme-b-input-hover: #94a3b8;
+
+      --theme-t-bright: #0f172a;
+      --theme-t-main: #334155;
+      --theme-t-muted: #64748b;
+      --theme-t-inverse: #ffffff;
+
+      --theme-ac: #0078d4;
+      --theme-ac-hover: #0067b8;
+      --theme-ac-subtle: rgba(0, 120, 212, 0.1);
+      --theme-accent-text: #0066cc;
+
+      --theme-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+      --theme-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+      --theme-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.06);
+
+      color-scheme: light;
+    }
+
+    &.jse-theme-big {
+      --theme-bg-chrome: #fbeee8;
+      --theme-bg-editor: #fff7f4;
+      --theme-bg-panel: #ffe2d8;
+      --theme-bg-card: #ffffff;
+      --theme-bg-hover: rgba(230, 80, 50, 0.08);
+      --theme-bg-active: rgba(230, 80, 50, 0.15);
+      --theme-bg-selected: #ffd2c2;
+      --theme-bg-input: #ffffff;
+      --theme-bg-overlay: rgba(40, 20, 15, 0.4);
+
+      --theme-b-subtle: #f5d0c5;
+      --theme-b-main: #ebbfb2;
+      --theme-b-input: #e0aba0;
+      --theme-b-input-hover: #d28c7f;
+
+      --theme-t-bright: #3b1d16;
+      --theme-t-main: #5c352c;
+      --theme-t-muted: #8c5b50;
+      --theme-t-inverse: #ffffff;
+
+      --theme-ac: #e65100;
+      --theme-ac-hover: #bf360c;
+      --theme-ac-subtle: rgba(230, 81, 0, 0.12);
+      --theme-accent-text: #e65100;
+
+      color-scheme: light;
+    }
+  }
+
+  // Dynamic SCSS Variable Mapping
+  $bg-chrome: var(--theme-bg-chrome);
+  $bg-editor: var(--theme-bg-editor);
+  $bg-panel: var(--theme-bg-panel);
+  $bg-card: var(--theme-bg-card);
+  $bg-hover: var(--theme-bg-hover);
+
+  $b-subtle: var(--theme-b-subtle);
+  $b-main: var(--theme-b-main);
+  $b-input: var(--theme-b-input);
+  $b-input-hover: var(--theme-b-input-hover);
+
+  $t-bright: var(--theme-t-bright);
+  $t-main: var(--theme-t-main);
+  $t-muted: var(--theme-t-muted);
+
+  $ac: var(--theme-ac);
+  $ac-hover: var(--theme-ac-hover);
+
+  // Aliases for compatibility
+  $bg: $bg-editor;
+  $bg2: $bg-card;
+  $bg3: $bg-chrome;
+  $b: $b-main;
+  $t: $t-main;
+  $td: $t-muted;
 
   .app-shell {
     position: fixed;
     inset: 0;
     display: flex;
     flex-direction: column;
-    background: $bg;
-    color: $t;
+    background: $bg-editor;
+    color: $t-main;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: 13px;
     overflow: hidden;
@@ -4799,42 +4948,52 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px;
-    background: $bg3;
-    border-bottom: 1px solid $b;
+    padding: 0 10px;
+    background: $bg-chrome;
+    border-bottom: 1px solid $b-main;
     flex-shrink: 0;
-    height: 36px;
+    height: 38px;
     user-select: none;
   }
   .tb-brand {
     font-weight: 700;
     font-size: 13px;
-    color: #fff;
+    color: $t-bright;
     margin-right: 12px;
-    letter-spacing: -0.3px;
+    letter-spacing: -0.2px;
   }
   .tb-group {
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
   }
   .tb-label {
-    font-size: 10px;
-    color: $td;
+    font-size: 11px;
+    font-weight: 600;
+    color: $t-muted;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.6px;
     white-space: nowrap;
   }
   .tb-select {
-    padding: 1px 4px;
+    padding: 2px 6px;
     font-size: 11px;
-    background: $bg;
-    color: $t;
-    border: 1px solid $b;
-    border-radius: 3px;
+    font-weight: 500;
+    background: $bg-card;
+    color: $t-bright;
+    border: 1px solid $b-input;
+    border-radius: 4px;
     outline: none;
+    cursor: pointer;
+    transition:
+      border-color 0.12s,
+      box-shadow 0.12s;
+    &:hover {
+      border-color: $b-input-hover;
+    }
     &:focus {
       border-color: $ac;
+      box-shadow: 0 0 0 1px $ac;
     }
   }
   .tb-btn {
@@ -4845,28 +5004,38 @@
     height: 26px;
     border: none;
     background: transparent;
-    color: $t;
+    color: $t-main;
     font-size: 14px;
     cursor: pointer;
-    border-radius: 3px;
+    border-radius: 4px;
+    transition:
+      background 0.12s,
+      color 0.12s;
     &:hover {
-      background: rgba(255, 255, 255, 0.08);
+      color: $t-bright;
+      background: $bg-hover;
     }
   }
   .tb-btn-label {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     height: 26px;
     padding: 0 10px;
-    border: 1px solid $b;
-    border-radius: 3px;
-    background: rgba(0, 120, 212, 0.25);
-    color: #fff;
+    border: 1px solid #1177bb;
+    border-radius: 4px;
+    background: #0e639c;
+    color: #ffffff;
     font-size: 11px;
+    font-weight: 500;
     cursor: pointer;
+    transition:
+      background 0.12s,
+      box-shadow 0.12s;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     &:hover {
-      background: rgba(0, 120, 212, 0.45);
+      background: #1177bb;
+      box-shadow: 0 2px 6px rgba(14, 99, 156, 0.4);
     }
   }
   .tb-spacer {
@@ -4973,8 +5142,8 @@
   .tab-bar-l1 {
     display: flex;
     align-items: center;
-    background: #181818;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: $bg-chrome;
+    border-bottom: 1px solid $b-subtle;
     height: 36px;
     flex-shrink: 0;
     overflow-x: auto;
@@ -4985,7 +5154,7 @@
       height: 3px;
     }
     &::-webkit-scrollbar-thumb {
-      background: #444;
+      background: $b-input;
     }
   }
   .tab-l1 {
@@ -4996,8 +5165,8 @@
     height: 30px;
     border: none;
     border-radius: 6px 6px 0 0;
-    background: #242424;
-    color: #969696;
+    background: transparent;
+    color: $t-muted;
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
@@ -5006,14 +5175,15 @@
       background 0.12s,
       color 0.12s;
     &.active {
-      background: #252526;
-      color: #ffffff;
-      border-bottom: 2px solid #007acc;
+      background: $bg-editor;
+      color: $t-bright;
+      border-bottom: 2px solid $ac;
       font-weight: 600;
+      box-shadow: var(--theme-shadow-sm);
     }
     &:hover:not(.active) {
-      background: #2c2c2c;
-      color: #dddddd;
+      background: $bg-hover;
+      color: $t-main;
     }
   }
   .tab-l1-icon {
@@ -5024,8 +5194,9 @@
     font-size: 10px;
     padding: 1px 5px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.12);
-    color: #bbbbbb;
+    background: $bg-hover;
+    color: $t-main;
+    border: 1px solid $b-subtle;
     line-height: 1;
   }
   .tab-drop-promote {
@@ -5155,8 +5326,8 @@
   .tab-bar-l2 {
     display: flex;
     align-items: center;
-    background: #252526;
-    border-bottom: 1px solid $b;
+    background: $bg-panel;
+    border-bottom: 1px solid $b-main;
     height: 29px;
     flex-shrink: 0;
     overflow-x: auto;
@@ -5167,7 +5338,7 @@
       height: 2px;
     }
     &::-webkit-scrollbar-thumb {
-      background: #555;
+      background: $b-input;
     }
   }
   .tab-l2 {
@@ -5179,7 +5350,7 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: #999999;
+    color: $t-muted;
     font-size: 11px;
     cursor: pointer;
     white-space: nowrap;
@@ -5187,13 +5358,14 @@
       background 0.1s,
       color 0.1s;
     &.active {
-      background: #37373d;
-      color: #ffffff;
-      font-weight: 500;
+      background: $bg-editor;
+      color: $t-bright;
+      font-weight: 600;
+      box-shadow: var(--theme-shadow-sm);
     }
     &:hover:not(.active) {
-      background: rgba(255, 255, 255, 0.05);
-      color: #cccccc;
+      background: $bg-hover;
+      color: $t-main;
     }
   }
   .tab-l2-icon {
@@ -5224,11 +5396,15 @@
     font-size: 11px;
     padding: 0 8px;
     height: 22px;
-    color: $td;
+    color: $t-muted;
+    background: transparent;
+    border: none;
     border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.1s;
     &:hover {
-      color: #fff;
-      background: rgba(255, 255, 255, 0.08);
+      color: $t-bright;
+      background: $bg-hover;
     }
   }
 
@@ -5239,21 +5415,23 @@
     padding: 0 12px;
     height: 100%;
     border: none;
-    background: #2d2d2d;
-    color: $td;
+    background: transparent;
+    color: $t-muted;
     font-size: 12px;
     cursor: pointer;
-    border-right: 1px solid $b;
+    border-right: 1px solid $b-subtle;
     white-space: nowrap;
     flex-shrink: 0;
-    transition: background 0.1s;
+    transition: background 0.1s, color 0.1s;
     &.active {
-      background: #1e1e1e;
-      color: #fff;
+      background: $bg-editor;
+      color: $t-bright;
       border-bottom: 2px solid $ac;
+      font-weight: 600;
     }
     &:hover:not(.active) {
-      background: #353535;
+      background: $bg-hover;
+      color: $t-main;
     }
   }
   .tab-label {
@@ -5267,9 +5445,12 @@
     width: 16px;
     text-align: center;
     border-radius: 2px;
+    color: $t-muted;
+    transition: all 0.1s;
     &:hover {
       opacity: 1;
-      background: rgba(255, 255, 255, 0.1);
+      color: $t-bright;
+      background: $bg-hover;
     }
   }
   .tab-l1:hover .tab-close,
@@ -5283,12 +5464,15 @@
   .tab-add {
     font-size: 16px;
     padding: 0 10px;
-    color: $td;
+    color: $t-muted;
     background: transparent;
     border: none;
     cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.1s;
     &:hover {
-      color: #fff;
+      color: $t-bright;
+      background: $bg-hover;
     }
   }
 
@@ -5311,10 +5495,10 @@
   .pane-header {
     display: flex;
     align-items: center;
-    background: #1a1a1a;
-    border-bottom: 1px solid $b;
+    background: $bg-chrome;
+    border-bottom: 1px solid $b-main;
     flex-shrink: 0;
-    height: 26px;
+    height: 28px;
     padding: 0 4px;
     user-select: none;
   }
@@ -5327,8 +5511,9 @@
     padding: 0 8px;
     border: none;
     background: transparent;
-    color: $t;
+    color: $t-bright;
     font-size: 11px;
+    font-weight: 500;
     cursor: grab;
     overflow: hidden;
     white-space: nowrap;
@@ -5366,14 +5551,15 @@
   .pane-close-btn {
     border: none;
     background: transparent;
-    color: $td;
+    color: $t-muted;
     font-size: 14px;
     cursor: pointer;
     padding: 0 6px;
     height: 100%;
+    border-radius: 3px;
     &:hover {
-      color: #fff;
-      background: rgba(255, 255, 255, 0.1);
+      color: #ef4444;
+      background: rgba(239, 68, 68, 0.15);
     }
   }
 
@@ -5477,13 +5663,15 @@
   .status-bar {
     display: flex;
     align-items: center;
-    padding: 0 10px;
-    height: 22px;
-    background: $ac;
-    color: #fff;
+    padding: 0 12px;
+    height: 24px;
+    background: $bg-chrome;
+    color: $t-main;
+    border-top: 1px solid $b-subtle;
     font-size: 11px;
     flex-shrink: 0;
     gap: 16px;
+    user-select: none;
   }
   .sb-spacer {
     flex: 1;
@@ -5491,26 +5679,36 @@
   .sb-btn-status {
     display: flex;
     align-items: center;
-    gap: 4px;
-    height: 18px;
-    padding: 0 6px;
-    background: rgba(255, 255, 255, 0.12);
-    border: none;
+    gap: 5px;
+    height: 19px;
+    padding: 0 7px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 3px;
-    color: #fff;
-    font-size: 10px;
+    color: $t-bright;
+    font-size: 11px;
+    font-weight: 500;
     cursor: pointer;
+    transition: all 0.12s;
     &:hover {
-      background: rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.16);
+      border-color: rgba(255, 255, 255, 0.22);
     }
   }
   .sb-problems-active {
-    background: rgba(241, 76, 76, 0.55);
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #fca5a5;
+    &:hover {
+      background: rgba(239, 68, 68, 0.35);
+    }
   }
   .sb-unsaved {
-    background: rgba(204, 167, 0, 0.45);
+    background: rgba(245, 158, 11, 0.25);
+    border-color: rgba(245, 158, 11, 0.5);
+    color: #fde68a;
     &:hover {
-      background: rgba(204, 167, 0, 0.65);
+      background: rgba(245, 158, 11, 0.35);
     }
   }
   .sb-input-wide {
@@ -5524,8 +5722,8 @@
     display: flex;
     flex-direction: column;
     height: 320px;
-    background: $bg2;
-    border-top: 1px solid $b;
+    background: $bg-editor;
+    border-top: 1px solid $b-main;
   }
   .requests-header {
     display: flex;
@@ -5533,8 +5731,8 @@
     justify-content: space-between;
     padding: 6px 14px;
     flex-shrink: 0;
-    background: $bg2;
-    border-bottom: 1px solid $b;
+    background: $bg-chrome;
+    border-bottom: 1px solid $b-main;
     gap: 16px;
   }
   .requests-header-left {
@@ -5546,26 +5744,26 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 2px 8px;
+    padding: 3px 8px;
     border-radius: 4px;
-    background: rgba(56, 131, 250, 0.15);
-    border: 1px solid rgba(56, 131, 250, 0.35);
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.3);
   }
   .requests-brand-icon {
     font-size: 12px;
-    color: #3883fa;
+    color: #38bdf8;
   }
   .requests-brand-text {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.8px;
-    color: #3883fa;
+    color: #38bdf8;
   }
   .req-view-toggle {
     display: flex;
     align-items: center;
-    background: $bg;
-    border: 1px solid $b;
+    background: $bg-card;
+    border: 1px solid $b-input;
     border-radius: 4px;
     padding: 2px;
     gap: 2px;
@@ -5577,18 +5775,18 @@
     padding: 3px 10px;
     border-radius: 3px;
     background: transparent;
-    color: $td;
+    color: $t-muted;
     border: none;
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.12s ease;
     &:hover {
-      color: $t;
-      background: rgba(255, 255, 255, 0.05);
+      color: $t-bright;
+      background: $bg-hover;
     }
     &.active {
-      background: #3883fa;
+      background: $ac;
       color: #ffffff;
       font-weight: 600;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -5612,8 +5810,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    background: $bg;
-    border: 1px solid $b;
+    background: $bg-card;
+    border: 1px solid $b-input;
     border-radius: 4px;
     padding: 2px 8px;
   }
@@ -5622,7 +5820,7 @@
   }
   .req-env-label {
     font-size: 11px;
-    color: $td;
+    color: $t-muted;
     font-weight: 500;
   }
   .req-env-select {
@@ -5630,9 +5828,9 @@
     font-size: 11px;
     font-weight: 500;
     padding: 3px 22px 3px 8px;
-    background-color: $bg;
-    border: 1px solid $b;
-    color: $t;
+    background-color: $bg-card;
+    border: 1px solid $b-input;
+    color: $t-bright;
     border-radius: 3px;
     cursor: pointer;
     appearance: none;
@@ -5648,12 +5846,12 @@
       box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.25);
     }
     &:hover {
-      border-color: rgba(255, 255, 255, 0.2);
+      border-color: $b-input-hover;
     }
   }
   .req-env-select option {
-    background-color: $bg2;
-    color: $t;
+    background-color: $bg-card;
+    color: $t-bright;
     padding: 6px 10px;
     font-size: 12px;
   }
@@ -5664,7 +5862,7 @@
     padding: 2px 4px;
     font-size: 12px;
     border-radius: 3px;
-    color: $td;
+    color: $t-muted;
     transition: all 0.15s ease;
     &:hover {
       background: rgba(255, 255, 255, 0.1);
@@ -5675,8 +5873,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    background: $bg;
-    border: 1px solid $b;
+    background: $bg-card;
+    border: 1px solid $b-input;
     border-radius: 4px;
     padding: 2px 8px;
   }
@@ -5686,7 +5884,7 @@
   }
   .req-proxy-label {
     font-size: 11px;
-    color: $td;
+    color: $t-muted;
     font-weight: 500;
   }
   .req-top-btn {
@@ -5695,18 +5893,18 @@
     gap: 6px;
     height: 26px;
     padding: 0 10px;
-    background: $bg3;
-    color: $t;
-    border: 1px solid $b;
+    background: $bg-card;
+    color: $t-bright;
+    border: 1px solid $b-input;
     border-radius: 4px;
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.12s ease;
     &:hover {
-      background: #3a3d41;
-      border-color: rgba(255, 255, 255, 0.25);
-      color: #ffffff;
+      background: $bg-hover;
+      border-color: $b-input-hover;
+      color: $t-bright;
     }
   }
   .requests-close-btn {
@@ -5717,7 +5915,7 @@
     height: 24px;
     background: transparent;
     border: none;
-    color: $td;
+    color: $t-muted;
     font-size: 16px;
     border-radius: 3px;
     cursor: pointer;
@@ -5817,10 +6015,10 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
+    padding: 8px 12px;
     flex-shrink: 0;
-    background: rgba(0, 0, 0, 0.15);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: $bg-editor;
+    border-bottom: 1px solid $b-main;
   }
   .req-method {
     flex-shrink: 0;
@@ -5830,8 +6028,8 @@
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.4px;
-    border: 1px solid $b;
-    background-color: $bg2;
+    border: 1px solid $b-input;
+    background-color: $bg-card;
     outline: none;
     cursor: pointer;
     appearance: none;
@@ -5843,7 +6041,10 @@
     transition: all 0.12s ease;
     &:focus {
       border-color: $ac;
-      box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.2);
+      box-shadow: 0 0 0 1px $ac;
+    }
+    &:hover {
+      border-color: $b-input-hover;
     }
     &.req-method-get {
       color: #10b981;
@@ -5861,8 +6062,8 @@
       color: #ef4444;
     }
     option {
-      background: $bg2;
-      color: $t;
+      background: $bg-card;
+      color: $t-bright;
       font-weight: 600;
       padding: 4px 8px;
     }
@@ -5873,19 +6074,19 @@
     padding: 0 10px;
     font-size: 12px;
     font-family: Consolas, 'Cascadia Code', monospace;
-    background: $bg;
-    color: $t;
-    border: 1px solid $b;
+    background: $bg-chrome;
+    color: $t-bright;
+    border: 1px solid $b-input;
     border-radius: 4px;
     outline: none;
     transition: all 0.12s ease;
     &:focus {
       border-color: $ac;
-      box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.25);
-      background: $bg;
+      box-shadow: 0 0 0 1px $ac;
+      background: $bg-chrome;
     }
     &::placeholder {
-      color: $td;
+      color: #71717a;
     }
   }
   .req-curl-btn {
@@ -5894,9 +6095,9 @@
     gap: 5px;
     height: 28px;
     padding: 0 11px;
-    background: $bg3;
-    color: $t;
-    border: 1px solid $b;
+    background: $bg-card;
+    color: $t-bright;
+    border: 1px solid $b-input;
     border-radius: 4px;
     font-size: 11px;
     font-weight: 500;
@@ -5905,10 +6106,10 @@
     transition: all 0.12s ease;
     flex-shrink: 0;
     &:hover {
-      background: #3a3d41;
-      color: #ffffff;
-      border-color: rgba(255, 255, 255, 0.28);
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+      background: $bg-hover;
+      color: $t-bright;
+      border-color: $b-input-hover;
+      box-shadow: var(--theme-shadow-sm);
     }
     &:active {
       transform: translateY(1px);
@@ -6452,24 +6653,28 @@
     display: flex;
     gap: 2px;
     padding: 0 8px;
-    border-bottom: 1px solid $b;
+    background: $bg-chrome;
+    border-bottom: 1px solid $b-main;
     flex-shrink: 0;
   }
   .req-tab {
-    padding: 4px 12px;
+    padding: 6px 14px;
     font-size: 11px;
+    font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     background: transparent;
-    color: $td;
+    color: $t-muted;
     border: none;
     border-bottom: 2px solid transparent;
     cursor: pointer;
+    transition: color 0.12s;
     &:hover {
-      color: $t;
+      color: $t-bright;
     }
     &.active {
-      color: $t;
+      color: $t-bright;
+      font-weight: 600;
       border-bottom-color: $ac;
     }
   }

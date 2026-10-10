@@ -1,0 +1,127 @@
+/* Default Light Theme for svelte-jsoneditor */
+.jse-theme-default,
+:root {
+  color-scheme: light;
+  --jse-theme: light;
+
+  /* over all fonts, sizes, and colors */
+  --jse-theme-color: #0078d4;
+  --jse-theme-color-highlight: #106ebe;
+  --jse-background-color: #ffffff;
+  --jse-text-color: #1e293b;
+  --jse-text-readonly: #64748b;
+  --jse-text-color-inverse: #ffffff;
+  --jse-error-color: #e11d48;
+  --jse-warning-color: #d97706;
+  --jse-info-color: #0284c7;
+
+  /* main, menu, modal */
+  --jse-main-border: 1px solid #e2e8f0;
+  --jse-menu-color: #ffffff;
+  --jse-modal-background: #ffffff;
+  --jse-modal-overlay-background: rgba(15, 23, 42, 0.45);
+  --jse-modal-code-background: #f8fafc;
+
+  /* tooltip in text mode */
+  --jse-tooltip-color: #1e293b;
+  --jse-tooltip-background: #ffffff;
+  --jse-tooltip-border: 1px solid #cbd5e1;
+  --jse-tooltip-action-button-color: #ffffff;
+  --jse-tooltip-action-button-background: #1e293b;
+
+  /* panels: navigation bar, gutter, search box */
+  --jse-panel-background: #f8fafc;
+  --jse-panel-background-border: 1px solid #e2e8f0;
+  --jse-panel-color: #334155;
+  --jse-panel-color-readonly: #94a3b8;
+  --jse-panel-border: 1px solid #e2e8f0;
+  --jse-panel-button-color-highlight: #0f172a;
+  --jse-panel-button-background-highlight: #e2e8f0;
+
+  /* navigation-bar */
+  --jse-navigation-bar-background: #f8fafc;
+  --jse-navigation-bar-background-highlight: #e2e8f0;
+  --jse-navigation-bar-dropdown-color: #475569;
+
+  /* context menu */
+  --jse-context-menu-background: #ffffff;
+  --jse-context-menu-background-highlight: #f1f5f9;
+  --jse-context-menu-separator-color: #e2e8f0;
+  --jse-context-menu-color: #1e293b;
+  --jse-context-menu-color-disabled: #94a3b8;
+  --jse-context-menu-pointer-background: #e2e8f0;
+  --jse-context-menu-pointer-background-highlight: #cbd5e1;
+  --jse-context-menu-pointer-color: #1e293b;
+  --jse-context-menu-tip-background: rgba(0, 0, 0, 0.05);
+
+  /* contents: json key and values */
+  --jse-key-color: #0f172a;
+  --jse-value-color: #1e293b;
+  --jse-value-color-number: #0969da;
+  --jse-value-color-boolean: #0550ae;
+  --jse-value-color-null: #8250df;
+  --jse-value-color-string: #0a7b45;
+  --jse-value-color-url: #0969da;
+  --jse-delimiter-color: #94a3b8;
+  --jse-edit-outline: 2px solid #0078d4;
+
+  /* contents: selected or hovered */
+  --jse-selection-background-color: #e0ecfd;
+  --jse-selection-background-inactive-color: #f1f5f9;
+  --jse-hover-background-color: rgba(0, 0, 0, 0.04);
+  --jse-active-line-background-color: rgba(0, 0, 0, 0.03);
+  --jse-search-match-background-color: rgba(254, 240, 138, 0.6);
+
+  /* contents: section of collapsed items in an array */
+  --jse-collapsed-items-background-color: #f8fafc;
+  --jse-collapsed-items-selected-background-color: #e2e8f0;
+  --jse-collapsed-items-link-color: #64748b;
+  --jse-collapsed-items-link-color-highlight: #e11d48;
+
+  /* contents: highlighting of search results */
+  --jse-search-match-color: #fef08a;
+  --jse-search-match-outline: 1px solid #eab308;
+  --jse-search-match-active-color: #fde047;
+  --jse-search-match-active-outline: 1px solid #ca8a04;
+
+  /* contents: inline tags inside the JSON document */
+  --jse-tag-background: #e2e8f0;
+  --jse-tag-color: #334155;
+
+  /* contents: table */
+  --jse-table-header-background: #f8fafc;
+  --jse-table-header-background-highlight: #f1f5f9;
+  --jse-table-row-odd-background: rgba(0, 0, 0, 0.02);
+
+  /* controls in modals: inputs, buttons, and `a` */
+  --jse-input-background: #ffffff;
+  --jse-input-border: 1px solid #cbd5e1;
+  --jse-button-background: #f1f5f9;
+  --jse-button-background-highlight: #e2e8f0;
+  --jse-button-color: #1e293b;
+  --jse-button-primary-background: #0078d4;
+  --jse-button-primary-background-highlight: #106ebe;
+  --jse-button-primary-color: #ffffff;
+  --jse-button-secondary-background: #f1f5f9;
+  --jse-button-secondary-background-highlight: #e2e8f0;
+  --jse-button-secondary-background-disabled: #cbd5e1;
+  --jse-button-secondary-color: #334155;
+  --jse-a-color: #0969da;
+  --jse-a-color-highlight: #0550ae;
+
+  /* svelte-select */
+  --jse-svelte-select-background: #ffffff;
+  --jse-svelte-select-border: 1px solid #cbd5e1;
+  --list-background: #ffffff;
+  --item-hover-bg: #f1f5f9;
+  --multi-item-bg: #e2e8f0;
+  --input-color: #0f172a;
+  --multi-clear-bg: #94a3b8;
+  --multi-item-clear-icon-color: #ffffff;
+  --multi-item-outline: 1px solid #cbd5e1;
+  --list-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.1);
+
+  /* color picker */
+  --jse-color-picker-background: #ffffff;
+  --jse-color-picker-border-box-shadow: #cbd5e1 0 0 0 1px;
+}

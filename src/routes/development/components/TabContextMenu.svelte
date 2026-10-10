@@ -37,34 +37,34 @@
   {/each}
 </div>
 
-<style>
+<style lang="scss">
   .tab-menu {
     position: fixed;
     z-index: 1100;
     min-width: 170px;
-    background: #2d2d30;
-    border: 1px solid #454545;
+    background: var(--theme-bg-card, #2d2d30);
+    border: 1px solid var(--theme-b-main, #454545);
     border-radius: 6px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    box-shadow: var(--theme-shadow-lg, 0 6px 20px rgba(0, 0, 0, 0.45));
     padding: 3px;
   }
   .tab-menu-item {
     display: block;
     width: 100%;
-    padding: 5px 10px;
+    padding: 6px 10px;
     border: none;
     background: transparent;
-    color: #cccccc;
+    color: var(--theme-t-main, #cccccc);
     font-size: 12px;
     text-align: left;
     cursor: pointer;
     border-radius: 4px;
     &:hover {
-      background: #04395e;
-      color: #fff;
+      background: var(--theme-bg-selected, #04395e);
+      color: var(--theme-t-bright, #fff);
     }
     &:disabled {
-      color: #666;
+      color: var(--theme-t-muted, #666);
       cursor: default;
       &:hover {
         background: transparent;

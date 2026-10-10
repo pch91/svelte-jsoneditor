@@ -50,40 +50,45 @@
 
   .jse-minimized-bar {
     position: fixed;
-    bottom: 0;
+    bottom: 24px;
     left: 0;
     right: 0;
     z-index: 99999;
     display: flex;
     justify-content: flex-end;
     pointer-events: none;
-    padding: 0 12px 2px 12px;
+    padding: 0 14px 0 14px;
   }
 
   .jse-minimized-list {
     display: flex;
-    gap: 4px;
+    gap: 6px;
     pointer-events: auto;
   }
 
   .jse-minimized-item {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 10px;
-    background: defaults.$panel-background;
-    border: defaults.$main-border;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--jse-panel-background, var(--theme-bg-card, #252526));
+    border: 1px solid var(--jse-panel-border, var(--theme-b-main, #3c3c3c));
     border-bottom: none;
     border-radius: 6px 6px 0 0;
     cursor: pointer;
     font-size: 12px;
-    color: defaults.$text-color;
-    max-width: 180px;
-    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.15);
-    transition: background 0.15s;
+    font-weight: 500;
+    color: var(--jse-text-color, var(--theme-t-main, #d4d4d4));
+    max-width: 200px;
+    box-shadow: var(--theme-shadow-md, 0 -4px 12px rgba(0, 0, 0, 0.25));
+    backdrop-filter: blur(8px);
+    transition: all 0.15s ease;
 
     &:hover {
-      background: rgba(128, 128, 128, 0.15);
+      background: var(--jse-panel-button-background-highlight, var(--theme-bg-hover, #37373d));
+      color: var(--theme-t-bright, #ffffff);
+      border-color: var(--theme-ac, #0078d4);
+      transform: translateY(-1px);
     }
   }
 
@@ -104,10 +109,10 @@
     height: 16px;
     border-radius: 3px;
     flex-shrink: 0;
-    opacity: 0.5;
+    color: var(--theme-t-muted, #9d9d9d);
+    transition: all 0.12s;
 
     &:hover {
-      opacity: 1;
       background: #e81123;
       color: white;
     }

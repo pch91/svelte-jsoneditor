@@ -87,6 +87,17 @@
           background-color: defaults.$table-row-odd-background;
         }
 
+        &.jse-sub-row {
+          .jse-table-cell-gutter {
+            border-left: 2px solid var(--jse-theme-color, #3883fa);
+          }
+          .jse-dimmed-index {
+            opacity: 0.7;
+            font-size: 0.85em;
+            color: var(--jse-theme-color, #3883fa);
+          }
+        }
+
         .jse-table-cell {
           padding: 0 defaults.$padding 0 0;
           vertical-align: top;

@@ -1,4 +1,4 @@
-﻿<script lang="ts">
+<script lang="ts">
   export let open = false
   export let environments: Record<string, Record<string, string>> = {}
   export let globalEnvironment: Record<string, string> = {}
@@ -390,11 +390,12 @@
     height: 580px;
     max-width: 95vw;
     max-height: 90vh;
-    background: #ffffff;
-    border-radius: 4px;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-main, #3e3e42);
+    border-radius: 6px;
+    box-shadow: var(--theme-shadow-lg, 0 16px 40px rgba(0, 0, 0, 0.65));
     overflow: hidden;
-    color: #333333;
+    color: var(--theme-t-main, #cccccc);
     font-family:
       -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   }
@@ -445,15 +446,15 @@
     flex: 1;
     min-height: 0;
     min-width: 0;
-    background: #ffffff;
+    background: var(--theme-bg-card, #252526);
     overflow: hidden;
   }
 
   /* Sidebar */
   .env-sidebar {
     width: 220px;
-    background: #f8fafc;
-    border-right: 1px solid #e2e8f0;
+    background: var(--theme-bg-chrome, #1e1e1e);
+    border-right: 1px solid var(--theme-b-main, #3e3e42);
     display: flex;
     flex-direction: column;
     padding: 12px 10px;
@@ -470,7 +471,7 @@
   .env-sidebar-heading {
     font-size: 11px;
     font-weight: 700;
-    color: #64748b;
+    color: #888888;
     letter-spacing: 0.5px;
     text-transform: uppercase;
   }
@@ -486,7 +487,7 @@
     transition: background 0.15s;
   }
   .env-add-btn:hover {
-    background: #e0edff;
+    background: rgba(56, 131, 250, 0.15);
   }
   .env-empty-hint {
     font-size: 11px;
@@ -507,7 +508,7 @@
     border-radius: 4px;
     background: transparent;
     border: none;
-    color: #334155;
+    color: #cccccc;
     font-size: 12px;
     cursor: pointer;
     text-align: left;
@@ -516,11 +517,12 @@
     box-sizing: border-box;
   }
   .env-sidebar-item:hover {
-    background: #f1f5f9;
+    background: #2a2d2e;
+    color: #ffffff;
   }
   .env-sidebar-item.active {
-    background: #e0edff;
-    color: #1d4ed8;
+    background: rgba(56, 131, 250, 0.25);
+    color: #38bdf8;
     font-weight: 600;
   }
   .item-icon {
@@ -533,16 +535,16 @@
     white-space: nowrap;
   }
   .item-badge {
-    background: #e2e8f0;
-    color: #475569;
+    background: #323233;
+    color: #aaaaaa;
     font-size: 10px;
     font-weight: 700;
     padding: 1px 5px;
     border-radius: 8px;
   }
   .env-sidebar-item.active .item-badge {
-    background: #bfdbfe;
-    color: #1d4ed8;
+    background: rgba(56, 131, 250, 0.4);
+    color: #e0f2fe;
   }
   .env-radio-btn {
     background: transparent;
@@ -560,7 +562,7 @@
   .env-del-btn {
     background: transparent;
     border: none;
-    color: #94a3b8;
+    color: #777777;
     font-size: 14px;
     cursor: pointer;
     padding: 0 4px;
@@ -574,7 +576,7 @@
     opacity: 1;
   }
   .env-del-btn:hover {
-    color: #ef4444;
+    color: #f87171;
   }
 
   /* Main Workspace */
@@ -585,7 +587,7 @@
     padding: 14px 18px;
     min-height: 0;
     min-width: 0;
-    background: #ffffff;
+    background: var(--theme-bg-card, #252526);
     box-sizing: border-box;
   }
   .env-content-header {
@@ -604,8 +606,8 @@
     gap: 8px;
   }
   .content-badge {
-    background: #e0edff;
-    color: #1d4ed8;
+    background: var(--theme-ac-subtle, rgba(56, 131, 250, 0.2));
+    color: var(--theme-accent-text, #38bdf8);
     font-size: 10px;
     font-weight: 700;
     padding: 2px 6px;
@@ -615,12 +617,12 @@
   .content-title-wrap h2 {
     font-size: 14px;
     font-weight: 600;
-    color: #1e293b;
+    color: var(--theme-t-bright, #ffffff);
     margin: 0;
   }
   .content-subtitle {
     font-size: 11px;
-    color: #64748b;
+    color: var(--theme-t-muted, #888888);
     margin: 4px 0 0 0;
   }
   .env-rename-box {
@@ -631,17 +633,17 @@
   .env-name-input {
     font-size: 13px;
     font-weight: 600;
-    color: #1e293b;
-    background: #ffffff;
-    border: 1px solid #d1d5db;
+    color: var(--theme-t-bright, #cccccc);
+    background: var(--theme-bg-input, #1e1e1e);
+    border: 1px solid var(--theme-b-input, #3e3e42);
     border-radius: 4px;
     padding: 3px 8px;
     outline: none;
     transition: border-color 0.15s;
   }
   .env-name-input:focus {
-    border-color: #3883fa;
-    box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.2);
+    border-color: var(--theme-ac, #0078d4);
+    box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.25);
   }
   .content-header-actions {
     display: flex;
@@ -663,14 +665,14 @@
     background: #059669;
   }
   .env-set-active-btn.already-active {
-    background: #ecfdf5;
-    color: #059669;
-    border: 1px solid #a7f3d0;
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.4);
   }
   .env-tool-btn {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
-    color: #334155;
+    background: #323233;
+    border: 1px solid #3e3e42;
+    color: #cccccc;
     font-size: 11px;
     font-weight: 500;
     padding: 5px 10px;
@@ -681,15 +683,16 @@
       border-color 0.15s;
   }
   .env-tool-btn:hover {
-    background: #f8fafc;
-    border-color: #94a3b8;
+    background: #3c3c3d;
+    border-color: #555555;
+    color: #ffffff;
   }
   .env-tool-btn.env-tool-danger {
-    color: #dc2626;
-    border-color: #fecaca;
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.4);
   }
   .env-tool-btn.env-tool-danger:hover {
-    background: #fef2f2;
+    background: rgba(239, 68, 68, 0.15);
     border-color: #f87171;
   }
 
@@ -699,19 +702,19 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--theme-b-main, #3e3e42);
     border-radius: 4px;
-    background: #ffffff;
+    background: var(--theme-bg-input, #1e1e1e);
     overflow: hidden;
   }
   .env-table-header {
     display: flex;
-    background: #f1f5f9;
-    border-bottom: 1px solid #e2e8f0;
+    background: var(--theme-bg-panel, #2a2d2e);
+    border-bottom: 1px solid var(--theme-b-main, #3e3e42);
     padding: 6px 10px;
     font-size: 11px;
     font-weight: 700;
-    color: #475569;
+    color: var(--theme-t-muted, #aaaaaa);
     letter-spacing: 0.3px;
   }
   .col-var {
@@ -732,24 +735,24 @@
   .env-table-empty {
     padding: 30px;
     text-align: center;
-    color: #94a3b8;
+    color: var(--theme-t-muted, #94a3b8);
     font-size: 12px;
   }
   .env-table-row {
     display: flex;
     align-items: center;
     padding: 4px 10px;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid var(--theme-b-subtle, #2a2a2d);
   }
   .env-table-row:hover {
-    background: #f8fafc;
+    background: var(--theme-bg-hover, rgba(255, 255, 255, 0.03));
   }
   .env-table-row input {
     width: 100%;
     font-size: 12px;
-    color: #1e293b;
-    background: #ffffff;
-    border: 1px solid #d1d5db;
+    color: var(--theme-t-bright, #cccccc);
+    background: var(--theme-bg-input, #1e1e1e);
+    border: 1px solid var(--theme-b-input, #3e3e42);
     border-radius: 3px;
     padding: 4px 8px;
     outline: none;
@@ -757,13 +760,13 @@
     font-family: Consolas, Menlo, Monaco, monospace;
   }
   .env-table-row input:focus {
-    border-color: #3883fa;
-    box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.15);
+    border-color: var(--theme-ac, #0078d4);
+    box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.25);
   }
   .row-del-btn {
     background: transparent;
     border: none;
-    color: #94a3b8;
+    color: #777777;
     font-size: 16px;
     cursor: pointer;
     border-radius: 3px;
@@ -774,14 +777,14 @@
     justify-content: center;
   }
   .row-del-btn:hover {
-    color: #ef4444;
-    background: #fee2e2;
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.15);
   }
   .env-table-footer {
     padding: 8px 0;
   }
   .env-add-row-btn {
-    background: #ffffff;
+    background: transparent;
     border: 1px dashed #3883fa;
     color: #3883fa;
     font-size: 11px;
@@ -792,7 +795,7 @@
     transition: background 0.15s;
   }
   .env-add-row-btn:hover {
-    background: #eff6ff;
+    background: rgba(56, 131, 250, 0.12);
   }
 
   /* Modal Footer */
@@ -801,20 +804,20 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 16px;
-    background: #f8fafc;
-    border-top: 1px solid #e2e8f0;
+    background: #1e1e1e;
+    border-top: 1px solid #3e3e42;
     height: 44px;
     box-sizing: border-box;
   }
   .env-footer-info {
     font-size: 11px;
-    color: #475569;
+    color: #888888;
   }
   .env-footer-info strong {
-    color: #1d4ed8;
+    color: #38bdf8;
   }
   .env-active-meta {
-    color: #64748b;
+    color: #777777;
     margin-left: 6px;
   }
   .env-modal-done-btn {
@@ -830,5 +833,147 @@
   }
   .env-modal-done-btn:hover {
     background: #2563eb;
+  }
+
+  /* Optional override when theme is explicitly set to Default (light) */
+  :global(.jse-theme-default) .env-modal-dialog {
+    background: #ffffff;
+    border-color: #d0d0d0;
+    color: #333333;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+  }
+  :global(.jse-theme-default) .env-modal-body {
+    background: #ffffff;
+  }
+  :global(.jse-theme-default) .env-sidebar {
+    background: #f8fafc;
+    border-right-color: #e2e8f0;
+  }
+  :global(.jse-theme-default) .env-sidebar-heading {
+    color: #64748b;
+  }
+  :global(.jse-theme-default) .env-add-btn:hover {
+    background: #e0edff;
+  }
+  :global(.jse-theme-default) .env-sidebar-item {
+    color: #334155;
+  }
+  :global(.jse-theme-default) .env-sidebar-item:hover {
+    background: #f1f5f9;
+  }
+  :global(.jse-theme-default) .env-sidebar-item.active {
+    background: #e0edff;
+    color: #1d4ed8;
+  }
+  :global(.jse-theme-default) .item-badge {
+    background: #e2e8f0;
+    color: #475569;
+  }
+  :global(.jse-theme-default) .env-sidebar-item.active .item-badge {
+    background: #bfdbfe;
+    color: #1d4ed8;
+  }
+  :global(.jse-theme-default) .env-del-btn {
+    color: #94a3b8;
+  }
+  :global(.jse-theme-default) .env-del-btn:hover {
+    color: #ef4444;
+  }
+  :global(.jse-theme-default) .env-content {
+    background: #ffffff;
+  }
+  :global(.jse-theme-default) .content-badge {
+    background: #e0edff;
+    color: #1d4ed8;
+  }
+  :global(.jse-theme-default) .content-title-wrap h2 {
+    color: #1e293b;
+  }
+  :global(.jse-theme-default) .content-subtitle {
+    color: #64748b;
+  }
+  :global(.jse-theme-default) .env-name-input {
+    color: #1e293b;
+    background: #ffffff;
+    border-color: #d1d5db;
+  }
+  :global(.jse-theme-default) .env-name-input:focus {
+    border-color: #3883fa;
+    box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.2);
+  }
+  :global(.jse-theme-default) .env-set-active-btn.already-active {
+    background: #ecfdf5;
+    color: #059669;
+    border-color: #a7f3d0;
+  }
+  :global(.jse-theme-default) .env-tool-btn {
+    background: #ffffff;
+    border-color: #d1d5db;
+    color: #334155;
+  }
+  :global(.jse-theme-default) .env-tool-btn:hover {
+    background: #f8fafc;
+    border-color: #94a3b8;
+    color: #334155;
+  }
+  :global(.jse-theme-default) .env-tool-btn.env-tool-danger {
+    color: #dc2626;
+    border-color: #fecaca;
+  }
+  :global(.jse-theme-default) .env-tool-btn.env-tool-danger:hover {
+    background: #fef2f2;
+    border-color: #f87171;
+  }
+  :global(.jse-theme-default) .env-table-container {
+    background: #ffffff;
+    border-color: #e2e8f0;
+  }
+  :global(.jse-theme-default) .env-table-header {
+    background: #f1f5f9;
+    border-bottom-color: #e2e8f0;
+    color: #475569;
+  }
+  :global(.jse-theme-default) .env-table-row {
+    border-bottom-color: #f1f5f9;
+  }
+  :global(.jse-theme-default) .env-table-row:hover {
+    background: #f8fafc;
+  }
+  :global(.jse-theme-default) .env-table-row input {
+    color: #1e293b;
+    background: #ffffff;
+    border-color: #d1d5db;
+  }
+  :global(.jse-theme-default) .env-table-row input:focus {
+    border-color: #3883fa;
+    box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.15);
+  }
+  :global(.jse-theme-default) .row-del-btn {
+    color: #94a3b8;
+  }
+  :global(.jse-theme-default) .row-del-btn:hover {
+    color: #ef4444;
+    background: #fee2e2;
+  }
+  :global(.jse-theme-default) .env-add-row-btn {
+    background: #ffffff;
+    border-color: #3883fa;
+    color: #3883fa;
+  }
+  :global(.jse-theme-default) .env-add-row-btn:hover {
+    background: #eff6ff;
+  }
+  :global(.jse-theme-default) .env-modal-footer {
+    background: #f8fafc;
+    border-top-color: #e2e8f0;
+  }
+  :global(.jse-theme-default) .env-footer-info {
+    color: #475569;
+  }
+  :global(.jse-theme-default) .env-footer-info strong {
+    color: #1d4ed8;
+  }
+  :global(.jse-theme-default) .env-active-meta {
+    color: #64748b;
   }
 </style>

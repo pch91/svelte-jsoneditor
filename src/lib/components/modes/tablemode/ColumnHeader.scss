@@ -2,8 +2,46 @@
 
 .jse-column-header {
   @include styles.jse-column-header-mixin;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 
   span.jse-column-sort-icon {
     height: 1em;
+  }
+
+  .jse-column-parent-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-transform: none;
+    letter-spacing: 0.2px;
+    flex-shrink: 0;
+  }
+
+  .jse-column-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 1px 3px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: inherit;
+    opacity: 0.65;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+
+    &:hover {
+      opacity: 1;
+      background: rgba(255, 255, 255, 0.15);
+      color: var(--jse-theme-color, #3883fa);
+    }
   }
 }
