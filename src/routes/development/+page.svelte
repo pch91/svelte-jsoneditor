@@ -254,7 +254,9 @@
   let panesEl: HTMLDivElement | undefined
   let tabDragActive = false
   let draggedTabId: number | undefined
-  let tabMenu: { x: number; y: number; tabId: number; type?: 'primary' | 'sub'; leafId?: number } | undefined
+  let tabMenu:
+    | { x: number; y: number; tabId: number; type?: 'primary' | 'sub'; leafId?: number }
+    | undefined
 
   // ---- Requests panel (HTTP client) ----
   let showRequests = false
@@ -290,7 +292,10 @@
     return prims.find((p) => p.id === activeId) ?? prims[0] ?? primaryTabs[0]
   }
 
-  function getPaneSubTabs(primary: PrimaryTabState | undefined, _version?: number): Array<{
+  function getPaneSubTabs(
+    primary: PrimaryTabState | undefined,
+    _version?: number
+  ): Array<{
     subTabId: number
     idx: number
     meta: SubTabState
@@ -327,7 +332,10 @@
       for (const leaf of layoutLeaves) {
         if (!panePrimaryMap.has(leaf.id) || (panePrimaryMap.get(leaf.id)?.length ?? 0) === 0) {
           if (layoutLeaves.length === 1) {
-            panePrimaryMap.set(leaf.id, primaryTabs.map((p) => p.id))
+            panePrimaryMap.set(
+              leaf.id,
+              primaryTabs.map((p) => p.id)
+            )
           } else {
             const assigned = new Set<number>()
             for (const ids of panePrimaryMap.values()) ids.forEach((id) => assigned.add(id))
@@ -590,7 +598,11 @@
       const newPrimId = nextPrimaryTabId++
       const newSubId = nextTabId++
       addDocWithId(newSubId, 'Principal', '{}', Mode.tree)
-      const { primary, initialSubTab } = createPrimaryTab(newPrimId, `Editor ${newPrimId}`, newSubId)
+      const { primary, initialSubTab } = createPrimaryTab(
+        newPrimId,
+        `Editor ${newPrimId}`,
+        newSubId
+      )
       subTabsMeta.set(newSubId, initialSubTab)
       primaryTabs = [...primaryTabs, primary]
       panePrimaryMap.set(newLeafId, [newPrimId])
@@ -1268,7 +1280,10 @@
       const remainingSource = panePrimaryMap.get(sourceLeafId) ?? []
       if (remainingSource.length > 0) {
         const currentSourceActive = paneActivePrimaryMap.get(sourceLeafId)
-        if (currentSourceActive === primId || !remainingSource.includes(currentSourceActive ?? -1)) {
+        if (
+          currentSourceActive === primId ||
+          !remainingSource.includes(currentSourceActive ?? -1)
+        ) {
           paneActivePrimaryMap.set(sourceLeafId, remainingSource[0])
           paneActivePrimaryMap = new Map(paneActivePrimaryMap)
         }
@@ -1348,9 +1363,10 @@
         meta.primaryTabId = targetPrimary.id
         subTabsMeta.set(sid, meta)
         if (targetSubId !== undefined && targetPrimary.subTabIds.includes(targetSubId)) {
-          const insertIdx = targetPos === 'before'
-            ? targetPrimary.subTabIds.indexOf(targetSubId)
-            : targetPrimary.subTabIds.indexOf(targetSubId) + 1
+          const insertIdx =
+            targetPos === 'before'
+              ? targetPrimary.subTabIds.indexOf(targetSubId)
+              : targetPrimary.subTabIds.indexOf(targetSubId) + 1
           targetPrimary.subTabIds.splice(insertIdx, 0, sid)
         } else {
           targetPrimary.subTabIds = [...targetPrimary.subTabIds, sid]
@@ -1642,7 +1658,8 @@
           requestState: pt.requestState ?? createDefaultRequestContext()
         }))
         activePrimaryTabId = saved.activePrimaryTabId ?? primaryTabs[0].id
-        nextPrimaryTabId = Math.max(saved.nextPrimaryTabId ?? 1, ...primaryTabs.map((p) => p.id)) + 1
+        nextPrimaryTabId =
+          Math.max(saved.nextPrimaryTabId ?? 1, ...primaryTabs.map((p) => p.id)) + 1
       } else {
         primaryTabs = saved.tabs.map((t, i) => ({
           id: i + 1,
@@ -2681,7 +2698,10 @@
       const user = resolveVariables(authBasicUser, env, globalEnv).resolved.trim()
       const pass = resolveVariables(authBasicPass, env, globalEnv).resolved
       if (!user && !pass) {
-        authValidationMessage = { ok: false, text: 'Username and password not provided for Basic Auth.' }
+        authValidationMessage = {
+          ok: false,
+          text: 'Username and password not provided for Basic Auth.'
+        }
         return
       }
       authValidationMessage = {
@@ -3479,8 +3499,8 @@
           <button class="sb-btn" on:click={saveAllToDisk}>💾 Save all files</button>
           <button class="sb-btn" on:click={downloadAllTabs}>⬇ Download all tabs</button>
           <p class="sb-note">
-            Workspace file (<code>{WORKSPACE_FILE_EXT}</code>): all main tabs, sub-tabs, Spatial Flow
-            and environments in one file.
+            Workspace file (<code>{WORKSPACE_FILE_EXT}</code>): all main tabs, sub-tabs, Spatial
+            Flow and environments in one file.
           </p>
           <button
             class="sb-btn"
@@ -3489,7 +3509,9 @@
           >
           <button
             class="sb-btn"
-            title={workspaceFileName ? `Save to ${workspaceFileName}` : 'Save the whole workspace to a file'}
+            title={workspaceFileName
+              ? `Save to ${workspaceFileName}`
+              : 'Save the whole workspace to a file'}
             on:click={() => void saveWorkspaceFile(false)}
             >💾 Save workspace{workspaceFileName ? `: ${workspaceFileName}` : ''}</button
           >
@@ -3613,14 +3635,20 @@
                   e.preventDefault()
                   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
                   dragOverLeafId = lr.leafId
-                } else if (draggedTabId !== undefined && canPromoteSubTab(subTabsMeta.get(draggedTabId))) {
+                } else if (
+                  draggedTabId !== undefined &&
+                  canPromoteSubTab(subTabsMeta.get(draggedTabId))
+                ) {
                   e.preventDefault()
                 }
               }}
               on:drop={(e) => {
                 if (draggedPrimaryId !== undefined) {
                   onPrimaryTabDrop(e, lr.leafId)
-                } else if (draggedTabId !== undefined && canPromoteSubTab(subTabsMeta.get(draggedTabId))) {
+                } else if (
+                  draggedTabId !== undefined &&
+                  canPromoteSubTab(subTabsMeta.get(draggedTabId))
+                ) {
                   e.preventDefault()
                   e.stopPropagation()
                   promoteSubTabInPane(lr.leafId, draggedTabId)
@@ -3632,15 +3660,23 @@
                 <button
                   class="tab tab-l1"
                   class:active={pt.id === paneActivePrim?.id}
-                  class:drag-over-before={dragOverTargetPrimaryId === pt.id && dragOverTargetPrimaryPosition === 'before'}
-                  class:drag-over-after={dragOverTargetPrimaryId === pt.id && dragOverTargetPrimaryPosition === 'after'}
+                  class:drag-over-before={dragOverTargetPrimaryId === pt.id &&
+                    dragOverTargetPrimaryPosition === 'before'}
+                  class:drag-over-after={dragOverTargetPrimaryId === pt.id &&
+                    dragOverTargetPrimaryPosition === 'after'}
                   on:click={() => selectPrimaryTabInPane(lr.leafId, pt.id)}
                   on:dblclick={() => {
                     const n = prompt('Renomear aba principal:', pt.title)
                     if (n) renamePrimaryTab(pt.id, n)
                   }}
                   on:contextmenu|preventDefault={(e) =>
-                    (tabMenu = { x: e.clientX, y: e.clientY, tabId: pt.id, type: 'primary', leafId: lr.leafId })}
+                    (tabMenu = {
+                      x: e.clientX,
+                      y: e.clientY,
+                      tabId: pt.id,
+                      type: 'primary',
+                      leafId: lr.leafId
+                    })}
                   draggable="true"
                   on:dragstart={(e) => onPrimaryTabDragStartInPane(e, lr.leafId, pt.id)}
                   on:dragend={onTabDragEnd}
@@ -3654,7 +3690,9 @@
                   <span class="tab-l1-icon">📁</span>
                   <span class="tab-label">{pt.title}</span>
                   {#if pt.subTabIds.length > 1}
-                    <span class="tab-count-badge" title="{pt.subTabIds.length} sub-abas">{pt.subTabIds.length}</span>
+                    <span class="tab-count-badge" title="{pt.subTabIds.length} sub-abas"
+                      >{pt.subTabIds.length}</span
+                    >
                   {/if}
                   <span
                     class="tab-close"
@@ -3668,7 +3706,8 @@
               {#if draggedPrimaryId !== undefined && draggedPrimarySourceLeafId !== lr.leafId}
                 <div
                   class="tab-drop-move-pane"
-                  class:drag-hover={dragOverLeafId === lr.leafId && dragOverTargetPrimaryId === undefined}
+                  class:drag-hover={dragOverLeafId === lr.leafId &&
+                    dragOverTargetPrimaryId === undefined}
                   on:dragover|preventDefault={(e) => {
                     e.stopPropagation()
                     dragOverLeafId = lr.leafId
@@ -3728,15 +3767,23 @@
                 <button
                   class="tab tab-l2 tab-kind-{item.meta.kind}"
                   class:active={item.subTabId === activeSubTabId}
-                  class:drag-over-before={dragOverTargetSubId === item.subTabId && dragOverTargetSubPosition === 'before'}
-                  class:drag-over-after={dragOverTargetSubId === item.subTabId && dragOverTargetSubPosition === 'after'}
+                  class:drag-over-before={dragOverTargetSubId === item.subTabId &&
+                    dragOverTargetSubPosition === 'before'}
+                  class:drag-over-after={dragOverTargetSubId === item.subTabId &&
+                    dragOverTargetSubPosition === 'after'}
                   on:click={() => selectSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}
                   on:dblclick={() => {
                     const n = prompt('Renomear sub-aba:', tabTitles[item.idx])
                     if (n) renameSubTab(item.subTabId, n)
                   }}
                   on:contextmenu|preventDefault={(e) =>
-                    (tabMenu = { x: e.clientX, y: e.clientY, tabId: item.subTabId, type: 'sub', leafId: lr.leafId })}
+                    (tabMenu = {
+                      x: e.clientX,
+                      y: e.clientY,
+                      tabId: item.subTabId,
+                      type: 'sub',
+                      leafId: lr.leafId
+                    })}
                   draggable="true"
                   on:dragstart={(e) => onSubTabDragStart(e, item.subTabId)}
                   on:dragend={onTabDragEnd}
@@ -3754,14 +3801,16 @@
                     <span
                       class="tab-promote-btn"
                       title="Promote to new main tab (Level 1)"
-                      on:click|stopPropagation={() => promoteSubTabInPane(lr.leafId, item.subTabId)}>⇡</span
+                      on:click|stopPropagation={() => promoteSubTabInPane(lr.leafId, item.subTabId)}
+                      >⇡</span
                     >
                   {/if}
                   {#if canCloseSubTab(item.meta)}
                     <span
                       class="tab-close"
                       title="Close sub-tab"
-                      on:click|stopPropagation={() => closeSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}>×</span
+                      on:click|stopPropagation={() =>
+                        closeSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}>×</span
                     >
                   {/if}
                 </button>
@@ -3910,9 +3959,16 @@
                   class:active={$requestsViewMode === 'form'}
                   on:click={() => ($requestsViewMode = 'form')}
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="18" height="18" rx="2"/>
-                    <line x1="9" y1="3" x2="9" y2="21"/>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <line x1="9" y1="3" x2="9" y2="21" />
                   </svg>
                   <span>Form</span>
                 </button>
@@ -3922,10 +3978,17 @@
                   class:active={$requestsViewMode === 'flow'}
                   on:click={() => ($requestsViewMode = 'flow')}
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="6" cy="6" r="3"/>
-                    <circle cx="18" cy="18" r="3"/>
-                    <line x1="8.5" y1="8.5" x2="15.5" y2="15.5"/>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <circle cx="6" cy="6" r="3" />
+                    <circle cx="18" cy="18" r="3" />
+                    <line x1="8.5" y1="8.5" x2="15.5" y2="15.5" />
                   </svg>
                   <span>Spatial Flow</span>
                   {#if $flowGraphStore?.nodes?.length > 0}
@@ -3992,10 +4055,17 @@
                 title="Import cURL command copied from Postman or terminal"
                 on:click={() => (showCurlModal = true)}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="7 10 12 15 17 10"/>
-                  <line x1="12" y1="15" x2="12" y2="3"/>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
                 <span>Import cURL</span>
               </button>
@@ -4007,9 +4077,16 @@
                 title="Copy active request as cURL command"
                 on:click={copyRequestAsCurl}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                 </svg>
                 <span>Copy cURL</span>
               </button>
@@ -4019,8 +4096,8 @@
                 type="button"
                 class="requests-close-btn"
                 on:click={() => (showRequests = false)}
-                title="Close requests panel"
-              >×</button>
+                title="Close requests panel">×</button
+              >
             </div>
           </div>
 
@@ -4103,9 +4180,19 @@
                     <span class="req-spinner"></span>
                     <span>Enviando…</span>
                   {:else}
-                    <svg class="req-send-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                      <line x1="22" y1="2" x2="11" y2="13"/>
-                      <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                    <svg
+                      class="req-send-icon"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
                     </svg>
                     <span>Send</span>
                   {/if}
@@ -4126,9 +4213,18 @@
                 title="Copy active request as cURL command"
                 on:click={copyRequestAsCurl}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                 </svg>
                 <span>cURL</span>
               </button>
@@ -4154,454 +4250,453 @@
               {/each}
             </div>
 
-          <!-- Section content -->
-          <div class="req-section-content">
-            {#if reqActiveTab === 'params'}
-              <div class="req-params">
-                {#if reqParams.length === 0}
-                  <p class="req-note">No query parameters. Add key/value pairs below.</p>
-                {/if}
-                {#if reqParams.length > 0}
-                  <table class="req-rows">
-                    <thead>
-                      <tr><th></th><th>Key</th><th>Value</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {#each reqParams as param, pi (pi)}
-                        <tr>
-                          <td>
-                            <input
-                              type="checkbox"
-                              title="Include this parameter"
-                              bind:checked={param.enabled}
-                              on:change={onParamChange}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              placeholder="key"
-                              bind:value={param.key}
-                              on:input={onParamChange}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              placeholder="value"
-                              bind:value={param.value}
-                              on:input={onParamChange}
-                            />
-                          </td>
-                          <td>
-                            <button
-                              class="req-mini-btn"
-                              title="Remove parameter"
-                              on:click={() => removeParam(pi)}>×</button
-                            >
-                          </td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                {/if}
-                <button class="req-mini-btn" on:click={addParam}>＋ Add parameter</button>
-              </div>
-            {:else if reqActiveTab === 'headers'}
-              <div class="req-headers">
-                {#if reqHeaderRows.length > 0}
-                  <table class="req-rows">
-                    <thead>
-                      <tr><th></th><th>Key</th><th>Value</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {#each reqHeaderRows as row, ri (ri)}
-                        <tr>
-                          <td>
-                            <input
-                              type="checkbox"
-                              title="Include this header"
-                              bind:checked={row.enabled}
-                              on:change={onHeaderRowChange}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              list="req-header-suggest"
-                              placeholder="Header"
-                              bind:value={row.key}
-                              on:input={onHeaderRowChange}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              placeholder="value"
-                              bind:value={row.value}
-                              on:input={onHeaderRowChange}
-                            />
-                          </td>
-                          <td>
-                            <button
-                              class="req-mini-btn"
-                              title="Remove header"
-                              on:click={() => removeHeaderRow(ri)}>×</button
-                            >
-                          </td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                {/if}
-                <datalist id="req-header-suggest">
-                  {#each HEADER_SUGGESTIONS as suggestion}
-                    <option value={suggestion}></option>
-                  {/each}
-                </datalist>
-                <button class="req-mini-btn" on:click={addHeaderRow}>＋ Add header</button>
-              </div>
-            {:else if reqActiveTab === 'body'}
-              <div class="req-body">
-                <div class="req-label-row">
-                  <span class="req-label"
-                    >Body{#if bodyIgnored}
-                      <span class="req-note"> (ignored for {reqMethod})</span>{/if}</span
-                  >
-                  <span class="req-spacer"></span>
-                  <button
-                    class="req-open-btn"
-                    title="Open body in the main editor"
-                    on:click={openBodyInEditor}>↗ Editor</button
-                  >
-                </div>
-                <div class="req-row">
-                  <span class="req-label">Type</span>
-                  <select class="tb-select" bind:value={reqBodyType}>
-                    <option value="none">None</option>
-                    <option value="json">JSON</option>
-                    <option value="text">Text</option>
-                  </select>
-                </div>
-                <textarea
-                  class="req-textarea"
-                  rows="6"
-                  placeholder={'{"key": "value"}'}
-                  bind:value={reqBody}
-                  on:input={onBodyInput}
-                  on:keydown={(e) => {
-                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void sendRequest()
-                  }}
-                ></textarea>
-                {#if reqBodyInvalid}
-                  <div class="req-warn">⚠ Invalid JSON in the body — fix it before sending.</div>
-                {/if}
-              </div>
-            {:else if reqActiveTab === 'auth'}
-              <div class="req-auth">
-                <p class="req-note">How should the request authenticate?</p>
-                <div class="req-auth-methods">
-                  {#each AUTH_METHODS as [value, label, hint]}
-                    <button
-                      class="req-auth-method"
-                      class:active={reqAuthType === value}
-                      title={hint}
-                      on:click={() => (reqAuthType = value)}>{label}</button
-                    >
-                  {/each}
-                </div>
-                {#if reqAuthType === 'bearer'}
-                  <div class="req-auth-fields">
-                    <label class="req-auth-field">
-                      <span class="req-label">Token</span>
-                      <input
-                        class="req-auth-input"
-                        type="text"
-                        placeholder={BEARER_PLACEHOLDER}
-                        bind:value={authBearerToken}
-                      />
-                    </label>
-                    <div class="req-token-block">
-                      <span class="req-note"
-                        >Fetch a token from an API — saves it as <code>{TOKEN_VAR}</code> in the active
-                        environment.</span
-                      >
-                      <div class="req-token-row">
-                        <input
-                          class="req-auth-input"
-                          type="text"
-                          placeholder="Token URL (https://auth.example.com/token)"
-                          bind:value={tokenUrl}
-                        />
-                        <input
-                          class="req-path"
-                          type="text"
-                          placeholder="token path"
-                          bind:value={tokenPath}
-                        />
-                        <button
-                          class="sb-btn-status"
-                          title={'Fetch token into {{token}} of the active environment'}
-                          on:click={() => void fetchToken()}>🔑 Get token</button
-                        >
-                      </div>
-                    </div>
-                  </div>
-                {:else if reqAuthType === 'basic'}
-                  <div class="req-auth-fields">
-                    <label class="req-auth-field">
-                      <span class="req-label">Username</span>
-                      <input
-                        class="req-auth-input"
-                        type="text"
-                        placeholder="username"
-                        bind:value={authBasicUser}
-                      />
-                    </label>
-                    <label class="req-auth-field">
-                      <span class="req-label">Password</span>
-                      <input
-                        class="req-auth-input"
-                        type="password"
-                        placeholder="password"
-                        bind:value={authBasicPass}
-                      />
-                    </label>
-                  </div>
-                {:else if reqAuthType === 'apikey'}
-                  <div class="req-auth-fields">
-                    <label class="req-auth-field">
-                      <span class="req-label">Header name</span>
-                      <input
-                        class="req-auth-input"
-                        type="text"
-                        placeholder="X-API-Key"
-                        bind:value={authApiKeyName}
-                      />
-                    </label>
-                    <label class="req-auth-field">
-                      <span class="req-label">Key value</span>
-                      <input
-                        class="req-auth-input"
-                        type="text"
-                        placeholder="key"
-                        bind:value={authApiKeyValue}
-                      />
-                    </label>
-                  </div>
-                {/if}
-                <div class="req-auth-actions-bar">
-                  <button
-                    type="button"
-                    class="sb-btn-status auth-validate-btn"
-                    title="Audit and validate the configured authentication"
-                    on:click={validateAndRevalidateAuth}
-                  >
-                    ⚡ Testar / Validar Auth
-                  </button>
-                  {#if authValidationMessage}
-                    <span
-                      class="auth-validation-badge"
-                      class:ok={authValidationMessage.ok}
-                      class:bad={!authValidationMessage.ok}
-                    >
-                      {authValidationMessage.text}
-                    </span>
+            <!-- Section content -->
+            <div class="req-section-content">
+              {#if reqActiveTab === 'params'}
+                <div class="req-params">
+                  {#if reqParams.length === 0}
+                    <p class="req-note">No query parameters. Add key/value pairs below.</p>
                   {/if}
+                  {#if reqParams.length > 0}
+                    <table class="req-rows">
+                      <thead>
+                        <tr><th></th><th>Key</th><th>Value</th><th></th></tr>
+                      </thead>
+                      <tbody>
+                        {#each reqParams as param, pi (pi)}
+                          <tr>
+                            <td>
+                              <input
+                                type="checkbox"
+                                title="Include this parameter"
+                                bind:checked={param.enabled}
+                                on:change={onParamChange}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                placeholder="key"
+                                bind:value={param.key}
+                                on:input={onParamChange}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                placeholder="value"
+                                bind:value={param.value}
+                                on:input={onParamChange}
+                              />
+                            </td>
+                            <td>
+                              <button
+                                class="req-mini-btn"
+                                title="Remove parameter"
+                                on:click={() => removeParam(pi)}>×</button
+                              >
+                            </td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  {/if}
+                  <button class="req-mini-btn" on:click={addParam}>＋ Add parameter</button>
                 </div>
-              </div>
-            {:else if reqActiveTab === 'captures'}
-              <div class="req-captures-pane">
-                <CapturePathsTable
-                  bind:captures={reqCaptures}
-                  sampleJsonText={reqResponseText}
-                />
-              </div>
-            {:else}
-              <div class="req-env">
-                <div class="req-row">
-                  <select class="tb-select" bind:value={$activeEnvName} on:change={onEnvSelected}>
-                    <option value="">No environment</option>
-                    {#each Object.keys($environments) as name}
-                      <option value={name}>{name}</option>
+              {:else if reqActiveTab === 'headers'}
+                <div class="req-headers">
+                  {#if reqHeaderRows.length > 0}
+                    <table class="req-rows">
+                      <thead>
+                        <tr><th></th><th>Key</th><th>Value</th><th></th></tr>
+                      </thead>
+                      <tbody>
+                        {#each reqHeaderRows as row, ri (ri)}
+                          <tr>
+                            <td>
+                              <input
+                                type="checkbox"
+                                title="Include this header"
+                                bind:checked={row.enabled}
+                                on:change={onHeaderRowChange}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                list="req-header-suggest"
+                                placeholder="Header"
+                                bind:value={row.key}
+                                on:input={onHeaderRowChange}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                placeholder="value"
+                                bind:value={row.value}
+                                on:input={onHeaderRowChange}
+                              />
+                            </td>
+                            <td>
+                              <button
+                                class="req-mini-btn"
+                                title="Remove header"
+                                on:click={() => removeHeaderRow(ri)}>×</button
+                              >
+                            </td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  {/if}
+                  <datalist id="req-header-suggest">
+                    {#each HEADER_SUGGESTIONS as suggestion}
+                      <option value={suggestion}></option>
                     {/each}
-                  </select>
-                  <button class="sb-btn-status" title="New environment" on:click={newEnvironment}
-                    >＋ Env</button
-                  >
-                  <button
-                    class="sb-btn-status"
-                    title="Manage Environments & Globals (Postman style)"
-                    on:click={() => (envManagerOpen = true)}
-                  >
-                    ⚙️ Gerenciar
-                  </button>
+                  </datalist>
+                  <button class="req-mini-btn" on:click={addHeaderRow}>＋ Add header</button>
                 </div>
-                <label class="req-field">
-                  <span class="req-label-row">
+              {:else if reqActiveTab === 'body'}
+                <div class="req-body">
+                  <div class="req-label-row">
                     <span class="req-label"
-                      >Env JSON{#if $activeEnvName}
-                        ({$activeEnvName}){/if}</span
+                      >Body{#if bodyIgnored}
+                        <span class="req-note"> (ignored for {reqMethod})</span>{/if}</span
                     >
                     <span class="req-spacer"></span>
                     <button
                       class="req-open-btn"
-                      title="Open environment in the main editor"
-                      on:click={openEnvInEditor}>↗ Editor</button
+                      title="Open body in the main editor"
+                      on:click={openBodyInEditor}>↗ Editor</button
                     >
-                  </span>
+                  </div>
+                  <div class="req-row">
+                    <span class="req-label">Type</span>
+                    <select class="tb-select" bind:value={reqBodyType}>
+                      <option value="none">None</option>
+                      <option value="json">JSON</option>
+                      <option value="text">Text</option>
+                    </select>
+                  </div>
                   <textarea
                     class="req-textarea"
-                    rows="5"
-                    placeholder={'{"baseUrl": "…", "token": "…"}'}
-                    disabled={!$activeEnvName}
-                    bind:value={envJsonText}
-                    on:input={onEnvJsonInput}
+                    rows="6"
+                    placeholder={'{"key": "value"}'}
+                    bind:value={reqBody}
+                    on:input={onBodyInput}
+                    on:keydown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void sendRequest()
+                    }}
                   ></textarea>
-                </label>
-              </div>
-            {/if}
-          </div>
-
-          <!-- Response -->
-          {#if reqResult}
-            {#if 'error' in reqResult}
-              <div class="req-response">
-                <div class="req-result req-error">⚠ {reqResult.error}</div>
-              </div>
-            {:else}
-              <div class="req-response">
-                <div class="req-response-head">
-                  <span
-                    class="req-status-chip"
-                    class:ok={reqResult.status < 400}
-                    class:bad={reqResult.status >= 400}
-                  >
-                    {reqResult.status}
-                    {reqResult.statusText}
-                  </span>
-                  <span class="req-meta"
-                    >{reqResult.durationMs} ms · {formatBytes(
-                      reqResult.sizeBytes
-                    )}{#if reqResult.viaProxy}
-                      · 🛡 via proxy{/if}</span
-                  >
-                  <span class="req-spacer"></span>
-                  <span class="req-meta">full response opened as a new tab</span>
+                  {#if reqBodyInvalid}
+                    <div class="req-warn">⚠ Invalid JSON in the body — fix it before sending.</div>
+                  {/if}
                 </div>
-                {#if reqResult.missing && reqResult.missing.length > 0}
-                  <div class="req-result req-error">
-                    Unresolved variables: {reqResult.missing.join(', ')}
+              {:else if reqActiveTab === 'auth'}
+                <div class="req-auth">
+                  <p class="req-note">How should the request authenticate?</p>
+                  <div class="req-auth-methods">
+                    {#each AUTH_METHODS as [value, label, hint]}
+                      <button
+                        class="req-auth-method"
+                        class:active={reqAuthType === value}
+                        title={hint}
+                        on:click={() => (reqAuthType = value)}>{label}</button
+                      >
+                    {/each}
                   </div>
-                {/if}
-                {#if reqResponseText}
-                  <pre class="req-response-body">{reqResponseText}</pre>
-                {/if}
-              </div>
-            {/if}
-          {/if}
-
-          <!-- Fluxograma Espacial (Substitui o antigo Chain) -->
-          <div class="req-flow-banner">
-            <div class="flow-banner-left">
-              <span class="flow-banner-icon">🔀</span>
-              <div class="flow-banner-text">
-                <span class="flow-banner-title">Spatial Flow (Chain replacement)</span>
-                <span class="flow-banner-sub">
-                  Visual chaining with REST and JS blocks, solid (wait/join) and dotted (async) arrows, and an integrated side panel.
-                </span>
-              </div>
-            </div>
-            <div class="flow-banner-actions">
-              <button
-                type="button"
-                class="flow-banner-btn-secondary"
-                title="Add the active request as a block in the flow"
-                on:click={addCurrentFormToFlow}
-              >
-                ➕ Add to Flow
-              </button>
-              <button
-                type="button"
-                class="flow-banner-btn-primary"
-                title="Open the visual flow editor"
-                on:click={() => ($requestsViewMode = 'flow')}
-              >
-                Open Spatial Flow →
-              </button>
-            </div>
-          </div>
-
-          <!-- History (collapsible) -->
-          {#if reqHistory.length > 0}
-            <div class="req-history">
-              <div
-                class="req-section-head"
-                role="button"
-                tabindex="0"
-                on:click={() => ($historyOpen = !$historyOpen)}
-                on:keydown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') $historyOpen = !$historyOpen
-                }}
-              >
-                <span class="req-caret">{$historyOpen ? '▾' : '▸'}</span>
-                <span class="req-label">History ({reqHistory.length})</span>
-                <span class="req-spacer"></span>
-                <button
-                  class="req-mini-btn"
-                  title="Clear history"
-                  on:click|stopPropagation={clearHistory}>Clear</button
-                >
-              </div>
-              {#if $historyOpen}
-                {#each reqHistory as entry (entry.id)}
-                  <div
-                    class="req-history-item"
-                    title="Open response in the editor and load the request into the form"
-                    on:click={() => openHistoryResponse(entry)}
-                  >
-                    <span class="req-method-tag">{entry.method}</span>
-                    <span
-                      class="req-status"
-                      class:ok={typeof entry.status === 'number' && entry.status < 400}
-                      class:bad={entry.status === 'error' ||
-                        (typeof entry.status === 'number' && entry.status >= 400)}
+                  {#if reqAuthType === 'bearer'}
+                    <div class="req-auth-fields">
+                      <label class="req-auth-field">
+                        <span class="req-label">Token</span>
+                        <input
+                          class="req-auth-input"
+                          type="text"
+                          placeholder={BEARER_PLACEHOLDER}
+                          bind:value={authBearerToken}
+                        />
+                      </label>
+                      <div class="req-token-block">
+                        <span class="req-note"
+                          >Fetch a token from an API — saves it as <code>{TOKEN_VAR}</code> in the active
+                          environment.</span
+                        >
+                        <div class="req-token-row">
+                          <input
+                            class="req-auth-input"
+                            type="text"
+                            placeholder="Token URL (https://auth.example.com/token)"
+                            bind:value={tokenUrl}
+                          />
+                          <input
+                            class="req-path"
+                            type="text"
+                            placeholder="token path"
+                            bind:value={tokenPath}
+                          />
+                          <button
+                            class="sb-btn-status"
+                            title={'Fetch token into {{token}} of the active environment'}
+                            on:click={() => void fetchToken()}>🔑 Get token</button
+                          >
+                        </div>
+                      </div>
+                    </div>
+                  {:else if reqAuthType === 'basic'}
+                    <div class="req-auth-fields">
+                      <label class="req-auth-field">
+                        <span class="req-label">Username</span>
+                        <input
+                          class="req-auth-input"
+                          type="text"
+                          placeholder="username"
+                          bind:value={authBasicUser}
+                        />
+                      </label>
+                      <label class="req-auth-field">
+                        <span class="req-label">Password</span>
+                        <input
+                          class="req-auth-input"
+                          type="password"
+                          placeholder="password"
+                          bind:value={authBasicPass}
+                        />
+                      </label>
+                    </div>
+                  {:else if reqAuthType === 'apikey'}
+                    <div class="req-auth-fields">
+                      <label class="req-auth-field">
+                        <span class="req-label">Header name</span>
+                        <input
+                          class="req-auth-input"
+                          type="text"
+                          placeholder="X-API-Key"
+                          bind:value={authApiKeyName}
+                        />
+                      </label>
+                      <label class="req-auth-field">
+                        <span class="req-label">Key value</span>
+                        <input
+                          class="req-auth-input"
+                          type="text"
+                          placeholder="key"
+                          bind:value={authApiKeyValue}
+                        />
+                      </label>
+                    </div>
+                  {/if}
+                  <div class="req-auth-actions-bar">
+                    <button
+                      type="button"
+                      class="sb-btn-status auth-validate-btn"
+                      title="Audit and validate the configured authentication"
+                      on:click={validateAndRevalidateAuth}
                     >
-                      {entry.status}
-                    </span>
-                    <span class="req-history-url">{entry.url}</span>
-                    <span class="req-history-meta"
-                      >{relativeTime(entry.timestamp)} · {entry.durationMs} ms ·
-                      {formatBytes(entry.sizeBytes)}{#if entry.viaProxy}
-                        · 🛡 proxy{/if}</span
-                    >
-                    <span class="req-history-actions">
-                      <button
-                        class="req-mini-btn"
-                        title="Add this request as a block in the Spatial Flow"
-                        on:click|stopPropagation={() => addHistoryEntryToFlow(entry)}>＋ Flow</button
+                      ⚡ Testar / Validar Auth
+                    </button>
+                    {#if authValidationMessage}
+                      <span
+                        class="auth-validation-badge"
+                        class:ok={authValidationMessage.ok}
+                        class:bad={!authValidationMessage.ok}
                       >
-                      <button
-                        class="req-mini-btn"
-                        title="Load request into form"
-                        on:click|stopPropagation={() => loadRequestIntoForm(entry)}>✎</button
-                      >
-                      <button
-                        class="req-mini-btn"
-                        title="Re-send"
-                        on:click|stopPropagation={() => void reSendRequest(entry)}>↻</button
-                      >
-                      <button
-                        class="req-mini-btn"
-                        title="Remove"
-                        on:click|stopPropagation={() => removeHistoryEntry(entry.id)}>×</button
-                      >
-                    </span>
+                        {authValidationMessage.text}
+                      </span>
+                    {/if}
                   </div>
-                {/each}
+                </div>
+              {:else if reqActiveTab === 'captures'}
+                <div class="req-captures-pane">
+                  <CapturePathsTable bind:captures={reqCaptures} sampleJsonText={reqResponseText} />
+                </div>
+              {:else}
+                <div class="req-env">
+                  <div class="req-row">
+                    <select class="tb-select" bind:value={$activeEnvName} on:change={onEnvSelected}>
+                      <option value="">No environment</option>
+                      {#each Object.keys($environments) as name}
+                        <option value={name}>{name}</option>
+                      {/each}
+                    </select>
+                    <button class="sb-btn-status" title="New environment" on:click={newEnvironment}
+                      >＋ Env</button
+                    >
+                    <button
+                      class="sb-btn-status"
+                      title="Manage Environments & Globals (Postman style)"
+                      on:click={() => (envManagerOpen = true)}
+                    >
+                      ⚙️ Gerenciar
+                    </button>
+                  </div>
+                  <label class="req-field">
+                    <span class="req-label-row">
+                      <span class="req-label"
+                        >Env JSON{#if $activeEnvName}
+                          ({$activeEnvName}){/if}</span
+                      >
+                      <span class="req-spacer"></span>
+                      <button
+                        class="req-open-btn"
+                        title="Open environment in the main editor"
+                        on:click={openEnvInEditor}>↗ Editor</button
+                      >
+                    </span>
+                    <textarea
+                      class="req-textarea"
+                      rows="5"
+                      placeholder={'{"baseUrl": "…", "token": "…"}'}
+                      disabled={!$activeEnvName}
+                      bind:value={envJsonText}
+                      on:input={onEnvJsonInput}
+                    ></textarea>
+                  </label>
+                </div>
               {/if}
             </div>
-          {/if}
+
+            <!-- Response -->
+            {#if reqResult}
+              {#if 'error' in reqResult}
+                <div class="req-response">
+                  <div class="req-result req-error">⚠ {reqResult.error}</div>
+                </div>
+              {:else}
+                <div class="req-response">
+                  <div class="req-response-head">
+                    <span
+                      class="req-status-chip"
+                      class:ok={reqResult.status < 400}
+                      class:bad={reqResult.status >= 400}
+                    >
+                      {reqResult.status}
+                      {reqResult.statusText}
+                    </span>
+                    <span class="req-meta"
+                      >{reqResult.durationMs} ms · {formatBytes(
+                        reqResult.sizeBytes
+                      )}{#if reqResult.viaProxy}
+                        · 🛡 via proxy{/if}</span
+                    >
+                    <span class="req-spacer"></span>
+                    <span class="req-meta">full response opened as a new tab</span>
+                  </div>
+                  {#if reqResult.missing && reqResult.missing.length > 0}
+                    <div class="req-result req-error">
+                      Unresolved variables: {reqResult.missing.join(', ')}
+                    </div>
+                  {/if}
+                  {#if reqResponseText}
+                    <pre class="req-response-body">{reqResponseText}</pre>
+                  {/if}
+                </div>
+              {/if}
+            {/if}
+
+            <!-- Fluxograma Espacial (Substitui o antigo Chain) -->
+            <div class="req-flow-banner">
+              <div class="flow-banner-left">
+                <span class="flow-banner-icon">🔀</span>
+                <div class="flow-banner-text">
+                  <span class="flow-banner-title">Spatial Flow (Chain replacement)</span>
+                  <span class="flow-banner-sub">
+                    Visual chaining with REST and JS blocks, solid (wait/join) and dotted (async)
+                    arrows, and an integrated side panel.
+                  </span>
+                </div>
+              </div>
+              <div class="flow-banner-actions">
+                <button
+                  type="button"
+                  class="flow-banner-btn-secondary"
+                  title="Add the active request as a block in the flow"
+                  on:click={addCurrentFormToFlow}
+                >
+                  ➕ Add to Flow
+                </button>
+                <button
+                  type="button"
+                  class="flow-banner-btn-primary"
+                  title="Open the visual flow editor"
+                  on:click={() => ($requestsViewMode = 'flow')}
+                >
+                  Open Spatial Flow →
+                </button>
+              </div>
+            </div>
+
+            <!-- History (collapsible) -->
+            {#if reqHistory.length > 0}
+              <div class="req-history">
+                <div
+                  class="req-section-head"
+                  role="button"
+                  tabindex="0"
+                  on:click={() => ($historyOpen = !$historyOpen)}
+                  on:keydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') $historyOpen = !$historyOpen
+                  }}
+                >
+                  <span class="req-caret">{$historyOpen ? '▾' : '▸'}</span>
+                  <span class="req-label">History ({reqHistory.length})</span>
+                  <span class="req-spacer"></span>
+                  <button
+                    class="req-mini-btn"
+                    title="Clear history"
+                    on:click|stopPropagation={clearHistory}>Clear</button
+                  >
+                </div>
+                {#if $historyOpen}
+                  {#each reqHistory as entry (entry.id)}
+                    <div
+                      class="req-history-item"
+                      title="Open response in the editor and load the request into the form"
+                      on:click={() => openHistoryResponse(entry)}
+                    >
+                      <span class="req-method-tag">{entry.method}</span>
+                      <span
+                        class="req-status"
+                        class:ok={typeof entry.status === 'number' && entry.status < 400}
+                        class:bad={entry.status === 'error' ||
+                          (typeof entry.status === 'number' && entry.status >= 400)}
+                      >
+                        {entry.status}
+                      </span>
+                      <span class="req-history-url">{entry.url}</span>
+                      <span class="req-history-meta"
+                        >{relativeTime(entry.timestamp)} · {entry.durationMs} ms ·
+                        {formatBytes(entry.sizeBytes)}{#if entry.viaProxy}
+                          · 🛡 proxy{/if}</span
+                      >
+                      <span class="req-history-actions">
+                        <button
+                          class="req-mini-btn"
+                          title="Add this request as a block in the Spatial Flow"
+                          on:click|stopPropagation={() => addHistoryEntryToFlow(entry)}
+                          >＋ Flow</button
+                        >
+                        <button
+                          class="req-mini-btn"
+                          title="Load request into form"
+                          on:click|stopPropagation={() => loadRequestIntoForm(entry)}>✎</button
+                        >
+                        <button
+                          class="req-mini-btn"
+                          title="Re-send"
+                          on:click|stopPropagation={() => void reSendRequest(entry)}>↻</button
+                        >
+                        <button
+                          class="req-mini-btn"
+                          title="Remove"
+                          on:click|stopPropagation={() => removeHistoryEntry(entry.id)}>×</button
+                        >
+                      </span>
+                    </div>
+                  {/each}
+                {/if}
+              </div>
+            {/if}
           {/if}
         </div>
       {/if}
@@ -4904,7 +4999,9 @@
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
-    transition: background 0.12s, color 0.12s;
+    transition:
+      background 0.12s,
+      color 0.12s;
     &.active {
       background: #252526;
       color: #ffffff;
@@ -4960,7 +5057,8 @@
     color: #7dd3fc;
   }
   @keyframes tab-pulse-blue {
-    0%, 100% {
+    0%,
+    100% {
       border-color: #0098ff;
       background: rgba(0, 152, 255, 0.16);
       box-shadow: 0 0 8px rgba(0, 152, 255, 0.2);
@@ -5040,7 +5138,8 @@
     font-weight: 700;
   }
   @keyframes tab-pulse-pane {
-    0%, 100% {
+    0%,
+    100% {
       border-color: rgba(56, 189, 248, 0.5);
       background: rgba(56, 189, 248, 0.08);
     }
@@ -5081,7 +5180,9 @@
     font-size: 11px;
     cursor: pointer;
     white-space: nowrap;
-    transition: background 0.1s, color 0.1s;
+    transition:
+      background 0.1s,
+      color 0.1s;
     &.active {
       background: #37373d;
       color: #ffffff;
@@ -5103,7 +5204,9 @@
     opacity: 0;
     color: #4ec9b0;
     cursor: pointer;
-    transition: opacity 0.1s, background 0.1s;
+    transition:
+      opacity 0.1s,
+      background 0.1s;
     &:hover {
       background: rgba(78, 201, 176, 0.2);
     }
@@ -5277,13 +5380,17 @@
     height: 28px;
     background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
     border-radius: 6px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    box-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.2);
     overflow: hidden;
     transition: all 0.15s ease;
     flex-shrink: 0;
     &:hover {
       background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-      box-shadow: 0 2px 10px rgba(2, 132, 199, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      box-shadow:
+        0 2px 10px rgba(2, 132, 199, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.3);
     }
   }
 
@@ -5423,8 +5530,8 @@
     justify-content: space-between;
     padding: 6px 14px;
     flex-shrink: 0;
-    background: #141721;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: $bg2;
+    border-bottom: 1px solid $b;
     gap: 16px;
   }
   .requests-header-left {
@@ -5437,26 +5544,26 @@
     align-items: center;
     gap: 6px;
     padding: 2px 8px;
-    border-radius: 6px;
-    background: rgba(2, 132, 199, 0.12);
-    border: 1px solid rgba(2, 132, 199, 0.25);
+    border-radius: 4px;
+    background: rgba(56, 131, 250, 0.15);
+    border: 1px solid rgba(56, 131, 250, 0.35);
   }
   .requests-brand-icon {
     font-size: 12px;
-    color: #38bdf8;
+    color: #3883fa;
   }
   .requests-brand-text {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.8px;
-    color: #38bdf8;
+    color: #3883fa;
   }
   .req-view-toggle {
     display: flex;
     align-items: center;
-    background: #0d0f15;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 7px;
+    background: $bg;
+    border: 1px solid $b;
+    border-radius: 4px;
     padding: 2px;
     gap: 2px;
   }
@@ -5464,29 +5571,29 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
-    border-radius: 5px;
+    padding: 3px 10px;
+    border-radius: 3px;
     background: transparent;
-    color: #94a3b8;
+    color: $td;
     border: none;
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.12s ease;
     &:hover {
-      color: #f1f5f9;
+      color: $t;
       background: rgba(255, 255, 255, 0.05);
     }
     &.active {
-      background: #252836;
-      color: #38bdf8;
+      background: #3883fa;
+      color: #ffffff;
       font-weight: 600;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     }
   }
   .req-badge-pill {
-    background: #38bdf8;
-    color: #0b0d13;
+    background: #3883fa;
+    color: #ffffff;
     font-size: 9px;
     font-weight: 700;
     border-radius: 10px;
@@ -5502,9 +5609,9 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    background: #1a1d27;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    background: $bg;
+    border: 1px solid $b;
+    border-radius: 4px;
     padding: 2px 8px;
   }
   .req-env-icon {
@@ -5512,7 +5619,7 @@
   }
   .req-env-label {
     font-size: 11px;
-    color: #94a3b8;
+    color: $td;
     font-weight: 500;
   }
   .req-env-select {
@@ -5520,30 +5627,30 @@
     font-size: 11px;
     font-weight: 500;
     padding: 3px 22px 3px 8px;
-    background-color: #0f172a;
-    border: 1px solid #334155;
-    color: #f8fafc;
-    border-radius: 4px;
+    background-color: $bg;
+    border: 1px solid $b;
+    color: $t;
+    border-radius: 3px;
     cursor: pointer;
     appearance: none;
     -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%2394a3b8' viewBox='0 0 20 20'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23cccccc' viewBox='0 0 20 20'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E");
     background-position: right 5px center;
     background-repeat: no-repeat;
     background-size: 13px;
     transition: all 0.15s ease;
     &:focus {
       outline: none;
-      border-color: #38bdf8;
-      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+      border-color: #3883fa;
+      box-shadow: 0 0 0 2px rgba(56, 131, 250, 0.25);
     }
     &:hover {
-      border-color: #475569;
+      border-color: rgba(255, 255, 255, 0.2);
     }
   }
   .req-env-select option {
-    background-color: #0f172a;
-    color: #f8fafc;
+    background-color: $bg2;
+    color: $t;
     padding: 6px 10px;
     font-size: 12px;
   }
@@ -5553,50 +5660,50 @@
     cursor: pointer;
     padding: 2px 4px;
     font-size: 12px;
-    border-radius: 4px;
-    color: #94a3b8;
+    border-radius: 3px;
+    color: $td;
     transition: all 0.15s ease;
     &:hover {
       background: rgba(255, 255, 255, 0.1);
-      color: #38bdf8;
+      color: #3883fa;
     }
   }
   .requests-proxy-pill {
     display: flex;
     align-items: center;
     gap: 6px;
-    background: #1a1d27;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    background: $bg;
+    border: 1px solid $b;
+    border-radius: 4px;
     padding: 2px 8px;
   }
   .req-proxy-icon {
     font-size: 12px;
-    color: #38bdf8;
+    color: #3883fa;
   }
   .req-proxy-label {
     font-size: 11px;
-    color: #94a3b8;
+    color: $td;
     font-weight: 500;
   }
   .req-top-btn {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 28px;
-    padding: 0 11px;
-    background: #1e222e;
-    color: #e2e8f0;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
+    height: 26px;
+    padding: 0 10px;
+    background: $bg3;
+    color: $t;
+    border: 1px solid $b;
+    border-radius: 4px;
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.12s ease;
     &:hover {
-      background: #2a3040;
+      background: #3a3d41;
       border-color: rgba(255, 255, 255, 0.25);
-      color: #fff;
+      color: #ffffff;
     }
   }
   .requests-close-btn {
@@ -5607,9 +5714,9 @@
     height: 24px;
     background: transparent;
     border: none;
-    color: #94a3b8;
+    color: $td;
     font-size: 16px;
-    border-radius: 4px;
+    border-radius: 3px;
     cursor: pointer;
     line-height: 1;
     &:hover {
@@ -5630,28 +5737,28 @@
     flex-shrink: 0;
   }
   .req-item-proxy-select {
-    height: 28px;
-    border-radius: 6px;
-    padding: 0 10px;
+    height: 26px;
+    border-radius: 4px;
+    padding: 0 8px;
     font-size: 11px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background: #1a1c23;
-    color: #cbd5e1;
+    border: 1px solid $b;
+    background: $bg;
+    color: $t;
     outline: none;
     cursor: pointer;
     &:focus {
-      border-color: #0284c7;
+      border-color: #3883fa;
     }
   }
   .req-proxy-input-inline {
-    height: 28px;
+    height: 26px;
     padding: 0 8px;
     font-size: 11px;
     font-family: Consolas, monospace;
-    background: #111318;
-    color: #fff;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 6px;
+    background: $bg;
+    color: $t;
+    border: 1px solid $b;
+    border-radius: 4px;
     outline: none;
     width: 140px;
   }
@@ -5735,11 +5842,21 @@
       border-color: #0284c7;
       box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2);
     }
-    &.req-method-get { color: #10b981; }
-    &.req-method-post { color: #f59e0b; }
-    &.req-method-put { color: #3b82f6; }
-    &.req-method-patch { color: #a855f7; }
-    &.req-method-delete { color: #ef4444; }
+    &.req-method-get {
+      color: #10b981;
+    }
+    &.req-method-post {
+      color: #f59e0b;
+    }
+    &.req-method-put {
+      color: #3b82f6;
+    }
+    &.req-method-patch {
+      color: #a855f7;
+    }
+    &.req-method-delete {
+      color: #ef4444;
+    }
     option {
       background: #1a1c23;
       color: #f1f5f9;
@@ -5804,7 +5921,9 @@
     animation: req-spin 0.6s linear infinite;
   }
   @keyframes req-spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
   .requests-fields {
     display: flex;

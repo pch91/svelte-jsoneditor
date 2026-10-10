@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  createDefaultFlowGraph,
-  executeJsSandbox,
-  migrateChainToFlowGraph
-} from './flowTypes.js'
+import { createDefaultFlowGraph, executeJsSandbox, migrateChainToFlowGraph } from './flowTypes.js'
 
 describe('executeJsSandbox', () => {
   it('reads and writes environment variables using pm.environment', () => {

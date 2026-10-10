@@ -4,7 +4,12 @@
    * Used as the base for preview modals.
    */
   import { onMount, onDestroy, createEventDispatcher } from 'svelte'
-  import { faTimes, faWindowMinimize, faWindowMaximize, faWindowRestore } from '@fortawesome/free-solid-svg-icons'
+  import {
+    faTimes,
+    faWindowMinimize,
+    faWindowMaximize,
+    faWindowRestore
+  } from '@fortawesome/free-solid-svg-icons'
   import Icon from 'svelte-awesome'
 
   export let title: string = ''

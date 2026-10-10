@@ -198,7 +198,8 @@
     display: flex;
     flex-direction: column;
     color: #4d4d4d;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     font-size: 14px;
   }
   .curl-modal-header {
@@ -284,8 +285,9 @@
     width: 100%;
     box-sizing: border-box;
     padding: 8px 10px;
-    font-family: 'dejavu sans mono', 'droid sans mono', consolas, monaco, 'lucida console',
-      'courier new', courier, monospace, sans-serif;
+    font-family:
+      'dejavu sans mono', 'droid sans mono', consolas, monaco, 'lucida console', 'courier new',
+      courier, monospace, sans-serif;
     font-size: 13px;
     background: #ffffff;
     color: #4d4d4d;

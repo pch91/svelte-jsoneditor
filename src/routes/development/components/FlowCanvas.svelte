@@ -111,7 +111,15 @@
   let selectedConnection: FlowConnection | null = null
   let sidePanelWidth = 520
   let isResizingSidePanel = false
-  let sidePanelTab: 'params' | 'headers' | 'body' | 'auth' | 'captures' | 'env' | 'response' | 'script' = 'params'
+  let sidePanelTab:
+    | 'params'
+    | 'headers'
+    | 'body'
+    | 'auth'
+    | 'captures'
+    | 'env'
+    | 'response'
+    | 'script' = 'params'
 
   // Header editing mode (table vs raw)
   let headersRawMode = false
@@ -278,9 +286,7 @@
     const fromId = connectingFromId
     connectingFromId = null
 
-    const exists = flowGraph.connections.find(
-      (c) => c.fromId === fromId && c.toId === toId
-    )
+    const exists = flowGraph.connections.find((c) => c.fromId === fromId && c.toId === toId)
     if (!exists) {
       const newConn: FlowConnection = {
         id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -838,8 +844,10 @@
 
     let authStr = ''
     if (rest.authType === 'bearer') authStr = rest.authBearerToken || ''
-    else if (rest.authType === 'basic') authStr = `${rest.authBasicUser || ''} ${rest.authBasicPass || ''}`
-    else if (rest.authType === 'apikey') authStr = `${rest.authApiKeyName || ''} ${rest.authApiKeyValue || ''}`
+    else if (rest.authType === 'basic')
+      authStr = `${rest.authBasicUser || ''} ${rest.authBasicPass || ''}`
+    else if (rest.authType === 'apikey')
+      authStr = `${rest.authApiKeyName || ''} ${rest.authApiKeyValue || ''}`
 
     const resolved = resolveVariables(authStr, activeEnv, globalEnvironment)
     if (resolved.missing.length > 0) {
@@ -883,14 +891,20 @@
         let proxyToUse = globalProxy
         if (rest.proxyMode === 'direct') proxyToUse = ''
         else if (rest.proxyMode === 'corsproxy') proxyToUse = 'https://corsproxy.io/?url={url}'
-        else if (rest.proxyMode === 'allorigins') proxyToUse = 'https://api.allorigins.win/raw?url={url}'
-        else if (rest.proxyMode === 'custom' && rest.customProxyUrl) proxyToUse = rest.customProxyUrl
+        else if (rest.proxyMode === 'allorigins')
+          proxyToUse = 'https://api.allorigins.win/raw?url={url}'
+        else if (rest.proxyMode === 'custom' && rest.customProxyUrl)
+          proxyToUse = rest.customProxyUrl
 
         const hasBody = rest.bodyType !== 'none' && !['GET', 'HEAD'].includes(rest.method)
         const bodyPayload = hasBody ? resolvedBody : undefined
         const contentType = rest.bodyType === 'text' ? 'text/plain' : 'application/json'
 
-        const headersObj = withContentType(parseHeadersText(resolvedHeaders), bodyPayload, contentType)
+        const headersObj = withContentType(
+          parseHeadersText(resolvedHeaders),
+          bodyPayload,
+          contentType
+        )
 
         const { res, viaProxy } = await fetchWithProxy(
           resolvedUrl,
@@ -924,7 +938,9 @@
           durationMs,
           status: res.status,
           outputSummary:
-            capturedNames.length > 0 ? `Capturou: ${capturedNames.join(', ')}` : `Status ${res.status}`,
+            capturedNames.length > 0
+              ? `Capturou: ${capturedNames.join(', ')}`
+              : `Status ${res.status}`,
           timestamp: Date.now(),
           responseText: text,
           sizeBytes,
@@ -960,8 +976,7 @@
           node.lastRun = {
             durationMs,
             status: 'OK',
-            outputSummary:
-              res.logs.length > 0 ? res.logs[res.logs.length - 1] : 'Script completed',
+            outputSummary: res.logs.length > 0 ? res.logs[res.logs.length - 1] : 'Script completed',
             timestamp: Date.now(),
             logs: res.logs,
             responseText: JSON.stringify(res.updatedEnv, null, 2)
@@ -1075,16 +1090,29 @@
             try {
               if (node.type === 'rest' && node.restData) {
                 const rest = node.restData
-                const resolvedUrl = resolveVariables(rest.url, currentEnv, globalEnvironment).resolved
+                const resolvedUrl = resolveVariables(
+                  rest.url,
+                  currentEnv,
+                  globalEnvironment
+                ).resolved
                 const headersStr = rest.headerRows
                   ? rowsToHeadersText(rest.headerRows)
                   : rest.headers
-                const resolvedHeaders = resolveVariables(headersStr, currentEnv, globalEnvironment).resolved
-                const resolvedBody = resolveVariables(rest.body, currentEnv, globalEnvironment).resolved
+                const resolvedHeaders = resolveVariables(
+                  headersStr,
+                  currentEnv,
+                  globalEnvironment
+                ).resolved
+                const resolvedBody = resolveVariables(
+                  rest.body,
+                  currentEnv,
+                  globalEnvironment
+                ).resolved
 
                 let proxyToUse = globalProxy
                 if (rest.proxyMode === 'direct') proxyToUse = ''
-                else if (rest.proxyMode === 'corsproxy') proxyToUse = 'https://corsproxy.io/?url={url}'
+                else if (rest.proxyMode === 'corsproxy')
+                  proxyToUse = 'https://corsproxy.io/?url={url}'
                 else if (rest.proxyMode === 'allorigins')
                   proxyToUse = 'https://api.allorigins.win/raw?url={url}'
                 else if (rest.proxyMode === 'custom' && rest.customProxyUrl)
@@ -1375,11 +1403,19 @@
             <button type="button" role="menuitem" on:click={() => runFileAction(openFlowFile)}>
               <span>📂 Open…</span>
             </button>
-            <button type="button" role="menuitem" on:click={() => runFileAction(() => saveFlowFile(false))}>
+            <button
+              type="button"
+              role="menuitem"
+              on:click={() => runFileAction(() => saveFlowFile(false))}
+            >
               <span>💾 Save</span>
               {#if flowFileName}<small>{flowFileName}</small>{/if}
             </button>
-            <button type="button" role="menuitem" on:click={() => runFileAction(() => saveFlowFile(true))}>
+            <button
+              type="button"
+              role="menuitem"
+              on:click={() => runFileAction(() => saveFlowFile(true))}
+            >
               <span>📝 Save As…</span>
             </button>
             <div class="flow-menu-sep"></div>
@@ -1420,20 +1456,10 @@
         >
           {Math.round(zoomLevel * 100)}%
         </button>
-        <button
-          type="button"
-          class="zoom-btn"
-          title="Zoom in (Ctrl + scroll up)"
-          on:click={zoomIn}
-        >
+        <button type="button" class="zoom-btn" title="Zoom in (Ctrl + scroll up)" on:click={zoomIn}>
           ＋
         </button>
-        <button
-          type="button"
-          class="zoom-reset-btn"
-          title="Reset to 100%"
-          on:click={resetZoom}
-        >
+        <button type="button" class="zoom-reset-btn" title="Reset to 100%" on:click={resetZoom}>
           ⟲
         </button>
       </div>
@@ -1540,7 +1566,6 @@
                       ? 'url(#arrow-solid)'
                       : 'url(#arrow-dotted)'}
                 />
-
               </g>
             {/if}
           {/each}
@@ -1605,14 +1630,14 @@
                   type="button"
                   class="node-tool-btn"
                   title="Run this block only"
-                  on:click|stopPropagation={() => executeSingleNode(node)}
-                >▶</button>
+                  on:click|stopPropagation={() => executeSingleNode(node)}>▶</button
+                >
                 <button
                   type="button"
                   class="node-tool-btn"
                   title="Delete block"
-                  on:click|stopPropagation={() => deleteNode(node.id)}
-                >×</button>
+                  on:click|stopPropagation={() => deleteNode(node.id)}>×</button
+                >
               </div>
             </div>
 
@@ -1774,26 +1799,14 @@
         >
           {Math.round(zoomLevel * 100)}%
         </button>
-        <button
-          type="button"
-          class="zoom-btn"
-          title="Zoom in (Ctrl + scroll up)"
-          on:click={zoomIn}
-        >
+        <button type="button" class="zoom-btn" title="Zoom in (Ctrl + scroll up)" on:click={zoomIn}>
           ＋
         </button>
-        <button
-          type="button"
-          class="zoom-reset-btn"
-          title="Reset to 100%"
-          on:click={resetZoom}
-        >
+        <button type="button" class="zoom-reset-btn" title="Reset to 100%" on:click={resetZoom}>
           ⟲
         </button>
         <span class="zoom-floating-hint">Ctrl + Scroll</span>
       </div>
-
-
 
       <!-- Floating Toast -->
       {#if toastMessage}
@@ -2090,8 +2103,8 @@
                             type="button"
                             class="kv-del-btn"
                             title="Remove parameter"
-                            on:click={() => removeParam(pIdx)}
-                          >×</button>
+                            on:click={() => removeParam(pIdx)}>×</button
+                          >
                         </div>
                       </div>
                     {/each}
@@ -2099,7 +2112,7 @@
                 </div>
               </div>
 
-            <!-- 2. HEADERS TAB -->
+              <!-- 2. HEADERS TAB -->
             {:else if sidePanelTab === 'headers'}
               <div class="tab-pane-headers">
                 <div class="pane-action-bar">
@@ -2194,8 +2207,8 @@
                               type="button"
                               class="kv-del-btn"
                               title="Remove header"
-                              on:click={() => removeHeaderRow(hIdx)}
-                            >×</button>
+                              on:click={() => removeHeaderRow(hIdx)}>×</button
+                            >
                           </div>
                         </div>
                       {/each}
@@ -2204,7 +2217,7 @@
                 {/if}
               </div>
 
-            <!-- 3. BODY TAB (Requirement 7) -->
+              <!-- 3. BODY TAB (Requirement 7) -->
             {:else if sidePanelTab === 'body'}
               <div class="tab-pane-body">
                 <div class="body-type-selector">
@@ -2241,9 +2254,7 @@
                 </div>
 
                 {#if selectedNode.restData.bodyType === 'none'}
-                  <div class="body-none-msg">
-                    This request will send no body (Empty payload).
-                  </div>
+                  <div class="body-none-msg">This request will send no body (Empty payload).</div>
                 {:else}
                   <div class="body-editor-toolbar">
                     <span class="body-syntax-label">
@@ -2282,7 +2293,7 @@
                 {/if}
               </div>
 
-            <!-- 4. AUTH TAB -->
+              <!-- 4. AUTH TAB -->
             {:else if sidePanelTab === 'auth'}
               <div class="tab-pane-auth">
                 <div class="auth-type-row">
@@ -2324,7 +2335,8 @@
                       />
                     </label>
                     <div class="auth-hint">
-                      Hint: you can use environment variables like <code>{`{{token}}`}</code> or capture them from a previous block.
+                      Hint: you can use environment variables like <code>{`{{token}}`}</code> or capture
+                      them from a previous block.
                     </div>
                   </div>
                 {:else if selectedNode.restData.authType === 'basic'}
@@ -2393,7 +2405,7 @@
                 {/if}
               </div>
 
-            <!-- 5. CAPTURES TAB -->
+              <!-- 5. CAPTURES TAB -->
             {:else if sidePanelTab === 'captures'}
               <div class="tab-pane-captures">
                 <CapturePathsTable
@@ -2403,7 +2415,7 @@
                 />
               </div>
 
-            <!-- 6. ENV TAB (Active Environment + Globals) -->
+              <!-- 6. ENV TAB (Active Environment + Globals) -->
             {:else if sidePanelTab === 'env'}
               <div class="tab-pane-env">
                 <div class="env-head-info">
@@ -2419,7 +2431,9 @@
 
                 <!-- Active Env Variables -->
                 <div class="env-section-box">
-                  <span class="env-section-title">Active Environment Variables ({Object.keys(activeEnv).length})</span>
+                  <span class="env-section-title"
+                    >Active Environment Variables ({Object.keys(activeEnv).length})</span
+                  >
                   <div class="env-vars-grid">
                     {#if Object.keys(activeEnv).length === 0}
                       <div class="env-empty-box">No variables in the active environment.</div>
@@ -2449,7 +2463,9 @@
 
                 <!-- Global Variables -->
                 <div class="env-section-box">
-                  <span class="env-section-title">🌐 Env Geral / Globais ({Object.keys(globalEnvironment).length})</span>
+                  <span class="env-section-title"
+                    >🌐 Env Geral / Globais ({Object.keys(globalEnvironment).length})</span
+                  >
                   <div class="env-vars-grid">
                     {#if Object.keys(globalEnvironment).length === 0}
                       <div class="env-empty-box">No global variables defined.</div>
@@ -2478,7 +2494,7 @@
                 </div>
               </div>
 
-            <!-- 7. HISTORY TAB (Strict limit of 5, No redundant body preview) -->
+              <!-- 7. HISTORY TAB (Strict limit of 5, No redundant body preview) -->
             {:else if sidePanelTab === 'response'}
               <div class="tab-pane-response">
                 {#if selectedNode.lastRun}
@@ -2486,8 +2502,10 @@
                     <div class="res-summary-head">
                       <span
                         class="res-status-pill"
-                        class:ok={typeof selectedNode.lastRun.status === 'number' && selectedNode.lastRun.status < 400}
-                        class:bad={typeof selectedNode.lastRun.status === 'number' && selectedNode.lastRun.status >= 400}
+                        class:ok={typeof selectedNode.lastRun.status === 'number' &&
+                          selectedNode.lastRun.status < 400}
+                        class:bad={typeof selectedNode.lastRun.status === 'number' &&
+                          selectedNode.lastRun.status >= 400}
                       >
                         {selectedNode.lastRun.status}
                       </span>
@@ -2517,7 +2535,8 @@
                   </div>
                 {:else}
                   <div class="res-no-runs-msg">
-                    This block has not been run yet. Click <strong>▶ Run Block</strong> above or run the flow.
+                    This block has not been run yet. Click <strong>▶ Run Block</strong> above or run the
+                    flow.
                   </div>
                 {/if}
 
@@ -2541,13 +2560,16 @@
                           >
                             {entry.status}
                           </span>
-                          <span class="hist-meta">{entry.durationMs}ms · {relativeTime(entry.timestamp)}</span>
+                          <span class="hist-meta"
+                            >{entry.durationMs}ms · {relativeTime(entry.timestamp)}</span
+                          >
                           {#if entry.responseText && onOpenInEditor}
                             <button
                               type="button"
                               class="hist-open-btn"
                               title="Abrir esta resposta no editor JSON"
-                              on:click={() => selectedNode && openResponseInEditor(selectedNode, entry)}
+                              on:click={() =>
+                                selectedNode && openResponseInEditor(selectedNode, entry)}
                             >
                               ↗ Abrir no Editor
                             </button>
@@ -2560,7 +2582,7 @@
               </div>
             {/if}
 
-          <!-- JS SCRIPT CONFIGURATION (when JS node) -->
+            <!-- JS SCRIPT CONFIGURATION (when JS node) -->
           {:else if selectedNode.type === 'js' && selectedNode.jsData}
             {#if sidePanelTab === 'script'}
               <div class="tab-pane-js">
@@ -2638,7 +2660,7 @@
     flex-direction: column;
     width: 100%;
     height: 100%;
-    background: #0f1117;
+    background: #1e1e1e;
     color: #e2e8f0;
     font-family: inherit;
     overflow: hidden;
@@ -2651,8 +2673,8 @@
     justify-content: space-between;
     min-height: 42px;
     padding: 6px 14px;
-    background: #141722;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: #252526;
+    border-bottom: 1px solid #3e3e42;
     flex-shrink: 0;
     gap: 8px 12px;
     flex-wrap: wrap;
@@ -2701,7 +2723,7 @@
     text-overflow: ellipsis;
   }
   .flow-file-menu .flow-btn.is-open {
-    background: #252a3d;
+    background: #383838;
     border-color: rgba(56, 189, 248, 0.6);
     color: #ffffff;
   }
@@ -2714,8 +2736,8 @@
     top: calc(100% + 4px);
     left: 0;
     min-width: 190px;
-    background: #1a1e2b;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: #2d2d30;
+    border: 1px solid #3e3e42;
     border-radius: 8px;
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
     padding: 4px;
@@ -2739,7 +2761,7 @@
     cursor: pointer;
   }
   .flow-menu button:hover {
-    background: #2b3148;
+    background: #383838;
     color: #ffffff;
   }
   .flow-menu small {
@@ -2760,18 +2782,18 @@
     gap: 6px;
     height: 28px;
     padding: 0 12px;
-    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+    background: #3883fa;
     color: #ffffff;
     border: none;
     border-radius: 6px;
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
-    box-shadow: 0 2px 5px rgba(2, 132, 199, 0.25);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     transition: all 0.12s ease;
   }
   .flow-btn-primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+    background: #2f72dd;
     transform: translateY(-1px);
   }
   .flow-btn-primary:disabled {
@@ -2784,9 +2806,9 @@
     gap: 5px;
     height: 26px;
     padding: 0 9px;
-    background: #1a1e2b;
+    background: #2d2d30;
     color: #cbd5e1;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid #3e3e42;
     border-radius: 6px;
     font-size: 11px;
     font-weight: 500;
@@ -2794,7 +2816,7 @@
     transition: all 0.12s ease;
   }
   .flow-btn:hover {
-    background: #252a3d;
+    background: #383838;
     border-color: rgba(255, 255, 255, 0.2);
     color: #ffffff;
   }
@@ -2834,7 +2856,7 @@
   }
   .flow-status-msg {
     font-size: 11px;
-    color: #38bdf8;
+    color: #3883fa;
     background: rgba(56, 189, 248, 0.1);
     padding: 2px 8px;
     border-radius: 4px;
@@ -2844,8 +2866,8 @@
   .flow-zoom-control {
     display: inline-flex;
     align-items: center;
-    background: #181b26;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #252526;
+    border: 1px solid #3e3e42;
     border-radius: 6px;
     padding: 1px;
     gap: 1px;
@@ -2866,7 +2888,7 @@
     transition: all 0.12s ease;
     &:hover {
       background: rgba(255, 255, 255, 0.1);
-      color: #38bdf8;
+      color: #3883fa;
     }
   }
   .zoom-level-btn {
@@ -2882,7 +2904,7 @@
     transition: all 0.12s ease;
     &:hover {
       background: rgba(255, 255, 255, 0.1);
-      color: #38bdf8;
+      color: #3883fa;
     }
   }
   .zoom-reset-btn {
@@ -2910,9 +2932,9 @@
     z-index: 10;
     display: flex;
     align-items: center;
-    background: rgba(22, 25, 34, 0.92);
+    background: rgba(37, 37, 38, 0.95);
     backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid #3e3e42;
     border-radius: 8px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
     padding: 3px 5px;
@@ -2924,7 +2946,7 @@
     padding-left: 6px;
     padding-right: 4px;
     user-select: none;
-    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: 1px solid #3e3e42;
   }
 
   /* Work area with canvas on left and side panel on right */
@@ -2940,7 +2962,7 @@
   .flow-canvas {
     flex: 1;
     position: relative;
-    background: #0f121a;
+    background: #1e1e1e;
     overflow: auto;
     min-height: 0;
     user-select: none;
@@ -2974,9 +2996,11 @@
   }
   .conn-line {
     fill: none;
-    stroke: #38bdf8;
+    stroke: #3883fa;
     stroke-width: 2.2px;
-    transition: stroke 0.2s, stroke-width 0.2s;
+    transition:
+      stroke 0.2s,
+      stroke-width 0.2s;
   }
   .connection-group:hover .conn-line {
     stroke-width: 3.2px;
@@ -3000,7 +3024,7 @@
   }
   .conn-line-draft {
     fill: none;
-    stroke: #38bdf8;
+    stroke: #3883fa;
     stroke-width: 2px;
     stroke-dasharray: 4, 3;
   }
@@ -3028,7 +3052,7 @@
   }
   .flow-btn-draggable:hover .btn-drag-handle {
     opacity: 0.9;
-    color: #38bdf8;
+    color: #3883fa;
   }
 
   /* Connection Ball Control on Arrow ("Bola em cima da seta") */
@@ -3046,12 +3070,16 @@
     border-radius: 9999px;
     padding: 3px 6px;
     gap: 4px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.8), 0 0 10px rgba(56, 189, 248, 0.5);
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.8),
+      0 0 10px rgba(56, 189, 248, 0.5);
     animation: ball-pop 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     user-select: none;
     pointer-events: auto;
     white-space: nowrap;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition:
+      border-color 0.2s,
+      box-shadow 0.2s;
   }
   @keyframes ball-pop {
     from {
@@ -3066,7 +3094,9 @@
   .conn-ball-control.is-dotted {
     background: #0e0a1a;
     border-color: #a855f7;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.8), 0 0 10px rgba(168, 85, 247, 0.5);
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.8),
+      0 0 10px rgba(168, 85, 247, 0.5);
   }
   .ball-dot-btn {
     display: inline-flex;
@@ -3088,7 +3118,7 @@
   }
   .ball-dot-btn.blue.active {
     background: rgba(56, 189, 248, 0.22);
-    color: #38bdf8;
+    color: #3883fa;
   }
   .ball-dot-btn.purple.active {
     background: rgba(168, 85, 247, 0.25);
@@ -3140,11 +3170,14 @@
     position: absolute;
     width: 280px;
     border-radius: 9px;
-    background: #161922;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #252526;
+    border: 1px solid #3e3e42;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
     z-index: 2;
-    transition: border-color 0.15s, box-shadow 0.15s, opacity 0.15s ease;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s,
+      opacity 0.15s ease;
     user-select: none;
     cursor: grab;
   }
@@ -3154,28 +3187,33 @@
   .flow-node.is-dragging {
     opacity: 0.55;
     cursor: grabbing !important;
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7), 0 0 0 2px #38bdf8, 0 0 18px rgba(56, 189, 248, 0.3);
+    box-shadow:
+      0 16px 36px rgba(0, 0, 0, 0.7),
+      0 0 0 2px #38bdf8,
+      0 0 18px rgba(56, 189, 248, 0.3);
     z-index: 100;
   }
   .flow-node:hover {
     border-color: rgba(255, 255, 255, 0.25);
   }
   .flow-node.is-selected {
-    border-color: #38bdf8;
-    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35), 0 6px 16px rgba(0, 0, 0, 0.5);
+    border-color: #3883fa;
+    box-shadow:
+      0 0 0 2px rgba(56, 189, 248, 0.35),
+      0 6px 16px rgba(0, 0, 0, 0.5);
   }
   .flow-node-js {
     border-left: 3px solid #a855f7;
   }
   .flow-node-rest {
-    border-left: 3px solid #0284c7;
+    border-left: 3px solid #3883fa;
   }
   .flow-node.status-running {
     border-color: #facc15;
-    box-shadow: 0 0 12px rgba(250, 204, 21, 0.35);
+    box-shadow: 0 0 8px rgba(229, 142, 38, 0.3);
   }
   .flow-node.status-success {
-    border-color: #10b981;
+    border-color: #4ec9b0;
   }
   .flow-node.status-error {
     border-color: #ef4444;
@@ -3188,7 +3226,7 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: #1e2230;
+    background: #2d2d30;
     border: 2px solid #38bdf8;
     cursor: crosshair;
     z-index: 3;
@@ -3203,7 +3241,7 @@
   }
   .port-output {
     right: -8px;
-    border-color: #38bdf8;
+    border-color: #3883fa;
   }
 
   /* Node Header */
@@ -3212,7 +3250,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 7px 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid #3e3e42;
     cursor: move;
   }
   .node-title-wrap {
@@ -3298,7 +3336,7 @@
   }
   .node-sub-meta {
     font-size: 9px;
-    color: #38bdf8;
+    color: #3883fa;
     margin-top: 2px;
   }
   .node-js-preview code {
@@ -3358,7 +3396,7 @@
   .node-quick-btn {
     background: rgba(2, 132, 199, 0.15);
     border: 1px solid rgba(2, 132, 199, 0.35);
-    color: #38bdf8;
+    color: #3883fa;
     font-size: 9px;
     font-weight: 600;
     padding: 1px 6px;
@@ -3372,7 +3410,7 @@
   /* Resizer Separator between Canvas and Side Panel */
   .flow-side-resizer {
     width: 6px;
-    background: #141722;
+    background: #252526;
     cursor: col-resize;
     position: relative;
     z-index: 10;
@@ -3382,15 +3420,15 @@
   }
   .flow-side-resizer:hover,
   .flow-side-resizer.is-active {
-    background: #0284c7;
+    background: #3883fa;
   }
 
   /* Right Side Inspector Panel */
   .flow-side-panel {
     display: flex;
     flex-direction: column;
-    background: #141722;
-    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    background: #252526;
+    border-left: 1px solid #3e3e42;
     height: 100%;
     z-index: 5;
     flex-shrink: 0;
@@ -3404,8 +3442,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
-    background: #181c2a;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: #252526;
+    border-bottom: 1px solid #3e3e42;
     gap: 8px;
     flex-shrink: 0;
   }
@@ -3429,7 +3467,7 @@
   }
   .side-title-input {
     background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid #3e3e42;
     border-radius: 5px;
     color: #f1f5f9;
     font-size: 13px;
@@ -3446,8 +3484,8 @@
     border-color: rgba(56, 189, 248, 0.4);
   }
   .side-title-input:focus {
-    background: #0f1118;
-    border-color: #38bdf8;
+    background: #1e1e1e;
+    border-color: #3883fa;
     box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
   }
   .side-title-pencil {
@@ -3468,7 +3506,7 @@
     align-items: center;
     gap: 4px;
     background: #23283a;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid #3e3e42;
     color: #e2e8f0;
     font-size: 11px;
     font-weight: 500;
@@ -3523,7 +3561,7 @@
     align-items: center;
     gap: 6px;
     padding: 8px 12px;
-    background: #181c2a;
+    background: #252526;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
   .side-method-select {
@@ -3533,7 +3571,7 @@
     font-weight: 700;
     padding: 0 6px;
     background: #23283a;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid #3e3e42;
     color: #f1f5f9;
     outline: none;
     cursor: pointer;
@@ -3541,8 +3579,8 @@
   .side-url-input {
     flex: 1;
     height: 28px;
-    background: #0f1117;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
     border-radius: 5px;
     color: #f8fafc;
     font-size: 11px;
@@ -3551,12 +3589,12 @@
     outline: none;
   }
   .side-url-input:focus {
-    border-color: #0284c7;
+    border-color: #3883fa;
   }
   .side-proxy-select {
     height: 28px;
     background: #23283a;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid #3e3e42;
     border-radius: 5px;
     color: #cbd5e1;
     font-size: 10px;
@@ -3569,15 +3607,15 @@
     align-items: center;
     gap: 8px;
     padding: 4px 12px 8px 12px;
-    background: #181c2a;
+    background: #252526;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     font-size: 11px;
   }
   .side-custom-proxy-input {
     flex: 1;
     height: 24px;
-    background: #0f1117;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
     border-radius: 4px;
     color: #fff;
     font-size: 10px;
@@ -3591,8 +3629,8 @@
     align-items: center;
     gap: 2px;
     padding: 4px 8px 0 8px;
-    background: #141722;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: #252526;
+    border-bottom: 1px solid #3e3e42;
     overflow-x: auto;
     flex-shrink: 0;
   }
@@ -3615,8 +3653,8 @@
     color: #f1f5f9;
   }
   .side-tab-btn.active {
-    color: #38bdf8;
-    border-bottom-color: #38bdf8;
+    color: #3883fa;
+    border-bottom-color: #3883fa;
     font-weight: 600;
   }
   .side-tab-badge {
@@ -3664,7 +3702,7 @@
   .pane-action-mini-btn {
     background: rgba(2, 132, 199, 0.15);
     border: 1px solid rgba(2, 132, 199, 0.3);
-    color: #38bdf8;
+    color: #3883fa;
     font-size: 10px;
     font-weight: 600;
     padding: 3px 8px;
@@ -3682,17 +3720,17 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
     overflow: hidden;
-    background: #0f1118;
+    background: #1e1e1e;
   }
   .kv-header-row {
     display: flex;
     align-items: center;
-    background: #181c2a;
+    background: #252526;
     padding: 6px 8px;
     font-size: 10px;
     font-weight: 600;
     color: #94a3b8;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid #3e3e42;
   }
   .kv-row {
     display: flex;
@@ -3735,8 +3773,8 @@
     outline: none;
   }
   .kv-row input[type='text']:focus {
-    background: #181c2a;
-    border-color: #0284c7;
+    background: #252526;
+    border-color: #3883fa;
   }
   .kv-del-btn {
     background: transparent;
@@ -3769,7 +3807,7 @@
   }
   .preset-chip {
     background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid #3e3e42;
     color: #cbd5e1;
     font-size: 10px;
     padding: 2px 7px;
@@ -3779,13 +3817,13 @@
   .preset-chip:hover {
     background: rgba(56, 189, 248, 0.15);
     border-color: rgba(56, 189, 248, 0.3);
-    color: #38bdf8;
+    color: #3883fa;
   }
   .side-raw-textarea {
     width: 100%;
     height: 180px;
-    background: #0f1118;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
     border-radius: 6px;
     color: #f1f5f9;
     font-family: Consolas, monospace;
@@ -3801,7 +3839,7 @@
     gap: 16px;
     margin-bottom: 12px;
     padding: 6px 10px;
-    background: #181c2a;
+    background: #252526;
     border-radius: 6px;
   }
   .body-radio-label {
@@ -3835,7 +3873,7 @@
   }
   .body-tool-btn {
     background: #23283a;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid #3e3e42;
     color: #e2e8f0;
     font-size: 10px;
     font-weight: 500;
@@ -3850,7 +3888,7 @@
   .body-editor-launch-btn {
     background: rgba(2, 132, 199, 0.15);
     border-color: rgba(2, 132, 199, 0.35);
-    color: #38bdf8;
+    color: #3883fa;
     font-weight: 600;
   }
   .body-editor-launch-btn:hover {
@@ -3859,8 +3897,8 @@
   .body-code-textarea {
     width: 100%;
     height: 220px;
-    background: #0f1118;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
     border-radius: 6px;
     color: #f1f5f9;
     font-family: Consolas, monospace;
@@ -3885,7 +3923,7 @@
   .auth-select {
     height: 28px;
     background: #1e2232;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid #3e3e42;
     border-radius: 5px;
     color: #fff;
     font-size: 11px;
@@ -3903,7 +3941,7 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    background: #181c2a;
+    background: #252526;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
     padding: 12px;
@@ -3917,8 +3955,8 @@
   }
   .auth-text-input {
     height: 28px;
-    background: #0f1118;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
     border-radius: 4px;
     color: #fff;
     font-size: 11px;
@@ -3939,7 +3977,7 @@
   .auth-val-btn {
     background: rgba(2, 132, 199, 0.18);
     border: 1px solid rgba(2, 132, 199, 0.35);
-    color: #38bdf8;
+    color: #3883fa;
     font-size: 11px;
     font-weight: 500;
     padding: 4px 10px;
@@ -3968,7 +4006,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 10px;
-    background: #181c2a;
+    background: #252526;
     border-radius: 6px;
     margin-bottom: 12px;
     font-size: 11px;
@@ -3976,7 +4014,7 @@
   .env-manage-btn {
     background: rgba(2, 132, 199, 0.18);
     border: 1px solid rgba(2, 132, 199, 0.4);
-    color: #38bdf8;
+    color: #3883fa;
     font-size: 10px;
     font-weight: 600;
     padding: 3px 8px;
@@ -4009,7 +4047,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 5px 8px;
-    background: #181c2a;
+    background: #252526;
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 5px;
     font-size: 11px;
@@ -4023,7 +4061,7 @@
     gap: 6px;
     font-family: Consolas, monospace;
     font-weight: 600;
-    color: #38bdf8;
+    color: #3883fa;
   }
   .env-copy-chip {
     background: rgba(255, 255, 255, 0.08);
@@ -4052,7 +4090,7 @@
 
   /* History Tab (Strict limit of 5, No redundant body preview) */
   .response-summary-card {
-    background: #181c2a;
+    background: #252526;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
     padding: 12px;
@@ -4086,7 +4124,7 @@
   }
   .res-proxy-badge {
     font-size: 10px;
-    color: #38bdf8;
+    color: #3883fa;
     background: rgba(56, 189, 248, 0.12);
     padding: 1px 5px;
     border-radius: 3px;
@@ -4100,7 +4138,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+    background: #3883fa;
     color: #ffffff;
     border: none;
     border-radius: 5px;
@@ -4154,7 +4192,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 10px;
-    background: #181c2a;
+    background: #252526;
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 5px;
     font-size: 11px;
@@ -4174,7 +4212,7 @@
   .hist-open-btn {
     background: rgba(2, 132, 199, 0.15);
     border: 1px solid rgba(2, 132, 199, 0.35);
-    color: #38bdf8;
+    color: #3883fa;
     font-size: 10px;
     padding: 2px 7px;
     border-radius: 4px;
@@ -4199,8 +4237,8 @@
   .js-code-textarea {
     width: 100%;
     height: 260px;
-    background: #0f1118;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
     border-radius: 6px;
     color: #f8fafc;
     font-family: Consolas, monospace;
@@ -4212,7 +4250,7 @@
     tab-size: 2;
   }
   .js-console-box {
-    background: #0f1118;
+    background: #1e1e1e;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
     padding: 10px;
@@ -4243,7 +4281,7 @@
     bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
-    background: #1e2230;
+    background: #2d2d30;
     border: 1px solid #38bdf8;
     color: #e2e8f0;
     padding: 7px 16px;

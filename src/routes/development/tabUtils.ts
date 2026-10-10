@@ -327,4 +327,3 @@ export function movePrimaryTabBetweenPanes(
 
   return { updatedMap: nextMap, emptySourceLeafId }
 }
-

@@ -195,13 +195,17 @@ describe('FlowCanvas', () => {
     const zoomContainer = target.querySelector('.flow-zoom-container') as HTMLElement
     expect(zoomContainer.style.transform).toBe('scale(1)')
 
-    const zoomInBtn = target.querySelector('.flow-zoom-control button[title*="Zoom in"]') as HTMLButtonElement
+    const zoomInBtn = target.querySelector(
+      '.flow-zoom-control button[title*="Zoom in"]'
+    ) as HTMLButtonElement
     await fireEvent.click(zoomInBtn)
     await tick()
 
     expect(zoomContainer.style.transform).toContain('scale(1.15)')
 
-    const resetBtn = target.querySelector('.flow-zoom-control button[title*="Reset"]') as HTMLButtonElement
+    const resetBtn = target.querySelector(
+      '.flow-zoom-control button[title*="Reset"]'
+    ) as HTMLButtonElement
     await fireEvent.click(resetBtn)
     await tick()
 

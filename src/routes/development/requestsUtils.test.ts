@@ -541,4 +541,3 @@ describe('buildCurlCommand', () => {
     expect(parsed.body).toBe('username=testuser&password=testpass')
   })
 })
-

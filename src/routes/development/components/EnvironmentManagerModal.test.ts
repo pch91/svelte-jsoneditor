@@ -50,7 +50,9 @@ describe('EnvironmentManagerModal', () => {
 
     expect(getByText(target, 'Manage Environments (Postman Style)')).toBeTruthy()
     expect(getByText(target, 'Globals')).toBeTruthy()
-    const itemNames = Array.from(target.querySelectorAll('.item-name')).map((el) => el.textContent?.trim())
+    const itemNames = Array.from(target.querySelectorAll('.item-name')).map((el) =>
+      el.textContent?.trim()
+    )
     expect(itemNames).toContain('Dev')
     expect(itemNames).toContain('Prod')
   })
@@ -78,7 +80,9 @@ describe('EnvironmentManagerModal', () => {
     await tick()
 
     // An environment like 'Environment 1' should now exist in the sidebar
-    const itemNames = Array.from(target.querySelectorAll('.item-name')).map((el) => el.textContent?.trim())
+    const itemNames = Array.from(target.querySelectorAll('.item-name')).map((el) =>
+      el.textContent?.trim()
+    )
     expect(itemNames).toContain('Environment 1')
 
     // Can add variable row
@@ -108,9 +112,6 @@ describe('EnvironmentManagerModal', () => {
 
     const editorBtn = getByText(target, '↗ Abrir no Editor JSON')
     await fireEvent.click(editorBtn)
-    expect(onOpenInEditor).toHaveBeenCalledWith(
-      'globals.json',
-      expect.stringContaining('testVar')
-    )
+    expect(onOpenInEditor).toHaveBeenCalledWith('globals.json', expect.stringContaining('testVar'))
   })
 })

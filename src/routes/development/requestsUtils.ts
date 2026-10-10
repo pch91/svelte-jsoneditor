@@ -51,7 +51,11 @@ export function parseQueryParams(urlOrQuery: string): QueryParam[] {
   let query = ''
   if (question !== -1) {
     query = urlOrQuery.slice(question + 1)
-  } else if (!urlOrQuery.includes('://') && !urlOrQuery.startsWith('/') && urlOrQuery.includes('=')) {
+  } else if (
+    !urlOrQuery.includes('://') &&
+    !urlOrQuery.startsWith('/') &&
+    urlOrQuery.includes('=')
+  ) {
     // Raw parameter string without leading '?' (e.g. "username=admin&password=123456")
     query = urlOrQuery
   } else {

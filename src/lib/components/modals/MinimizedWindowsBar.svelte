@@ -35,11 +35,7 @@
           title="Restore: {win.pathLabel}"
         >
           <span class="jse-minimized-label">{win.pathLabel || 'Preview'}</span>
-          <span
-            class="jse-minimized-close"
-            on:click={(e) => handleClose(win.id, e)}
-            title="Close"
-          >
+          <span class="jse-minimized-close" on:click={(e) => handleClose(win.id, e)} title="Close">
             <Icon data={faTimes} scale={0.6} />
           </span>
         </button>

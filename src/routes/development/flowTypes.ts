@@ -174,10 +174,16 @@ export function executeJsSandbox(
       mockConsole.log(...args)
     },
     warn(...args: unknown[]): void {
-      logs.push('[WARN] ' + args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '))
+      logs.push(
+        '[WARN] ' +
+          args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
+      )
     },
     error(...args: unknown[]): void {
-      logs.push('[ERROR] ' + args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '))
+      logs.push(
+        '[ERROR] ' +
+          args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
+      )
     }
   }
 
@@ -206,15 +212,17 @@ export function executeJsSandbox(
 /**
  * Convert legacy chain items to a visual spatial FlowGraph
  */
-export function migrateChainToFlowGraph(chainItems: Array<{
-  method?: string
-  url?: string
-  headers?: string
-  body?: string
-  captures?: Array<{ path: string; name: string }>
-  capturePath?: string
-  captureVar?: string
-}>): FlowGraph {
+export function migrateChainToFlowGraph(
+  chainItems: Array<{
+    method?: string
+    url?: string
+    headers?: string
+    body?: string
+    captures?: Array<{ path: string; name: string }>
+    capturePath?: string
+    captureVar?: string
+  }>
+): FlowGraph {
   if (!Array.isArray(chainItems) || chainItems.length === 0) {
     return createDefaultFlowGraph()
   }
@@ -228,11 +236,12 @@ export function migrateChainToFlowGraph(chainItems: Array<{
 
   chainItems.forEach((item, index) => {
     const id = `node_${index + 1}`
-    const captures: CaptureRule[] = item.captures && item.captures.length > 0
-      ? item.captures.map((c) => ({ path: c.path, name: c.name, enabled: true }))
-      : item.capturePath && item.captureVar
-        ? [{ path: item.capturePath, name: item.captureVar, enabled: true }]
-        : []
+    const captures: CaptureRule[] =
+      item.captures && item.captures.length > 0
+        ? item.captures.map((c) => ({ path: c.path, name: c.name, enabled: true }))
+        : item.capturePath && item.captureVar
+          ? [{ path: item.capturePath, name: item.captureVar, enabled: true }]
+          : []
 
     nodes.push({
       id,

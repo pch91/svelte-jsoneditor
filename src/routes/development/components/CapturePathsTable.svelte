@@ -31,7 +31,8 @@
         if (val !== undefined) {
           testResults[idx] = {
             found: true,
-            preview: typeof val === 'object' ? JSON.stringify(val).slice(0, 30) : String(val).slice(0, 30)
+            preview:
+              typeof val === 'object' ? JSON.stringify(val).slice(0, 30) : String(val).slice(0, 30)
           }
         } else {
           testResults[idx] = {
@@ -77,7 +78,10 @@
 
   {#if captures.length === 0}
     <div class="captures-empty">
-      <p>No captures configured. Extract values from the JSON response into environment variables (ex: <code>data.token</code> → <code>token</code>).</p>
+      <p>
+        No captures configured. Extract values from the JSON response into environment variables
+        (ex: <code>data.token</code> → <code>token</code>).
+      </p>
       <button type="button" class="cap-btn-link" on:click={addRow}>＋ Add first capture</button>
     </div>
   {:else}
@@ -97,11 +101,7 @@
           {#each captures as rule, idx (idx)}
             <tr>
               <td class="col-check">
-                <input
-                  type="checkbox"
-                  title="Habilitar esta regra"
-                  bind:checked={rule.enabled}
-                />
+                <input type="checkbox" title="Habilitar esta regra" bind:checked={rule.enabled} />
               </td>
               <td class="col-path">
                 <input
@@ -112,11 +112,7 @@
               </td>
               <td class="col-arrow">→</td>
               <td class="col-var">
-                <input
-                  type="text"
-                  placeholder="ex: authToken ou charId"
-                  bind:value={rule.name}
-                />
+                <input type="text" placeholder="ex: authToken ou charId" bind:value={rule.name} />
               </td>
               <td class="col-preview">
                 {#if testResults[idx]}
@@ -125,9 +121,7 @@
                       ✓ {testResults[idx].preview}
                     </span>
                   {:else}
-                    <span class="preview-badge not-found">
-                      ⚠ Not found
-                    </span>
+                    <span class="preview-badge not-found"> ⚠ Not found </span>
                   {/if}
                 {:else}
                   <span class="preview-placeholder">—</span>
@@ -138,8 +132,8 @@
                   type="button"
                   class="cap-del-btn"
                   title="Remove rule"
-                  on:click={() => removeRow(idx)}
-                >×</button>
+                  on:click={() => removeRow(idx)}>×</button
+                >
               </td>
             </tr>
           {/each}
@@ -281,7 +275,8 @@
     accent-color: #0284c7;
     cursor: pointer;
   }
-  .col-path input, .col-var input {
+  .col-path input,
+  .col-var input {
     width: 100%;
     height: 26px;
     padding: 0 8px;

@@ -52,7 +52,12 @@ describe('2-level tabs (Primary and Secondary)', () => {
   it('adds sub-tabs to a primary tab', async () => {
     const { createPrimaryTab, addSubTabToPrimary } = await import('./tabUtils.js')
     const { primary } = createPrimaryTab(1, 'Editor 1', 101)
-    const { updatedPrimary, subTab } = addSubTabToPrimary(primary, 102, 'extract-items.json', 'extract')
+    const { updatedPrimary, subTab } = addSubTabToPrimary(
+      primary,
+      102,
+      'extract-items.json',
+      'extract'
+    )
     expect(updatedPrimary.subTabIds).toEqual([101, 102])
     expect(updatedPrimary.activeSubTabId).toBe(102)
     expect(subTab).toEqual({
@@ -74,9 +79,8 @@ describe('2-level tabs (Primary and Secondary)', () => {
   })
 
   it('promotes a sub-tab into a new primary tab', async () => {
-    const { createPrimaryTab, addSubTabToPrimary, promoteSubTabToPrimary } = await import(
-      './tabUtils.js'
-    )
+    const { createPrimaryTab, addSubTabToPrimary, promoteSubTabToPrimary } =
+      await import('./tabUtils.js')
     const { primary } = createPrimaryTab(1, 'Editor 1', 101)
     const { updatedPrimary } = addSubTabToPrimary(primary, 102, 'extract.json', 'extract')
     const { updatedSource, newPrimary, updatedSubTab } = promoteSubTabToPrimary(
@@ -95,9 +99,15 @@ describe('2-level tabs (Primary and Secondary)', () => {
 
   it('allows promotion only for non-main subtabs', async () => {
     const { canPromoteSubTab } = await import('./tabUtils.js')
-    expect(canPromoteSubTab({ id: 1, primaryTabId: 1, title: 'Principal', kind: 'main' })).toBe(false)
-    expect(canPromoteSubTab({ id: 2, primaryTabId: 1, title: 'Extract', kind: 'extract' })).toBe(true)
-    expect(canPromoteSubTab({ id: 3, primaryTabId: 1, title: 'Response', kind: 'response' })).toBe(true)
+    expect(canPromoteSubTab({ id: 1, primaryTabId: 1, title: 'Principal', kind: 'main' })).toBe(
+      false
+    )
+    expect(canPromoteSubTab({ id: 2, primaryTabId: 1, title: 'Extract', kind: 'extract' })).toBe(
+      true
+    )
+    expect(canPromoteSubTab({ id: 3, primaryTabId: 1, title: 'Response', kind: 'response' })).toBe(
+      true
+    )
     expect(canPromoteSubTab(undefined)).toBe(false)
   })
 
@@ -105,7 +115,9 @@ describe('2-level tabs (Primary and Secondary)', () => {
     const { canCloseSubTab } = await import('./tabUtils.js')
     expect(canCloseSubTab({ id: 1, primaryTabId: 1, title: 'Principal', kind: 'main' })).toBe(false)
     expect(canCloseSubTab({ id: 2, primaryTabId: 1, title: 'Extract', kind: 'extract' })).toBe(true)
-    expect(canCloseSubTab({ id: 3, primaryTabId: 1, title: 'Response', kind: 'response' })).toBe(true)
+    expect(canCloseSubTab({ id: 3, primaryTabId: 1, title: 'Response', kind: 'response' })).toBe(
+      true
+    )
     expect(canCloseSubTab({ id: 4, primaryTabId: 1, title: 'Nested', kind: 'nested' })).toBe(true)
     expect(canCloseSubTab({ id: 5, primaryTabId: 1, title: 'Preview', kind: 'preview' })).toBe(true)
     expect(canCloseSubTab(undefined)).toBe(false)
@@ -162,4 +174,3 @@ describe('2-level tabs (Primary and Secondary)', () => {
     expect(res.emptySourceLeafId).toBeUndefined()
   })
 })
-

@@ -242,7 +242,9 @@
                   <span class="content-badge">GLOBAL</span>
                   <h2>Global Variables</h2>
                 </div>
-                <p class="content-subtitle">These variables are available to ALL requests in any environment.</p>
+                <p class="content-subtitle">
+                  These variables are available to ALL requests in any environment.
+                </p>
               </div>
               <div class="content-header-actions">
                 {#if onOpenInEditor}
@@ -265,7 +267,9 @@
                     placeholder="Environment name..."
                   />
                 </div>
-                <p class="content-subtitle">Variables specific to this environment. Duplicates take priority over Globals.</p>
+                <p class="content-subtitle">
+                  Variables specific to this environment. Duplicates take priority over Globals.
+                </p>
               </div>
               <div class="content-header-actions">
                 <button
@@ -300,9 +304,7 @@
               <span class="col-act"></span>
             </div>
             {#if rows.length === 0}
-              <div class="env-table-empty">
-                No variables in this environment.
-              </div>
+              <div class="env-table-empty">No variables in this environment.</div>
             {:else}
               <div class="env-table-scroll">
                 {#each rows as row, rIdx}
@@ -352,7 +354,11 @@
         <div class="env-footer-info">
           <span>Active Environment: <strong>{activeEnvName || '(None)'}</strong></span>
           {#if activeEnvName}
-            <span class="env-active-meta">({Object.keys(environments[activeEnvName] ?? {}).length} variables + {Object.keys(globalEnvironment).length} globals)</span>
+            <span class="env-active-meta"
+              >({Object.keys(environments[activeEnvName] ?? {}).length} variables + {Object.keys(
+                globalEnvironment
+              ).length} globals)</span
+            >
           {/if}
         </div>
         <button type="button" class="env-modal-done-btn jse-primary" on:click={onClose}>
@@ -389,7 +395,8 @@
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
     overflow: hidden;
     color: #333333;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   }
 
   /* Header (svelte-jsoneditor standard: azul #3883fa) */
@@ -559,7 +566,9 @@
     padding: 0 4px;
     border-radius: 3px;
     opacity: 0;
-    transition: opacity 0.15s, color 0.15s;
+    transition:
+      opacity 0.15s,
+      color 0.15s;
   }
   .env-sidebar-item:hover .env-del-btn {
     opacity: 1;
@@ -667,7 +676,9 @@
     padding: 5px 10px;
     border-radius: 3px;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
   }
   .env-tool-btn:hover {
     background: #f8fafc;
