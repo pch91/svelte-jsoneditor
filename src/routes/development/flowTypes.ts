@@ -1,7 +1,11 @@
 import type { CaptureRule } from './tabUtils.js'
 import type { HeaderRow, QueryParam } from './requestsUtils.js'
 
-export type FlowNodeType = 'rest' | 'js'
+export type FlowNodeType = 'rest' | 'js' | 'start' | 'terminate' | 'event-throw' | 'event-catch'
+
+export interface FlowNodeEventData {
+  eventName: string
+}
 
 export interface FlowNodeRestData {
   method: string
@@ -62,6 +66,7 @@ export interface FlowNode {
   y: number
   restData?: FlowNodeRestData
   jsData?: FlowNodeJsData
+  eventData?: FlowNodeEventData
   status?: FlowNodeExecutionStatus
   lastRun?: FlowNodeLastRun
   history?: FlowNodeExecutionHistoryEntry[]
@@ -278,20 +283,32 @@ export function migrateChainToFlowGraph(
 }
 
 /**
- * Initial example flow:
- * Step 1: GET character 1 -> captures charId
- * Step 2: JS Script -> processes charId, sets message
- * Step 3: GET episode with charId -> captures episodeName
+ * Initial Rick & Morty example flow:
+ * 1. Start node (Bola Verde)
+ * 2. REST: GET character 1 -> captures charId, charStatus, charName
+ * 3. JS: Script with if condition, reading and writing environment variables
+ * 4. Event Throw (Bola Azul Cheia): broadcast "valida total"
+ * 5. Event Catch (Bola Azul Pontilhada): catch "valida total"
+ * 6. REST: GET episode with {{charId}} -> captures episodeName
+ * 7. Terminate (Bola Vermelha): halts execution
  */
 export function createDefaultFlowGraph(): FlowGraph {
   return {
     nodes: [
       {
+        id: 'node_start',
+        type: 'start',
+        title: 'Início',
+        x: 60,
+        y: 123,
+        status: 'idle'
+      },
+      {
         id: 'node_1',
         type: 'rest',
         title: '1. Buscar Personagem',
-        x: 60,
-        y: 120,
+        x: 160,
+        y: 80,
         restData: {
           method: 'GET',
           url: '{{baseUrl}}/character/1',
@@ -300,7 +317,11 @@ export function createDefaultFlowGraph(): FlowGraph {
           bodyType: 'json',
           proxyMode: 'inherit',
           authType: 'inherit',
-          captures: [{ path: 'id', name: 'charId', enabled: true }]
+          captures: [
+            { path: 'id', name: 'charId', enabled: true },
+            { path: 'status', name: 'charStatus', enabled: true },
+            { path: 'name', name: 'charName', enabled: true }
+          ]
         },
         status: 'idle'
       },
@@ -308,26 +329,56 @@ export function createDefaultFlowGraph(): FlowGraph {
         id: 'node_2',
         type: 'js',
         title: '2. Script de Validação',
-        x: 380,
-        y: 120,
+        x: 490,
+        y: 80,
         jsData: {
-          code: `// Pega a variável capturada pelo bloco anterior
+          code: `// Obtém variáveis capturadas do passo anterior
 const charId = pm.environment.get("charId");
-console.log("ID capturado do personagem:", charId);
+const charName = pm.environment.get("charName") || "Rick Sanchez";
+const charStatus = pm.environment.get("charStatus") || "Alive";
 
-// Define uma nova variável para o próximo bloco REST
-pm.environment.set("customHeader", "SvelteFlow-Agent");
-pm.environment.set("charIdTimesTwo", Number(charId || 1) * 2);
+console.log(\`Personagem: \${charName} (ID: \${charId}), Status: \${charStatus}\`);
+
+// Validação condicional com IF e atualização de ambiente
+if (charStatus === "Alive" && Number(charId) > 0) {
+  console.log("Validação aprovada: Personagem ativo e válido!");
+  pm.environment.set("isValidCharacter", "true");
+  pm.environment.set("customHeader", "RickMorty-Verified");
+  pm.environment.set("charIdTimesTwo", Number(charId || 1) * 2);
+} else {
+  console.warn("Validação alternativa acionada para fallback");
+  pm.environment.set("isValidCharacter", "false");
+  pm.environment.set("customHeader", "RickMorty-Fallback");
+}
+
 console.log("Variáveis de ambiente atualizadas com sucesso!");`
         },
+        status: 'idle'
+      },
+      {
+        id: 'node_event_throw',
+        type: 'event-throw',
+        title: 'Salto: valida total',
+        eventData: { eventName: 'valida total' },
+        x: 820,
+        y: 123,
+        status: 'idle'
+      },
+      {
+        id: 'node_event_catch',
+        type: 'event-catch',
+        title: 'Receptor: valida total',
+        eventData: { eventName: 'valida total' },
+        x: 60,
+        y: 303,
         status: 'idle'
       },
       {
         id: 'node_3',
         type: 'rest',
         title: '3. Buscar Episódio',
-        x: 700,
-        y: 120,
+        x: 160,
+        y: 260,
         restData: {
           method: 'GET',
           url: '{{baseUrl}}/episode/{{charId}}',
@@ -339,9 +390,23 @@ console.log("Variáveis de ambiente atualizadas com sucesso!");`
           captures: [{ path: 'name', name: 'episodeName', enabled: true }]
         },
         status: 'idle'
+      },
+      {
+        id: 'node_terminate',
+        type: 'terminate',
+        title: 'Fim do Fluxo',
+        x: 490,
+        y: 303,
+        status: 'idle'
       }
     ],
     connections: [
+      {
+        id: 'conn_start_1',
+        fromId: 'node_start',
+        toId: 'node_1',
+        kind: 'solid'
+      },
       {
         id: 'conn_1_2',
         fromId: 'node_1',
@@ -349,9 +414,21 @@ console.log("Variáveis de ambiente atualizadas com sucesso!");`
         kind: 'solid'
       },
       {
-        id: 'conn_2_3',
+        id: 'conn_2_throw',
         fromId: 'node_2',
+        toId: 'node_event_throw',
+        kind: 'solid'
+      },
+      {
+        id: 'conn_catch_3',
+        fromId: 'node_event_catch',
         toId: 'node_3',
+        kind: 'solid'
+      },
+      {
+        id: 'conn_3_terminate',
+        fromId: 'node_3',
+        toId: 'node_terminate',
         kind: 'solid'
       }
     ]
@@ -381,6 +458,15 @@ export function serializeFlowFile(graph: FlowGraph): string {
   )
 }
 
+const VALID_FLOW_NODE_TYPES = new Set<FlowNodeType>([
+  'rest',
+  'js',
+  'start',
+  'terminate',
+  'event-throw',
+  'event-catch'
+])
+
 /**
  * Parse a flow file. Accepts the wrapped format `{ format, version, graph }`
  * or a bare `{ nodes, connections }` graph. Throws an Error with a readable message when invalid.
@@ -402,7 +488,7 @@ export function parseFlowFile(text: string): FlowGraph {
   }
   const nodes: FlowNode[] = []
   for (const n of raw.nodes as Partial<FlowNode>[]) {
-    if (!n || typeof n.id !== 'string' || (n.type !== 'rest' && n.type !== 'js')) {
+    if (!n || typeof n.id !== 'string' || !VALID_FLOW_NODE_TYPES.has(n.type as FlowNodeType)) {
       throw new Error('Invalid node in flow file')
     }
     nodes.push({

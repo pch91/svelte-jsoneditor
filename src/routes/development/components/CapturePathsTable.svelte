@@ -141,51 +141,63 @@
   {/if}
 </div>
 
-<style>
+<style lang="scss">
   .captures-container {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    background: rgba(18, 20, 26, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-main, rgba(255, 255, 255, 0.1));
     border-radius: 8px;
     padding: 10px 12px;
     font-size: 12px;
+    box-shadow: var(--theme-shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.08));
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
+
+    &.compact {
+      padding: 6px 8px;
+      gap: 6px;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+    }
   }
-  .captures-container.compact {
-    padding: 6px 8px;
-    gap: 6px;
-    background: transparent;
-    border: none;
-  }
+
   .captures-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
   }
+
   .captures-title {
     display: flex;
     align-items: center;
     gap: 6px;
     font-weight: 600;
-    color: #e2e8f0;
+    color: var(--theme-t-bright, #e2e8f0);
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
+
   .captures-badge {
-    background: rgba(255, 255, 255, 0.1);
-    color: #94a3b8;
+    background: var(--theme-bg-hover, rgba(255, 255, 255, 0.1));
+    color: var(--theme-t-muted, #94a3b8);
+    border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
     padding: 1px 6px;
     border-radius: 10px;
     font-size: 10px;
   }
+
   .captures-actions {
     display: flex;
     align-items: center;
     gap: 8px;
   }
+
   .cap-btn {
     display: inline-flex;
     align-items: center;
@@ -199,150 +211,221 @@
     cursor: pointer;
     transition: all 0.12s ease;
   }
+
   .cap-btn-test {
-    background: rgba(16, 185, 129, 0.12);
-    color: #34d399;
-    border-color: rgba(16, 185, 129, 0.3);
+    background: rgba(16, 185, 129, 0.14);
+    color: #10b981;
+    border-color: rgba(16, 185, 129, 0.35);
+
     &:hover {
-      background: rgba(16, 185, 129, 0.22);
-      border-color: #34d399;
+      background: rgba(16, 185, 129, 0.24);
+      border-color: #10b981;
     }
   }
-  .cap-btn-add {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-    border-color: rgba(59, 130, 246, 0.3);
+
+  :global(.jse-theme-default) .cap-btn-test,
+  :global(.jse-theme-light) .cap-btn-test {
+    background: rgba(16, 185, 129, 0.12);
+    color: #047857;
+    border-color: rgba(16, 185, 129, 0.4);
+
     &:hover {
-      background: rgba(59, 130, 246, 0.25);
+      background: rgba(16, 185, 129, 0.22);
+      border-color: #047857;
+      color: #065f46;
+    }
+  }
+
+  .cap-btn-add {
+    background: var(--theme-ac, #0078d4);
+    color: #ffffff;
+    border-color: transparent;
+
+    &:hover {
+      background: var(--theme-ac-hover, #0067b8);
+    }
+  }
+
+  :global(.jse-theme-dark) .cap-btn-add {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border-color: rgba(59, 130, 246, 0.4);
+
+    &:hover {
+      background: rgba(59, 130, 246, 0.3);
       border-color: #60a5fa;
     }
   }
+
   .captures-empty {
-    padding: 12px;
+    padding: 14px;
     text-align: center;
-    color: #94a3b8;
+    color: var(--theme-t-muted, #94a3b8);
     font-size: 11px;
-    background: rgba(0, 0, 0, 0.15);
+    background: var(--theme-bg-panel, rgba(0, 0, 0, 0.04));
     border-radius: 6px;
-    border: 1px dashed rgba(255, 255, 255, 0.1);
+    border: 1px dashed var(--theme-b-main, #cbd5e1);
+
+    code {
+      background: var(--theme-bg-hover, rgba(0, 0, 0, 0.06));
+      border: 1px solid var(--theme-b-subtle, transparent);
+      padding: 2px 5px;
+      border-radius: 3px;
+      color: var(--theme-accent-text, #0078d4);
+      font-family: Consolas, monospace;
+    }
   }
-  .captures-empty code {
-    background: rgba(255, 255, 255, 0.08);
-    padding: 2px 4px;
-    border-radius: 3px;
-    color: #38bdf8;
-  }
+
   .cap-btn-link {
     margin-top: 6px;
     background: none;
     border: none;
-    color: #38bdf8;
+    color: var(--theme-ac, #0078d4);
     cursor: pointer;
     font-size: 11px;
     text-decoration: underline;
+
     &:hover {
-      color: #7dd3fc;
+      color: var(--theme-ac-hover, #0067b8);
     }
   }
+
   .captures-table-wrapper {
     overflow-x: auto;
   }
+
   .captures-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 11px;
+
+    th {
+      text-align: left;
+      color: var(--theme-t-muted, #64748b);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
+    }
+
+    td {
+      padding: 4px 4px;
+    }
   }
-  .captures-table th {
-    text-align: left;
-    color: #94a3b8;
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 4px 6px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+
+  :global(.jse-theme-default) .captures-table th,
+  :global(.jse-theme-light) .captures-table th {
+    color: #64748b;
+    border-bottom: 1px solid #e2e8f0;
   }
-  .captures-table td {
-    padding: 4px 4px;
-  }
+
   .col-check {
     width: 28px;
     text-align: center;
+
+    input {
+      accent-color: var(--theme-ac, #0078d4);
+      cursor: pointer;
+    }
   }
-  .col-check input {
-    accent-color: #0284c7;
-    cursor: pointer;
-  }
+
   .col-path input,
   .col-var input {
     width: 100%;
-    height: 26px;
+    height: 28px;
     padding: 0 8px;
     font-size: 11px;
     font-family: Consolas, monospace;
-    background: var(--theme-bg-input, #111318);
-    color: var(--theme-t-bright, #f8fafc);
-    border: 1px solid var(--theme-b-input, rgba(255, 255, 255, 0.14));
+    background: var(--theme-bg-input, #ffffff);
+    color: var(--theme-t-bright, #0f172a);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 4px;
     outline: none;
-    transition: border-color 0.12s ease;
+    transition: all 0.12s ease;
+
     &:focus {
-      border-color: #0284c7;
-      box-shadow: 0 0 0 1px rgba(2, 132, 199, 0.3);
+      border-color: var(--theme-ac, #0078d4);
+      box-shadow: 0 0 0 2px var(--theme-ac-subtle, rgba(0, 120, 212, 0.2));
     }
+
     &::placeholder {
-      color: #64748b;
+      color: var(--theme-t-muted, #94a3b8);
+      opacity: 0.7;
     }
   }
+
   .col-arrow {
     width: 20px;
     text-align: center;
-    color: #64748b;
+    color: var(--theme-t-muted, #64748b);
     font-weight: bold;
   }
+
   .col-preview {
     min-width: 120px;
     padding: 0 6px;
   }
+
   .preview-badge {
     display: inline-block;
     max-width: 140px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    padding: 2px 6px;
+    padding: 2px 7px;
     border-radius: 4px;
     font-size: 10px;
     font-family: Consolas, monospace;
+
+    &.found {
+      background: rgba(16, 185, 129, 0.14);
+      color: #047857;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+    }
+
+    &.not-found {
+      background: rgba(239, 68, 68, 0.12);
+      color: #b91c1c;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
   }
-  .preview-badge.found {
+
+  :global(.jse-theme-dark) .preview-badge.found {
     background: rgba(16, 185, 129, 0.2);
     color: #34d399;
-    border: 1px solid rgba(16, 185, 129, 0.4);
+    border-color: rgba(16, 185, 129, 0.4);
   }
-  .preview-badge.not-found {
-    background: rgba(239, 68, 68, 0.15);
+
+  :global(.jse-theme-dark) .preview-badge.not-found {
+    background: rgba(239, 68, 68, 0.2);
     color: #f87171;
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-color: rgba(239, 68, 68, 0.4);
   }
+
   .preview-placeholder {
-    color: #475569;
+    color: var(--theme-t-muted, #64748b);
   }
+
   .col-actions {
     width: 28px;
     text-align: right;
   }
+
   .cap-del-btn {
     background: transparent;
     border: none;
-    color: #94a3b8;
+    color: var(--theme-t-muted, #94a3b8);
     font-size: 14px;
     cursor: pointer;
-    padding: 2px 6px;
+    padding: 3px 6px;
     border-radius: 4px;
     line-height: 1;
+    transition: all 0.12s ease;
+
     &:hover {
-      background: rgba(239, 68, 68, 0.2);
+      background: rgba(239, 68, 68, 0.15);
       color: #ef4444;
     }
   }

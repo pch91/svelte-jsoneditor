@@ -67,12 +67,25 @@ describe('migrateChainToFlowGraph', () => {
 })
 
 describe('createDefaultFlowGraph', () => {
-  it('returns a multi-node workflow with REST and JS nodes', () => {
+  it('returns a complete Rick & Morty workflow with start, rest, js, events, and terminate', () => {
     const graph = createDefaultFlowGraph()
-    expect(graph.nodes.length).toBe(3)
+    expect(graph.nodes.length).toBe(7)
+    expect(graph.nodes.some((n) => n.type === 'start')).toBe(true)
     expect(graph.nodes.some((n) => n.type === 'rest')).toBe(true)
     expect(graph.nodes.some((n) => n.type === 'js')).toBe(true)
-    expect(graph.connections.length).toBe(2)
+    expect(graph.nodes.some((n) => n.type === 'event-throw')).toBe(true)
+    expect(graph.nodes.some((n) => n.type === 'event-catch')).toBe(true)
+    expect(graph.nodes.some((n) => n.type === 'terminate')).toBe(true)
+    expect(graph.connections.length).toBe(5)
+
+    const jsNode = graph.nodes.find((n) => n.type === 'js')
+    expect(jsNode?.jsData?.code).toContain('if (charStatus === "Alive"')
+    expect(jsNode?.jsData?.code).toContain('pm.environment.set')
+
+    const throwNode = graph.nodes.find((n) => n.type === 'event-throw')
+    const catchNode = graph.nodes.find((n) => n.type === 'event-catch')
+    expect(throwNode?.eventData?.eventName).toBe('valida total')
+    expect(catchNode?.eventData?.eventName).toBe('valida total')
   })
 })
 
@@ -82,17 +95,36 @@ import type { FlowGraph } from './flowTypes.js'
 describe('flow file import/export', () => {
   const graph: FlowGraph = {
     nodes: [
+      { id: 's', type: 'start', title: 'Start', x: 0, y: 0 },
       { id: 'a', type: 'rest', title: 'A', x: 1, y: 2, status: 'success', history: [] },
-      { id: 'b', type: 'js', title: 'B', x: 5, y: 6 }
+      { id: 'b', type: 'js', title: 'B', x: 5, y: 6 },
+      {
+        id: 't',
+        type: 'event-throw',
+        title: 'Throw',
+        x: 10,
+        y: 10,
+        eventData: { eventName: 'valida total' }
+      },
+      {
+        id: 'c',
+        type: 'event-catch',
+        title: 'Catch',
+        x: 20,
+        y: 20,
+        eventData: { eventName: 'valida total' }
+      },
+      { id: 'term', type: 'terminate', title: 'End', x: 30, y: 30 }
     ],
     connections: [{ id: 'c1', fromId: 'a', toId: 'b', kind: 'dotted' }]
   }
 
-  it('round-trips a graph without runtime state', () => {
+  it('round-trips a graph with all node types without runtime state', () => {
     const text = serializeFlowFile(graph)
     expect(text).not.toContain('"status"')
     const back = parseFlowFile(text)
-    expect(back.nodes.map((n) => n.id)).toEqual(['a', 'b'])
+    expect(back.nodes.map((n) => n.id)).toEqual(['s', 'a', 'b', 't', 'c', 'term'])
+    expect(back.nodes.find((n) => n.id === 't')?.eventData?.eventName).toBe('valida total')
     expect(back.connections[0].kind).toBe('dotted')
   })
 
@@ -113,9 +145,10 @@ describe('flow file import/export', () => {
 
   it('remaps ids consistently', () => {
     const r = remapFlowGraphIds(graph, 10, 20)
-    expect(r.nodes[0].id).not.toBe('a')
-    expect(r.nodes[0].x).toBe(11)
-    expect(r.connections[0].fromId).toBe(r.nodes[0].id)
-    expect(r.connections[0].toId).toBe(r.nodes[1].id)
+    expect(r.nodes[0].id).not.toBe('s')
+    expect(r.nodes[0].x).toBe(10)
+    expect(r.nodes[1].x).toBe(11)
+    expect(r.connections[0].fromId).toBe(r.nodes[1].id)
+    expect(r.connections[0].toId).toBe(r.nodes[2].id)
   })
 })

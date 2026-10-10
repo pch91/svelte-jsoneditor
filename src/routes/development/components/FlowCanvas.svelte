@@ -105,6 +105,12 @@
   // Selection & Side Panel Inspector State
   let selectedNodeId: string | null = null
   let selectedConnection: FlowConnection | null = null
+  let activeCircleSwitcherId: string | null = null
+
+  function toggleCircleSwitcher(nodeId: string) {
+    activeCircleSwitcherId = activeCircleSwitcherId === nodeId ? null : nodeId
+  }
+
   let sidePanelWidth = 520
   let isResizingSidePanel = false
   let sidePanelTab:
@@ -115,7 +121,8 @@
     | 'captures'
     | 'env'
     | 'response'
-    | 'script' = 'params'
+    | 'script'
+    | 'config' = 'params'
 
   // Header editing mode (table vs raw)
   let headersRawMode = false
@@ -160,18 +167,26 @@
 
   // --- NODE SELECTION ---
   function selectNode(node: FlowNode) {
+    if (selectedNodeId !== node.id) {
+      activeCircleSwitcherId = null
+    }
     selectedNodeId = node.id
     authValidationStatus = null
     showCurlImport = false
     if (node.type === 'rest') {
-      if (sidePanelTab === 'script') sidePanelTab = 'params'
+      if (sidePanelTab === 'script' || sidePanelTab === 'config') sidePanelTab = 'params'
+    } else if (node.type === 'js') {
+      if (sidePanelTab !== 'script' && sidePanelTab !== 'env' && sidePanelTab !== 'response') {
+        sidePanelTab = 'script'
+      }
     } else {
-      sidePanelTab = 'script'
+      sidePanelTab = 'config'
     }
   }
 
   function closeSidePanel() {
     selectedNodeId = null
+    activeCircleSwitcherId = null
     showCurlImport = false
   }
 
@@ -282,6 +297,11 @@
     const fromId = connectingFromId
     connectingFromId = null
 
+    const toNode = flowGraph.nodes.find((n) => n.id === toId)
+    if (toNode?.type === 'start') return
+    const fromNode = flowGraph.nodes.find((n) => n.id === fromId)
+    if (fromNode?.type === 'terminate') return
+
     const exists = flowGraph.connections.find((c) => c.fromId === fromId && c.toId === toId)
     if (!exists) {
       const newConn: FlowConnection = {
@@ -323,6 +343,7 @@
       target.classList.contains('flow-svg-layer')
     ) {
       selectedConnection = null
+      activeCircleSwitcherId = null
     }
   }
 
@@ -348,10 +369,18 @@
 
   // --- ADD / REMOVE NODES ---
   function addNodeAt(type: FlowNodeType, x: number, y: number) {
+    let defaultTitle = 'New Block'
+    if (type === 'rest') defaultTitle = 'New REST Request'
+    else if (type === 'js') defaultTitle = 'New JS Script'
+    else if (type === 'start') defaultTitle = 'Início'
+    else if (type === 'terminate') defaultTitle = 'Terminate'
+    else if (type === 'event-throw') defaultTitle = 'Salto Evento'
+    else if (type === 'event-catch') defaultTitle = 'Receptor Evento'
+
     const newNode: FlowNode = {
       id: `node_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       type,
-      title: type === 'rest' ? 'New REST Request' : 'New JS Script',
+      title: defaultTitle,
       x,
       y,
       status: 'idle',
@@ -371,14 +400,21 @@
         authType: 'inherit',
         captures: []
       }
-    } else {
+    } else if (type === 'js') {
       newNode.jsData = {
-        code: `// JavaScript script to prepare or transform data\n// Available environment variables:\nconst charId = pm.environment.get('charId') || 1;\nconsole.log('Selected character ID:', charId);\npm.environment.set('nextCharId', Number(charId) + 1);\n`
+        code: `// Script JavaScript com validação condicional IF\nconst charId = pm.environment.get('charId') || 1;\nif (Number(charId) > 0) {\n  pm.environment.set('isValid', 'true');\n  console.log('Validado com sucesso:', charId);\n}\n`
+      }
+    } else if (type === 'event-throw' || type === 'event-catch') {
+      newNode.eventData = {
+        eventName: 'valida total'
       }
     }
 
     flowGraph.nodes = [...flowGraph.nodes, newNode]
     selectNode(newNode)
+    if (isCircleNode(newNode.type)) {
+      activeCircleSwitcherId = newNode.id
+    }
     notifyChange()
     return newNode
   }
@@ -417,23 +453,32 @@
     }
   }
 
+  const VALID_NODE_TYPES: FlowNodeType[] = [
+    'rest',
+    'js',
+    'start',
+    'terminate',
+    'event-throw',
+    'event-catch'
+  ]
+
   function onCanvasDrop(e: DragEvent) {
-    const type = (e.dataTransfer?.getData('application/x-flow-node-type') ||
+    const rawType = (e.dataTransfer?.getData('application/x-flow-node-type') ||
       e.dataTransfer?.getData('text/plain') ||
       draggingNewBlockType) as FlowNodeType | undefined
 
-    if (type === 'rest' || type === 'js') {
+    if (rawType && VALID_NODE_TYPES.includes(rawType)) {
       e.preventDefault()
       if (canvasEl) {
         const rect = canvasEl.getBoundingClientRect()
         const dropX = Math.round((e.clientX - rect.left + canvasEl.scrollLeft) / zoomLevel)
         const dropY = Math.round((e.clientY - rect.top + canvasEl.scrollTop) / zoomLevel)
-        // Center the 280px wide node around drop location
-        const finalX = Math.max(20, dropX - 140)
-        const finalY = Math.max(20, dropY - 45)
-        addNodeAt(type, finalX, finalY)
+        const isCircle = isCircleNode(rawType)
+        const finalX = Math.max(20, dropX - (isCircle ? 27 : 140))
+        const finalY = Math.max(20, dropY - (isCircle ? 27 : 45))
+        addNodeAt(rawType, finalX, finalY)
       } else {
-        addNode(type)
+        addNode(rawType)
       }
     }
     draggingNewBlockType = null
@@ -447,14 +492,47 @@
     if (selectedNodeId === nodeId) {
       selectedNodeId = null
     }
+    if (activeCircleSwitcherId === nodeId) {
+      activeCircleSwitcherId = null
+    }
+    notifyChange()
+  }
+
+  function setCircleNodeType(node: FlowNode, newType: FlowNodeType) {
+    if (node.type === newType) {
+      activeCircleSwitcherId = null
+      return
+    }
+    node.type = newType
+    if (newType === 'start') {
+      node.title = 'Início'
+    } else if (newType === 'terminate') {
+      node.title = 'Fim do Fluxo'
+    } else if (newType === 'event-throw') {
+      if (!node.eventData) node.eventData = { eventName: 'valida total' }
+      node.title = `Salto: ${node.eventData.eventName || 'valida total'}`
+    } else if (newType === 'event-catch') {
+      if (!node.eventData) node.eventData = { eventName: 'valida total' }
+      node.title = `Receptor: ${node.eventData.eventName || 'valida total'}`
+    }
+    activeCircleSwitcherId = null
+    flowGraph = { ...flowGraph }
     notifyChange()
   }
 
   function autoLayout() {
-    const NODE_W = 280
-    const NODE_H = 140
-    const GAP_X = 140
-    const GAP_Y = 50
+    if (!flowGraph.nodes.length) return
+
+    const CARD_W = 280
+    const CARD_H = 140
+    const CIRCLE_SIZE = 54
+    const GAP_CARD = 50
+    const GAP_CIRCLE = 40
+    const ROW_HEIGHT = 180
+    const MAX_ROW_WIDTH = 960
+
+    const getNodeWidth = (type: FlowNodeType) => (isCircleNode(type) ? CIRCLE_SIZE : CARD_W)
+    const getNodeHeight = (type: FlowNodeType) => (isCircleNode(type) ? CIRCLE_SIZE : CARD_H)
 
     const inDegree: Record<string, number> = {}
     const adj: Record<string, string[]> = {}
@@ -469,6 +547,21 @@
       if (adj[c.fromId]) adj[c.fromId].push(c.toId)
     })
 
+    // Implicit wireless connection between throw and catch with matching eventName
+    flowGraph.nodes.forEach((n) => {
+      if (n.type === 'event-catch' && n.eventData?.eventName) {
+        const targetEvt = n.eventData.eventName.trim().toLowerCase()
+        const matchingThrow = flowGraph.nodes.find(
+          (t) =>
+            t.type === 'event-throw' && t.eventData?.eventName?.trim().toLowerCase() === targetEvt
+        )
+        if (matchingThrow && !adj[matchingThrow.id].includes(n.id)) {
+          adj[matchingThrow.id].push(n.id)
+          inDegree[n.id]++
+        }
+      }
+    })
+
     const levels: Record<string, number> = {}
     const queue = flowGraph.nodes.filter((n) => inDegree[n.id] === 0).map((n) => n.id)
 
@@ -476,8 +569,10 @@
       levels[id] = 0
     })
 
+    const visited = new Set<string>()
     while (queue.length > 0) {
       const u = queue.shift()!
+      visited.add(u)
       const currentLevel = levels[u] ?? 0
       for (const v of adj[u] ?? []) {
         levels[v] = Math.max(levels[v] ?? 0, currentLevel + 1)
@@ -488,19 +583,47 @@
       }
     }
 
-    const levelGroups: Record<number, FlowNode[]> = {}
     flowGraph.nodes.forEach((n) => {
-      const lvl = levels[n.id] ?? 0
-      if (!levelGroups[lvl]) levelGroups[lvl] = []
-      levelGroups[lvl].push(n)
+      if (!visited.has(n.id)) {
+        levels[n.id] = 0
+      }
     })
 
-    Object.entries(levelGroups).forEach(([lvlStr, nodesInLevel]) => {
-      const lvl = Number(lvlStr)
-      nodesInLevel.forEach((node, idx) => {
-        node.x = 60 + lvl * (NODE_W + GAP_X)
-        node.y = 60 + idx * (NODE_H + GAP_Y)
-      })
+    // Sort nodes topologically by level
+    const maxLevel = Math.max(...Object.values(levels), 0)
+    const orderedNodes: FlowNode[] = []
+    for (let l = 0; l <= maxLevel; l++) {
+      const nodesAtL = flowGraph.nodes.filter((n) => (levels[n.id] ?? 0) === l)
+      orderedNodes.push(...nodesAtL)
+    }
+
+    // Smart multi-row packing layout with centered vertical alignment
+    let currentRow = 0
+    let currentX = 60
+    const startY = 80
+
+    orderedNodes.forEach((node, index) => {
+      const w = getNodeWidth(node.type)
+      const gap = isCircleNode(node.type) ? GAP_CIRCLE : GAP_CARD
+
+      // Break to next row if:
+      // 1. It is an event-catch node and previous nodes exist (wireless jump starts next row)
+      // 2. OR currentX + w > MAX_ROW_WIDTH and there is already content on this row
+      const shouldBreakRow =
+        index > 0 &&
+        ((node.type === 'event-catch' && currentX > 200) ||
+          (currentX + w > MAX_ROW_WIDTH && currentX > 300))
+
+      if (shouldBreakRow) {
+        currentRow++
+        currentX = 60
+      }
+
+      const rowCenterY = startY + currentRow * ROW_HEIGHT + CARD_H / 2
+      node.x = Math.round(currentX)
+      node.y = Math.round(rowCenterY - getNodeHeight(node.type) / 2)
+
+      currentX += w + gap
     })
 
     flowGraph = { ...flowGraph }
@@ -509,6 +632,13 @@
   }
 
   function resetToExample() {
+    if (!environments['Rick & Morty']) {
+      environments['Rick & Morty'] = { baseUrl: 'https://rickandmortyapi.com/api' }
+      environments = { ...environments }
+    }
+    if (!activeEnvName) {
+      activeEnvName = 'Rick & Morty'
+    }
     flowGraph = createDefaultFlowGraph()
     selectedNodeId = flowGraph.nodes[0]?.id ?? null
     notifyChange()
@@ -1005,6 +1135,44 @@
           }
           showToast(`Script error: ${res.error}`)
         }
+      } else if (node.type === 'start') {
+        node.status = 'success'
+        node.lastRun = {
+          durationMs: 0,
+          status: 'START',
+          outputSummary: 'Ponto de início pronto',
+          timestamp: Date.now()
+        }
+        showToast('Ponto de início acionado!')
+      } else if (node.type === 'terminate') {
+        node.status = 'success'
+        node.lastRun = {
+          durationMs: 0,
+          status: 'TERMINATED',
+          outputSummary: 'Execução finalizada',
+          timestamp: Date.now()
+        }
+        showToast('Bloco Terminate executado!')
+      } else if (node.type === 'event-throw') {
+        const ev = node.eventData?.eventName || 'valida total'
+        node.status = 'success'
+        node.lastRun = {
+          durationMs: 0,
+          status: 'EVENT_THROWN',
+          outputSummary: `Disparou: "${ev}"`,
+          timestamp: Date.now()
+        }
+        showToast(`Evento disparado: "${ev}"`)
+      } else if (node.type === 'event-catch') {
+        const ev = node.eventData?.eventName || 'valida total'
+        node.status = 'success'
+        node.lastRun = {
+          durationMs: 0,
+          status: 'EVENT_CAUGHT',
+          outputSummary: `Recebeu: "${ev}"`,
+          timestamp: Date.now()
+        }
+        showToast(`Evento recebido: "${ev}"`)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1038,6 +1206,9 @@
     let currentEnv = { ...activeEnv }
     const completedNodes = new Set<string>()
     const failedNodes = new Set<string>()
+    const activeEvents = new Set<string>()
+    let flowTerminated = false
+    const hasStartNodes = flowGraph.nodes.some((n) => n.type === 'start')
 
     const getSolidPrereqs = (nodeId: string): string[] => {
       return flowGraph.connections
@@ -1052,13 +1223,24 @@
     }
 
     const isReadyToRun = (node: FlowNode): boolean => {
+      if (flowTerminated) return false
       if (completedNodes.has(node.id) || failedNodes.has(node.id) || node.status === 'running')
         return false
+
+      if (node.type === 'event-catch') {
+        const evName = (node.eventData?.eventName || '').trim().toLowerCase()
+        if (!evName || !activeEvents.has(evName)) {
+          return false
+        }
+      }
 
       const solidPre = getSolidPrereqs(node.id)
       const dottedPre = getDottedPrereqs(node.id)
 
-      if (solidPre.length === 0 && dottedPre.length === 0) {
+      if (node.type !== 'event-catch' && solidPre.length === 0 && dottedPre.length === 0) {
+        if (hasStartNodes && node.type !== 'start') {
+          return false
+        }
         return true
       }
 
@@ -1066,11 +1248,12 @@
       if (!allSolidDone) return false
 
       if (solidPre.length > 0) return true
+      if (node.type === 'event-catch') return true
       return dottedPre.some((p) => completedNodes.has(p))
     }
 
     try {
-      while (completedNodes.size + failedNodes.size < flowGraph.nodes.length) {
+      while (!flowTerminated && completedNodes.size + failedNodes.size < flowGraph.nodes.length) {
         const readyNodes = flowGraph.nodes.filter(isReadyToRun)
         if (readyNodes.length === 0) {
           break
@@ -1078,13 +1261,56 @@
 
         await Promise.all(
           readyNodes.map(async (node) => {
+            if (flowTerminated) return
             node.status = 'running'
             flowGraph = { ...flowGraph }
 
             const started = performance.now()
 
             try {
-              if (node.type === 'rest' && node.restData) {
+              if (node.type === 'start') {
+                node.status = 'success'
+                node.lastRun = {
+                  durationMs: 0,
+                  status: 'START',
+                  outputSummary: 'Início executado',
+                  timestamp: Date.now()
+                }
+                completedNodes.add(node.id)
+              } else if (node.type === 'terminate') {
+                node.status = 'success'
+                node.lastRun = {
+                  durationMs: 0,
+                  status: 'TERMINATED',
+                  outputSummary: 'Execução interrompida aqui',
+                  timestamp: Date.now()
+                }
+                completedNodes.add(node.id)
+                flowTerminated = true
+                showToast('Fluxo finalizado pelo bloco Terminate!')
+              } else if (node.type === 'event-throw') {
+                const evName = (node.eventData?.eventName || '').trim().toLowerCase()
+                if (evName) activeEvents.add(evName)
+                node.status = 'success'
+                node.lastRun = {
+                  durationMs: 0,
+                  status: 'EVENT_THROWN',
+                  outputSummary: `Disparou: "${node.eventData?.eventName || ''}"`,
+                  timestamp: Date.now()
+                }
+                completedNodes.add(node.id)
+                showToast(`Evento disparado: "${node.eventData?.eventName || ''}"`)
+              } else if (node.type === 'event-catch') {
+                node.status = 'success'
+                node.lastRun = {
+                  durationMs: 0,
+                  status: 'EVENT_CAUGHT',
+                  outputSummary: `Recebeu: "${node.eventData?.eventName || ''}"`,
+                  timestamp: Date.now()
+                }
+                completedNodes.add(node.id)
+                showToast(`Evento recebido: "${node.eventData?.eventName || ''}"`)
+              } else if (node.type === 'rest' && node.restData) {
                 const rest = node.restData
                 const resolvedUrl = resolveVariables(
                   rest.url,
@@ -1253,8 +1479,13 @@
         }
       })
 
-      flowStatusMessage = `Flow completed: ${completedNodes.size} passed, ${failedNodes.size} failed.`
-      showToast(flowStatusMessage)
+      if (flowTerminated) {
+        flowStatusMessage = `Fluxo finalizado: interrompido no bloco Terminate.`
+        showToast(flowStatusMessage)
+      } else {
+        flowStatusMessage = `Flow completed: ${completedNodes.size} passed, ${failedNodes.size} failed.`
+        showToast(flowStatusMessage)
+      }
     } finally {
       flowRunning = false
       flowGraph = { ...flowGraph }
@@ -1264,6 +1495,39 @@
 
   // --- SVG BEZIER PATH HELPERS ---
   const NODE_WIDTH = 280
+  const CIRCLE_NODE_SIZE = 54
+
+  function isCircleNode(type: FlowNodeType): boolean {
+    return (
+      type === 'start' || type === 'terminate' || type === 'event-throw' || type === 'event-catch'
+    )
+  }
+
+  function getNodeOutputPort(node: FlowNode): { x: number; y: number } {
+    if (isCircleNode(node.type)) {
+      return {
+        x: node.x + CIRCLE_NODE_SIZE,
+        y: node.y + CIRCLE_NODE_SIZE / 2
+      }
+    }
+    return {
+      x: node.x + NODE_WIDTH,
+      y: node.y + 45
+    }
+  }
+
+  function getNodeInputPort(node: FlowNode): { x: number; y: number } {
+    if (isCircleNode(node.type)) {
+      return {
+        x: node.x,
+        y: node.y + CIRCLE_NODE_SIZE / 2
+      }
+    }
+    return {
+      x: node.x,
+      y: node.y + 45
+    }
+  }
 
   function getBezierPath(x1: number, y1: number, x2: number, y2: number): string {
     const dx = Math.abs(x2 - x1) * 0.5
@@ -1292,7 +1556,8 @@
 <div class="flow-container">
   <!-- Top Canvas Toolbar -->
   <div class="flow-toolbar">
-    <div class="flow-toolbar-left">
+    <!-- Group 1: Execution & Run -->
+    <div class="flow-toolbar-group flow-toolbar-exec">
       <button
         type="button"
         class="flow-btn-primary flow-run-btn"
@@ -1309,76 +1574,79 @@
           <span>▶ Run Flow</span>
         {/if}
       </button>
+      {#if flowStatusMessage}
+        <span class="flow-status-msg" title={flowStatusMessage}>{flowStatusMessage}</span>
+      {/if}
+    </div>
 
-      <div class="flow-divider"></div>
+    <div class="flow-toolbar-divider"></div>
 
+    <!-- Group 2: Palette / Adicionar Blocos -->
+    <div class="flow-toolbar-group flow-toolbar-palette">
+      <span class="toolbar-group-label">Blocos:</span>
       <button
         type="button"
         class="flow-btn flow-btn-draggable"
         draggable="true"
-        title="Click to add or drag to drop on flow canvas"
+        title="Bloco REST: Requisição HTTP (GET, POST, etc.)"
         on:click={() => addNode('rest')}
         on:dragstart={(e) => onNewBlockDragStart(e, 'rest')}
         on:dragend={onNewBlockDragEnd}
       >
         <span class="btn-icon">🌐</span>
         <span>＋ REST Block</span>
-        <span class="btn-drag-handle" title="Drag to drop on flow">⋮⋮</span>
+        <span class="btn-drag-handle" title="Arraste para soltar no fluxo">⋮⋮</span>
       </button>
 
       <button
         type="button"
         class="flow-btn flow-btn-draggable"
         draggable="true"
-        title="Click to add or drag to drop on flow canvas"
+        title="Bloco JavaScript: Script com variáveis e condicionais IF"
         on:click={() => addNode('js')}
         on:dragstart={(e) => onNewBlockDragStart(e, 'js')}
         on:dragend={onNewBlockDragEnd}
       >
         <span class="btn-icon">⚡</span>
         <span>＋ JS Block</span>
-        <span class="btn-drag-handle" title="Drag to drop on flow">⋮⋮</span>
+        <span class="btn-drag-handle" title="Arraste para soltar no fluxo">⋮⋮</span>
       </button>
 
       <button
         type="button"
-        class="flow-btn"
-        title="Automatically organize blocks"
+        class="flow-btn flow-btn-draggable flow-btn-event"
+        draggable="true"
+        title="Bloco de Evento / BPMN: Início, Terminate, Salto ou Receptor (altere o tipo direto na bola)"
+        on:click={() => addNode('event-throw')}
+        on:dragstart={(e) => onNewBlockDragStart(e, 'event-throw')}
+        on:dragend={onNewBlockDragEnd}
+      >
+        <span class="btn-icon">⭕</span>
+        <span>＋ Evento</span>
+        <span class="btn-drag-handle" title="Arraste para soltar no fluxo">⋮⋮</span>
+      </button>
+    </div>
+
+    <div class="flow-toolbar-divider"></div>
+
+    <!-- Group 3: Canvas Layout -->
+    <div class="flow-toolbar-group flow-toolbar-layout">
+      <button
+        type="button"
+        class="flow-btn flow-btn-layout"
+        title="Organizar blocos automaticamente em layout diagramático inteligente"
         on:click={autoLayout}
       >
         <span class="btn-icon">🪄</span>
         <span>Auto Layout</span>
       </button>
+    </div>
 
-      {#if onManageEnvironments}
-        <button
-          type="button"
-          class="flow-btn"
-          title="Manage global variables and environments (Postman style)"
-          on:click={onManageEnvironments}
-        >
-          <span class="btn-icon">🌍</span>
-          <span>Environments</span>
-        </button>
-      {/if}
+    <!-- Spacer pushes File & Actions to the right -->
+    <div class="flow-toolbar-spacer"></div>
 
-      <button
-        type="button"
-        class="flow-btn"
-        title="Load full example flow"
-        on:click={resetToExample}
-      >
-        <span class="btn-icon">⛓</span>
-        <span>Example</span>
-      </button>
-
-      <button type="button" class="flow-btn" title="Clear entire flow" on:click={clearAll}>
-        <span class="btn-icon">🧹</span>
-        <span>Clear</span>
-      </button>
-
-      <span class="flow-toolbar-sep"></span>
-
+    <!-- Group 4: File & Flow Actions (Distinctly on the right) -->
+    <div class="flow-toolbar-group flow-toolbar-actions">
       <!-- File menu (Open / Save / Save As / Import / Export) -->
       <div class="flow-file-menu">
         <button
@@ -1424,360 +1692,530 @@
           </div>
         {/if}
       </div>
-      <input
-        bind:this={flowFileInput}
-        type="file"
-        accept=".json,.flow.json,application/json"
-        class="flow-file-input"
-        on:change={onFlowFileInputChange}
-      />
+
+      <button
+        type="button"
+        class="flow-btn flow-btn-secondary"
+        title="Carregar fluxo de exemplo completo Rick & Morty"
+        on:click={resetToExample}
+      >
+        <span class="btn-icon">🧬</span>
+        <span>Example</span>
+      </button>
+
+      <button
+        type="button"
+        class="flow-btn flow-btn-secondary flow-btn-clear"
+        title="Limpar todos os blocos do canvas"
+        on:click={clearAll}
+      >
+        <span class="btn-icon">🧹</span>
+        <span>Clear</span>
+      </button>
     </div>
 
-    <div class="flow-toolbar-right">
-      <!-- Zoom Controls -->
-      <div class="flow-zoom-control">
-        <button
-          type="button"
-          class="zoom-btn"
-          title="Zoom out (Ctrl + scroll down)"
-          on:click={zoomOut}
-        >
-          －
-        </button>
-        <button
-          type="button"
-          class="zoom-level-btn"
-          title="Click to reset zoom to 100%"
-          on:click={resetZoom}
-        >
-          {Math.round(zoomLevel * 100)}%
-        </button>
-        <button type="button" class="zoom-btn" title="Zoom in (Ctrl + scroll up)" on:click={zoomIn}>
-          ＋
-        </button>
-        <button type="button" class="zoom-reset-btn" title="Reset to 100%" on:click={resetZoom}>
-          ⟲
-        </button>
-      </div>
-
-      <div class="flow-legend">
-        <span class="legend-item"><span class="legend-line solid"></span> Solid: Wait</span>
-        <span class="legend-item"><span class="legend-line dotted"></span> Dotted: Async</span>
-      </div>
-      {#if flowStatusMessage}
-        <span class="flow-status-msg">{flowStatusMessage}</span>
-      {/if}
-    </div>
+    <input
+      bind:this={flowFileInput}
+      type="file"
+      accept=".json,.flow.json,application/json"
+      class="flow-file-input"
+      on:change={onFlowFileInputChange}
+    />
   </div>
 
   <!-- Main Work Area: Canvas on Left, Resizable Inspector Panel on Right -->
   <div class="flow-work-area">
-    <!-- Spatial Canvas -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="flow-canvas"
-      bind:this={canvasEl}
-      on:click={onCanvasClick}
-      on:dragover={onCanvasDragOver}
-      on:drop={onCanvasDrop}
-      on:mousemove={(e) => {
-        if (connectingFromId) updateMousePos(e)
-      }}
-    >
+    <div class="flow-canvas-viewport">
+      <!-- Spatial Canvas -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="flow-zoom-container"
-        style="transform: scale({zoomLevel}); transform-origin: 0 0;"
+        class="flow-canvas"
+        bind:this={canvasEl}
+        on:click={onCanvasClick}
+        on:dragover={onCanvasDragOver}
+        on:drop={onCanvasDrop}
+        on:mousemove={(e) => {
+          if (connectingFromId) updateMousePos(e)
+        }}
       >
-        <!-- Background SVG Connections Layer -->
-        <svg class="flow-svg-layer">
-          <defs>
-            <marker
-              id="arrow-solid"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto"
-            >
-              <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
-            </marker>
-            <marker
-              id="arrow-dotted"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto"
-            >
-              <path d="M 0 1 L 10 5 L 0 9 z" fill="#a855f7" />
-            </marker>
-            <marker
-              id="arrow-running"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto"
-            >
-              <path d="M 0 1 L 10 5 L 0 9 z" fill="#facc15" />
-            </marker>
-          </defs>
-
-          <!-- Connections -->
-          {#each flowGraph.connections as conn (conn.id)}
-            {@const fromNode = flowGraph.nodes.find((n) => n.id === conn.fromId)}
-            {@const toNode = flowGraph.nodes.find((n) => n.id === conn.toId)}
-            {#if fromNode && toNode}
-              {@const x1 = fromNode.x + NODE_WIDTH}
-              {@const y1 = fromNode.y + 45}
-              {@const x2 = toNode.x}
-              {@const y2 = toNode.y + 45}
-              {@const pathD = getBezierPath(x1, y1, x2, y2)}
-              {@const isRunning = fromNode.status === 'running' || toNode.status === 'running'}
-              {@const isSelected = selectedConnection?.id === conn.id}
-
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <g
-                class="connection-group"
-                class:is-selected={isSelected}
-                on:click|stopPropagation={() => selectConnection(conn)}
+        <div
+          class="flow-zoom-container"
+          style="transform: scale({zoomLevel}); transform-origin: 0 0;"
+        >
+          <!-- Background SVG Connections Layer -->
+          <svg class="flow-svg-layer">
+            <defs>
+              <marker
+                id="arrow-solid"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto"
               >
-                <path d={pathD} class="conn-hitbox" />
-                <path
-                  d={pathD}
-                  class="conn-line"
-                  class:solid={conn.kind === 'solid'}
-                  class:dotted={conn.kind === 'dotted'}
-                  class:running={isRunning}
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+              </marker>
+              <marker
+                id="arrow-dotted"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto"
+              >
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#a855f7" />
+              </marker>
+              <marker
+                id="arrow-running"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto"
+              >
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#facc15" />
+              </marker>
+            </defs>
+
+            <!-- Connections -->
+            {#each flowGraph.connections as conn (conn.id)}
+              {@const fromNode = flowGraph.nodes.find((n) => n.id === conn.fromId)}
+              {@const toNode = flowGraph.nodes.find((n) => n.id === conn.toId)}
+              {#if fromNode && toNode}
+                {@const p1 = getNodeOutputPort(fromNode)}
+                {@const p2 = getNodeInputPort(toNode)}
+                {@const pathD = getBezierPath(p1.x, p1.y, p2.x, p2.y)}
+                {@const isRunning = fromNode.status === 'running' || toNode.status === 'running'}
+                {@const isSelected = selectedConnection?.id === conn.id}
+
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <g
+                  class="connection-group"
                   class:is-selected={isSelected}
-                  marker-end={isRunning
-                    ? 'url(#arrow-running)'
-                    : conn.kind === 'solid'
-                      ? 'url(#arrow-solid)'
-                      : 'url(#arrow-dotted)'}
+                  on:click|stopPropagation={() => selectConnection(conn)}
+                >
+                  <path d={pathD} class="conn-hitbox" />
+                  <path
+                    d={pathD}
+                    class="conn-line"
+                    class:solid={conn.kind === 'solid'}
+                    class:dotted={conn.kind === 'dotted'}
+                    class:running={isRunning}
+                    class:is-selected={isSelected}
+                    marker-end={isRunning
+                      ? 'url(#arrow-running)'
+                      : conn.kind === 'solid'
+                        ? 'url(#arrow-solid)'
+                        : 'url(#arrow-dotted)'}
+                  />
+                </g>
+              {/if}
+            {/each}
+
+            <!-- Line being drawn -->
+            {#if connectingFromId}
+              {@const sourceNode = flowGraph.nodes.find((n) => n.id === connectingFromId)}
+              {#if sourceNode}
+                {@const sp = getNodeOutputPort(sourceNode)}
+                <path
+                  d={getBezierPath(sp.x, sp.y, mouseX, mouseY)}
+                  class="conn-line-draft"
+                  marker-end="url(#arrow-solid)"
                 />
-              </g>
+              {/if}
+            {/if}
+          </svg>
+
+          <!-- HTML Nodes Layer -->
+          {#each flowGraph.nodes as node (node.id)}
+            {#if isCircleNode(node.type)}
+              <!-- Circular BPMN Diagram Node -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="flow-node flow-node-circle flow-node-{node.type}"
+                class:is-selected={node.id === selectedNodeId}
+                class:is-dragging={node.id === draggingNodeId}
+                class:has-switcher-open={activeCircleSwitcherId === node.id}
+                class:status-idle={node.status === 'idle'}
+                class:status-waiting={node.status === 'waiting'}
+                class:status-running={node.status === 'running'}
+                class:status-success={node.status === 'success'}
+                class:status-error={node.status === 'error'}
+                style="left: {node.x}px; top: {node.y}px;"
+                on:pointerdown={(e) => onNodePointerDown(e, node)}
+                on:mousedown={(e) => onNodePointerDown(e, node)}
+                on:mouseup={(e) => {
+                  if (connectingFromId && connectingFromId !== node.id) {
+                    e.stopPropagation()
+                    endConnect(node.id)
+                  }
+                }}
+                on:click={() => {
+                  if (!newlyConnectedConnId) selectedConnection = null
+                  selectNode(node)
+                }}
+              >
+                <!-- Input Port (Start node has no incoming wire) -->
+                {#if node.type !== 'start'}
+                  <div
+                    class="node-port port-input circle-port-input"
+                    title="Drop connection here"
+                    on:mouseup|stopPropagation={() => endConnect(node.id)}
+                  ></div>
+                {/if}
+
+                <!-- Circle Symbol Inner -->
+                <div class="circle-inner" title={node.title}>
+                  {#if node.status === 'running'}
+                    <span class="flow-spinner"></span>
+                  {:else if node.type === 'start'}
+                    <span class="circle-symbol start">▶</span>
+                  {:else if node.type === 'terminate'}
+                    <span class="circle-symbol terminate">⏹</span>
+                  {:else if node.type === 'event-throw'}
+                    <span class="circle-symbol throw">📡</span>
+                  {:else if node.type === 'event-catch'}
+                    <span class="circle-symbol catch">🎯</span>
+                  {/if}
+                </div>
+
+                <!-- Output Port (Terminate node has no outgoing wire) -->
+                {#if node.type !== 'terminate'}
+                  <div
+                    class="node-port port-output circle-port-output"
+                    title="Click and drag to connect to another block"
+                    on:mousedown={(e) => startConnect(e, node.id)}
+                  ></div>
+                {/if}
+
+                <!-- Switch Type Button on hover/selection (Circular arrow icon) -->
+                <button
+                  type="button"
+                  class="circle-switch-btn"
+                  class:active={activeCircleSwitcherId === node.id}
+                  title="Alterar tipo de evento (Início, Terminate, Salto, Receptor)"
+                  aria-label="Alterar tipo de evento"
+                  on:click|stopPropagation={() => toggleCircleSwitcher(node.id)}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="11"
+                    height="11"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
+                    <path d="M21 3v5h-5" />
+                  </svg>
+                </button>
+
+                <!-- Delete Action Button on hover/selection -->
+                <button
+                  type="button"
+                  class="circle-delete-btn"
+                  title="Delete block"
+                  aria-label="Delete block"
+                  on:click|stopPropagation={() => deleteNode(node.id)}>×</button
+                >
+
+                <!-- Label Badge below circle -->
+                <div class="circle-label-badge" title={node.title}>
+                  {#if node.type === 'event-throw' || node.type === 'event-catch'}
+                    <span class="circle-badge-text event"
+                      >{node.eventData?.eventName || 'valida total'}</span
+                    >
+                  {:else}
+                    <span class="circle-badge-text">{node.title}</span>
+                  {/if}
+                </div>
+
+                <!-- Node Floating Type Switcher (Like conn-ball-control on line) -->
+                {#if activeCircleSwitcherId === node.id}
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <div
+                    class="circle-type-control"
+                    class:align-left={node.x < 150}
+                    class:align-bottom={node.y < 55}
+                    on:click|stopPropagation
+                  >
+                    <button
+                      type="button"
+                      class="circle-type-btn green"
+                      class:active={node.type === 'start'}
+                      title="Início: Ponto de partida do fluxo"
+                      on:click|stopPropagation={() => setCircleNodeType(node, 'start')}
+                    >
+                      <span class="type-disc green"></span>
+                      <span class="type-name">Início</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="circle-type-btn red"
+                      class:active={node.type === 'terminate'}
+                      title="Terminate: Encerra o fluxo imediatamente"
+                      on:click|stopPropagation={() => setCircleNodeType(node, 'terminate')}
+                    >
+                      <span class="type-disc red"></span>
+                      <span class="type-name">Terminate</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="circle-type-btn blue"
+                      class:active={node.type === 'event-throw'}
+                      title="Salto: Transmite evento sem fio"
+                      on:click|stopPropagation={() => setCircleNodeType(node, 'event-throw')}
+                    >
+                      <span class="type-disc blue"></span>
+                      <span class="type-name">Salto</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="circle-type-btn blue-dashed"
+                      class:active={node.type === 'event-catch'}
+                      title="Receptor: Aguarda evento sem fio"
+                      on:click|stopPropagation={() => setCircleNodeType(node, 'event-catch')}
+                    >
+                      <span class="type-disc blue-dashed"></span>
+                      <span class="type-name">Receptor</span>
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            {:else}
+              <!-- Standard rectangular card node (rest / js) -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="flow-node flow-node-{node.type}"
+                class:is-selected={node.id === selectedNodeId}
+                class:is-dragging={node.id === draggingNodeId}
+                class:status-idle={node.status === 'idle'}
+                class:status-waiting={node.status === 'waiting'}
+                class:status-running={node.status === 'running'}
+                class:status-success={node.status === 'success'}
+                class:status-error={node.status === 'error'}
+                style="left: {node.x}px; top: {node.y}px;"
+                on:pointerdown={(e) => onNodePointerDown(e, node)}
+                on:mousedown={(e) => onNodePointerDown(e, node)}
+                on:mouseup={(e) => {
+                  if (connectingFromId && connectingFromId !== node.id) {
+                    e.stopPropagation()
+                    endConnect(node.id)
+                  }
+                }}
+              >
+                <!-- Input Port -->
+                <div
+                  class="node-port port-input"
+                  title="Drop connection here to connect"
+                  on:mouseup|stopPropagation={() => endConnect(node.id)}
+                ></div>
+
+                <!-- Node Header -->
+                <div class="node-header">
+                  <div class="node-title-wrap">
+                    <span class="node-type-icon">{node.type === 'rest' ? '🌐' : '⚡'}</span>
+                    <input
+                      class="node-title-input"
+                      type="text"
+                      bind:value={node.title}
+                      on:input={notifyChange}
+                    />
+                  </div>
+                  <div class="node-actions">
+                    <button
+                      type="button"
+                      class="node-tool-btn"
+                      title="Run this block only"
+                      on:click|stopPropagation={() => executeSingleNode(node)}>▶</button
+                    >
+                    <button
+                      type="button"
+                      class="node-tool-btn"
+                      title="Delete block"
+                      on:click|stopPropagation={() => deleteNode(node.id)}>×</button
+                    >
+                  </div>
+                </div>
+
+                <!-- Node Body / Summary Preview -->
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="node-body"
+                  on:click={() => {
+                    if (!newlyConnectedConnId) {
+                      selectedConnection = null
+                    }
+                    selectNode(node)
+                  }}
+                >
+                  {#if node.type === 'rest' && node.restData}
+                    <div class="node-rest-preview">
+                      <span class="method-tag method-{node.restData.method.toLowerCase()}">
+                        {node.restData.method}
+                      </span>
+                      <span class="url-text" title={node.restData.url}>
+                        {node.restData.url || 'https://...'}
+                      </span>
+                    </div>
+                    {#if node.restData.captures && node.restData.captures.length > 0}
+                      <div class="node-sub-meta">
+                        🎯 {node.restData.captures.filter((c) => c.enabled).length} variable(s) captured
+                      </div>
+                    {/if}
+                  {:else if node.type === 'js' && node.jsData}
+                    <div class="node-js-preview">
+                      <code>{node.jsData.code.split('\n').filter(Boolean)[0] || '// JS Code'}</code>
+                    </div>
+                  {/if}
+                </div>
+
+                <!-- Node Footer: Execution Status & Action -->
+                <div class="node-footer">
+                  {#if node.status === 'running'}
+                    <div class="status-running-label">
+                      <span class="flow-spinner"></span>
+                      <span>Running...</span>
+                    </div>
+                  {:else if node.lastRun}
+                    <div
+                      class="last-run-meta"
+                      class:run-ok={node.status === 'success'}
+                      class:run-bad={node.status === 'error'}
+                    >
+                      <span class="status-code">{node.lastRun.status}</span>
+                      <span class="duration">{node.lastRun.durationMs}ms</span>
+                      {#if node.lastRun.outputSummary}
+                        <span class="summary-text" title={node.lastRun.outputSummary}>
+                          {node.lastRun.outputSummary}
+                        </span>
+                      {/if}
+                    </div>
+                    {#if node.lastRun.responseText && onOpenInEditor}
+                      <button
+                        type="button"
+                        class="node-quick-btn"
+                        title="Open response in JSON Editor"
+                        on:click|stopPropagation={() => openResponseInEditor(node)}
+                      >
+                        ↗ Editor
+                      </button>
+                    {/if}
+                  {:else}
+                    <span class="node-idle-text">Ready to run</span>
+                  {/if}
+                </div>
+
+                <!-- Output Port -->
+                <div
+                  class="node-port port-output"
+                  title="Click and drag to connect to another block"
+                  on:mousedown={(e) => startConnect(e, node.id)}
+                ></div>
+              </div>
             {/if}
           {/each}
 
-          <!-- Line being drawn -->
-          {#if connectingFromId}
-            {@const sourceNode = flowGraph.nodes.find((n) => n.id === connectingFromId)}
-            {#if sourceNode}
-              {@const sx = sourceNode.x + NODE_WIDTH}
-              {@const sy = sourceNode.y + 45}
-              <path
-                d={getBezierPath(sx, sy, mouseX, mouseY)}
-                class="conn-line-draft"
-                marker-end="url(#arrow-solid)"
-              />
-            {/if}
-          {/if}
-        </svg>
-
-        <!-- HTML Nodes Layer -->
-        {#each flowGraph.nodes as node (node.id)}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="flow-node flow-node-{node.type}"
-            class:is-selected={node.id === selectedNodeId}
-            class:is-dragging={node.id === draggingNodeId}
-            class:status-idle={node.status === 'idle'}
-            class:status-waiting={node.status === 'waiting'}
-            class:status-running={node.status === 'running'}
-            class:status-success={node.status === 'success'}
-            class:status-error={node.status === 'error'}
-            style="left: {node.x}px; top: {node.y}px;"
-            on:pointerdown={(e) => onNodePointerDown(e, node)}
-            on:mousedown={(e) => onNodePointerDown(e, node)}
-            on:mouseup={(e) => {
-              if (connectingFromId && connectingFromId !== node.id) {
-                e.stopPropagation()
-                endConnect(node.id)
-              }
-            }}
-          >
-            <!-- Input Port -->
-            <div
-              class="node-port port-input"
-              title="Drop connection here to connect"
-              on:mouseup|stopPropagation={() => endConnect(node.id)}
-            ></div>
-
-            <!-- Node Header -->
-            <div class="node-header">
-              <div class="node-title-wrap">
-                <span class="node-type-icon">{node.type === 'rest' ? '🌐' : '⚡'}</span>
-                <input
-                  class="node-title-input"
-                  type="text"
-                  bind:value={node.title}
-                  on:input={notifyChange}
-                />
-              </div>
-              <div class="node-actions">
-                <button
-                  type="button"
-                  class="node-tool-btn"
-                  title="Run this block only"
-                  on:click|stopPropagation={() => executeSingleNode(node)}>▶</button
-                >
-                <button
-                  type="button"
-                  class="node-tool-btn"
-                  title="Delete block"
-                  on:click|stopPropagation={() => deleteNode(node.id)}>×</button
-                >
-              </div>
-            </div>
-
-            <!-- Node Body / Summary Preview -->
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="node-body"
-              on:click={() => {
-                if (!newlyConnectedConnId) {
-                  selectedConnection = null
-                }
-                selectNode(node)
-              }}
-            >
-              {#if node.type === 'rest' && node.restData}
-                <div class="node-rest-preview">
-                  <span class="method-tag method-{node.restData.method.toLowerCase()}">
-                    {node.restData.method}
-                  </span>
-                  <span class="url-text" title={node.restData.url}>
-                    {node.restData.url || 'https://...'}
-                  </span>
-                </div>
-                {#if node.restData.captures && node.restData.captures.length > 0}
-                  <div class="node-sub-meta">
-                    🎯 {node.restData.captures.filter((c) => c.enabled).length} variable(s) captured
-                  </div>
-                {/if}
-              {:else if node.type === 'js' && node.jsData}
-                <div class="node-js-preview">
-                  <code>{node.jsData.code.split('\n').filter(Boolean)[0] || '// JS Code'}</code>
-                </div>
-              {/if}
-            </div>
-
-            <!-- Node Footer: Execution Status & Action -->
-            <div class="node-footer">
-              {#if node.status === 'running'}
-                <div class="status-running-label">
-                  <span class="flow-spinner"></span>
-                  <span>Running...</span>
-                </div>
-              {:else if node.lastRun}
+          <!-- Active Connection Selection Ball Overlay (z-index: 25, always above boxes) -->
+          {#if selectedConnection}
+            {@const selConn = selectedConnection}
+            {@const sFrom = flowGraph.nodes.find((n) => n.id === selConn.fromId)}
+            {@const sTo = flowGraph.nodes.find((n) => n.id === selConn.toId)}
+            {#if sFrom && sTo}
+              {@const p1 = getNodeOutputPort(sFrom)}
+              {@const p2 = getNodeInputPort(sTo)}
+              {@const mid = getPathMidpoint(p1.x, p1.y, p2.x, p2.y)}
+              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+              <div
+                class="conn-ball-overlay-wrap"
+                class:align-below={mid.y < 45}
+                style="left: {mid.x}px; top: {mid.y}px;"
+                on:click|stopPropagation
+              >
                 <div
-                  class="last-run-meta"
-                  class:run-ok={node.status === 'success'}
-                  class:run-bad={node.status === 'error'}
+                  class="conn-ball-control"
+                  class:is-solid={selConn.kind === 'solid'}
+                  class:is-dotted={selConn.kind === 'dotted'}
                 >
-                  <span class="status-code">{node.lastRun.status}</span>
-                  <span class="duration">{node.lastRun.durationMs}ms</span>
-                  {#if node.lastRun.outputSummary}
-                    <span class="summary-text" title={node.lastRun.outputSummary}>
-                      {node.lastRun.outputSummary}
-                    </span>
-                  {/if}
-                </div>
-                {#if node.lastRun.responseText && onOpenInEditor}
                   <button
                     type="button"
-                    class="node-quick-btn"
-                    title="Open response in JSON Editor"
-                    on:click|stopPropagation={() => openResponseInEditor(node)}
+                    class="ball-dot-btn blue"
+                    class:active={selConn.kind === 'solid'}
+                    title="Blue (Solid arrow: Wait for completion)"
+                    on:click|stopPropagation={() => setConnectionKind(selConn, 'solid')}
                   >
-                    ↗ Editor
+                    <span class="color-disc blue"></span>
+                    <span class="color-name">Blue</span>
                   </button>
-                {/if}
-              {:else}
-                <span class="node-idle-text">Ready to run</span>
-              {/if}
-            </div>
 
-            <!-- Output Port -->
-            <div
-              class="node-port port-output"
-              title="Click and drag to connect to another block"
-              on:mousedown={(e) => startConnect(e, node.id)}
-            ></div>
-          </div>
-        {/each}
+                  <span class="ball-divider"></span>
 
-        <!-- Active Connection Selection Ball Overlay (z-index: 25, always above boxes) -->
-        {#if selectedConnection}
-          {@const selConn = selectedConnection}
-          {@const sFrom = flowGraph.nodes.find((n) => n.id === selConn.fromId)}
-          {@const sTo = flowGraph.nodes.find((n) => n.id === selConn.toId)}
-          {#if sFrom && sTo}
-            {@const x1 = sFrom.x + NODE_WIDTH}
-            {@const y1 = sFrom.y + 45}
-            {@const x2 = sTo.x}
-            {@const y2 = sTo.y + 45}
-            {@const mid = getPathMidpoint(x1, y1, x2, y2)}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div
-              class="conn-ball-overlay-wrap"
-              style="left: {mid.x}px; top: {mid.y}px;"
-              on:click|stopPropagation
-            >
-              <div
-                class="conn-ball-control"
-                class:is-solid={selConn.kind === 'solid'}
-                class:is-dotted={selConn.kind === 'dotted'}
-              >
-                <button
-                  type="button"
-                  class="ball-dot-btn blue"
-                  class:active={selConn.kind === 'solid'}
-                  title="Blue (Solid arrow: Wait for completion)"
-                  on:click|stopPropagation={() => setConnectionKind(selConn, 'solid')}
-                >
-                  <span class="color-disc blue"></span>
-                  <span class="color-name">Blue</span>
-                </button>
+                  <button
+                    type="button"
+                    class="ball-dot-btn purple"
+                    class:active={selConn.kind === 'dotted'}
+                    title="Purple (Dotted arrow: Async / Don't wait)"
+                    on:click|stopPropagation={() => setConnectionKind(selConn, 'dotted')}
+                  >
+                    <span class="color-disc purple"></span>
+                    <span class="color-name">Purple</span>
+                  </button>
 
-                <span class="ball-divider"></span>
-
-                <button
-                  type="button"
-                  class="ball-dot-btn purple"
-                  class:active={selConn.kind === 'dotted'}
-                  title="Purple (Dotted arrow: Async / Don't wait)"
-                  on:click|stopPropagation={() => setConnectionKind(selConn, 'dotted')}
-                >
-                  <span class="color-disc purple"></span>
-                  <span class="color-name">Purple</span>
-                </button>
-
-                <button
-                  type="button"
-                  class="ball-delete-btn"
-                  title="Delete connection"
-                  on:click|stopPropagation={() => removeConnection(selConn.id)}
-                >
-                  ×
-                </button>
+                  <button
+                    type="button"
+                    class="ball-delete-btn"
+                    title="Delete connection"
+                    on:click|stopPropagation={() => removeConnection(selConn.id)}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
-            </div>
+            {/if}
           {/if}
-        {/if}
+        </div>
       </div>
 
-      <!-- Floating Zoom Controls at Bottom Left -->
+      <!-- Pinned Floating Controls Overlay (Stays fixed relative to viewport) -->
+      <!-- Floating Diagram Legend at Bottom Left of Drawing Canvas -->
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="flow-zoom-floating" on:click|stopPropagation>
+      <div class="flow-floating-legend" on:click|stopPropagation>
+        <span class="legend-badge">Legenda</span>
+        <div class="legend-items">
+          <span class="legend-item" title="Linha sólida: aguarda conclusão do nó anterior"
+            ><span class="legend-line solid"></span> Espera</span
+          >
+          <span class="legend-item" title="Linha pontilhada: execução assíncrona sem travar"
+            ><span class="legend-line dotted"></span> Async</span
+          >
+          <span class="legend-item" title="Nó de Início: ponto de partida do fluxo"
+            ><span class="legend-dot green"></span> Início</span
+          >
+          <span class="legend-item" title="Nó de Término: encerra e interrompe o fluxo"
+            ><span class="legend-dot red"></span> Terminate</span
+          >
+          <span class="legend-item" title="Salto sem fio: emite o evento para receptores"
+            ><span class="legend-dot blue"></span> Salto</span
+          >
+          <span class="legend-item" title="Receptor sem fio: aguarda o evento para continuar"
+            ><span class="legend-dot blue-dashed"></span> Receptor</span
+          >
+        </div>
+      </div>
+
+      <!-- Floating Zoom Controls at Bottom Right of Drawing Canvas -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="flow-floating-zoom flow-zoom-control" on:click|stopPropagation>
         <button
           type="button"
           class="zoom-btn"
@@ -1797,10 +2235,14 @@
         <button type="button" class="zoom-btn" title="Zoom in (Ctrl + scroll up)" on:click={zoomIn}>
           ＋
         </button>
-        <button type="button" class="zoom-reset-btn" title="Reset to 100%" on:click={resetZoom}>
+        <button
+          type="button"
+          class="zoom-reset-btn"
+          title="Reset zoom to 100%"
+          on:click={resetZoom}
+        >
           ⟲
         </button>
-        <span class="zoom-floating-hint">Ctrl + Scroll</span>
       </div>
 
       <!-- Floating Toast -->
@@ -1826,7 +2268,15 @@
         <!-- Side Panel Header with Click-to-Edit Title -->
         <div class="side-panel-header">
           <div class="side-header-left">
-            <span class="side-type-icon">{selectedNode.type === 'rest' ? '🌐' : '⚡'}</span>
+            <span class="side-type-icon">
+              {#if selectedNode.type === 'rest'}🌐
+              {:else if selectedNode.type === 'js'}⚡
+              {:else if selectedNode.type === 'start'}🟢
+              {:else if selectedNode.type === 'terminate'}🛑
+              {:else if selectedNode.type === 'event-throw'}🔵
+              {:else if selectedNode.type === 'event-catch'}◌
+              {/if}
+            </span>
             <div class="side-title-edit-wrap">
               <input
                 type="text"
@@ -2034,6 +2484,40 @@
               on:click={() => (sidePanelTab = 'env')}
             >
               Env
+            </button>
+          {:else if selectedNode.type === 'event-throw' || selectedNode.type === 'event-catch'}
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'config'}
+              on:click={() => (sidePanelTab = 'config')}
+            >
+              Evento
+            </button>
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'response'}
+              on:click={() => (sidePanelTab = 'response')}
+            >
+              Execução
+            </button>
+          {:else if selectedNode.type === 'start' || selectedNode.type === 'terminate'}
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'config'}
+              on:click={() => (sidePanelTab = 'config')}
+            >
+              Propriedades
+            </button>
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'response'}
+              on:click={() => (sidePanelTab = 'response')}
+            >
+              Execução
             </button>
           {/if}
         </div>
@@ -2635,6 +3119,117 @@
                 </div>
               </div>
             {/if}
+          {:else if selectedNode.type === 'event-throw' || selectedNode.type === 'event-catch'}
+            {#if sidePanelTab === 'config'}
+              <div class="tab-pane-event">
+                <div class="event-config-card">
+                  <div class="event-type-badge {selectedNode.type}">
+                    {selectedNode.type === 'event-throw'
+                      ? '🔵 Salto de Fluxo (Broadcast Event)'
+                      : '◌ Receptor de Fluxo (Catch Event)'}
+                  </div>
+                  <p class="event-help-text">
+                    {#if selectedNode.type === 'event-throw'}
+                      Ao ser executado, este nó de salto transmite o sinal com o nome do evento.
+                      Todos os blocos receptores (bolas pontilhadas) com o mesmo nome serão
+                      acionados sem fio!
+                    {:else}
+                      Este nó receptor aguarda a transmissão do evento correspondente para continuar
+                      a execução do fluxo através de suas saídas.
+                    {/if}
+                  </p>
+                  <div class="event-input-group">
+                    <label class="event-field-label" for="event-name-input">Nome do Evento:</label>
+                    <div class="event-input-row">
+                      <input
+                        id="event-name-input"
+                        type="text"
+                        class="side-text-input event-input"
+                        placeholder="ex: valida total"
+                        value={selectedNode.eventData?.eventName ?? ''}
+                        on:input={(e) => {
+                          if (selectedNode) {
+                            selectedNode.eventData = { eventName: e.currentTarget.value }
+                            notifyChange()
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        class="preset-chip"
+                        title="Usar evento de exemplo 'valida total'"
+                        on:click={() => {
+                          if (selectedNode) {
+                            selectedNode.eventData = { eventName: 'valida total' }
+                            notifyChange()
+                          }
+                        }}
+                      >
+                        "valida total"
+                      </button>
+                    </div>
+                    <span class="event-tip">
+                      {selectedNode.type === 'event-throw'
+                        ? 'Os nós receptores com este nome exato serão disparados.'
+                        : 'Deve coincidir com o nome disparado no nó de salto (bola cheia).'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            {:else if sidePanelTab === 'response'}
+              <div class="tab-pane-response">
+                <div class="js-console-box">
+                  <div class="console-head">Status de Execução:</div>
+                  {#if selectedNode.lastRun}
+                    <div class="event-run-info">
+                      <div>Status: <strong>{selectedNode.lastRun.status}</strong></div>
+                      <div>Detalhes: {selectedNode.lastRun.outputSummary}</div>
+                      <div>Horário: {relativeTime(selectedNode.lastRun.timestamp)}</div>
+                    </div>
+                  {:else}
+                    <div class="console-empty">
+                      Ainda não foi executado. Execute o fluxo para ver o resultado.
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          {:else if selectedNode.type === 'start' || selectedNode.type === 'terminate'}
+            {#if sidePanelTab === 'config'}
+              <div class="tab-pane-event">
+                <div class="event-config-card">
+                  <div class="event-type-badge {selectedNode.type}">
+                    {selectedNode.type === 'start'
+                      ? '🟢 Ponto de Início (Start Node)'
+                      : '🛑 Bloco Terminate (Parada do Fluxo)'}
+                  </div>
+                  <p class="event-help-text">
+                    {#if selectedNode.type === 'start'}
+                      Ponto de partida do fluxo. Toda execução geral começa neste nó e se propaga
+                      para as conexões de saída.
+                    {:else}
+                      Bloco finalizador: quando a execução do fluxo atinge este nó, o fluxo é
+                      encerrado imediatamente e qualquer ramificação subsequente é interrompida.
+                    {/if}
+                  </p>
+                </div>
+              </div>
+            {:else if sidePanelTab === 'response'}
+              <div class="tab-pane-response">
+                <div class="js-console-box">
+                  <div class="console-head">Status de Execução:</div>
+                  {#if selectedNode.lastRun}
+                    <div class="event-run-info">
+                      <div>Status: <strong>{selectedNode.lastRun.status}</strong></div>
+                      <div>Detalhes: {selectedNode.lastRun.outputSummary}</div>
+                      <div>Horário: {relativeTime(selectedNode.lastRun.timestamp)}</div>
+                    </div>
+                  {:else}
+                    <div class="console-empty">Ainda não foi executado.</div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
           {/if}
         </div>
       </aside>
@@ -2667,52 +3262,81 @@
   .flow-toolbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    min-height: 42px;
+    justify-content: flex-start;
+    min-height: 44px;
     padding: 6px 14px;
     background: var(--theme-bg-chrome, #181818);
     border-bottom: 1px solid var(--theme-b-main, #333333);
     flex-shrink: 0;
-    gap: 8px 12px;
-    flex-wrap: wrap;
-    container-type: inline-size;
+    gap: 8px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
     position: relative;
-    z-index: 30;
+    z-index: 200;
+    overflow: visible;
   }
-  .flow-toolbar-left {
+
+  .flow-toolbar-group {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 6px 8px;
-    min-width: 0;
+    gap: 6px;
+    flex-shrink: 0;
   }
-  .flow-toolbar-right {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px 14px;
-    min-width: 0;
-    margin-left: auto;
+
+  .flow-toolbar-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--theme-b-main, rgba(255, 255, 255, 0.12));
+    margin: 0 4px;
+    flex-shrink: 0;
   }
+
+  .flow-toolbar-spacer {
+    flex: 1;
+    min-width: 8px;
+  }
+
+  .toolbar-group-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--theme-t-sub, #94a3b8);
+    margin-right: 2px;
+  }
+
   .flow-toolbar button {
     white-space: nowrap;
     flex-shrink: 0;
   }
-  /* Narrow widths: icon-only buttons and no legend, so nothing overflows the toolbar */
-  @container (max-width: 980px) {
-    .flow-toolbar .flow-btn > span:not(.btn-icon):not(.btn-drag-handle):not(.btn-caret),
-    .flow-toolbar .flow-btn-primary > span:not(.flow-spinner) {
-      display: none;
+
+  .flow-btn-secondary {
+    background: transparent !important;
+    border-color: var(--theme-b-main, rgba(255, 255, 255, 0.12)) !important;
+    color: var(--theme-t-main, #cbd5e1) !important;
+
+    &:hover {
+      background: var(--theme-bg-hover, rgba(255, 255, 255, 0.08)) !important;
+      color: var(--theme-t-bright, #ffffff) !important;
     }
-    .flow-toolbar .flow-btn-primary svg {
-      margin: 0;
-    }
-    .flow-toolbar .flow-legend {
-      display: none;
+  }
+
+  .flow-btn-clear:hover {
+    border-color: rgba(239, 68, 68, 0.4) !important;
+    color: #f87171 !important;
+  }
+
+  .flow-btn-event {
+    border-color: rgba(56, 189, 248, 0.35);
+
+    &:hover {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.1);
     }
   }
   .flow-file-menu {
     position: relative;
+    z-index: 210;
   }
   .flow-file-menu .file-name {
     max-width: 140px;
@@ -2740,7 +3364,7 @@
     padding: 4px;
     display: flex;
     flex-direction: column;
-    z-index: 60;
+    z-index: 1000;
   }
   .flow-menu button {
     display: flex;
@@ -2851,6 +3475,31 @@
     border-top: 2px dashed #a855f7;
     height: 0;
   }
+  .legend-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+
+    &.green {
+      background: #22c55e;
+      box-shadow: 0 0 5px rgba(34, 197, 94, 0.7);
+    }
+    &.red {
+      background: #ef4444;
+      box-shadow: 0 0 5px rgba(239, 68, 68, 0.7);
+    }
+    &.blue {
+      background: #0284c7;
+      box-shadow: 0 0 5px rgba(2, 132, 199, 0.7);
+    }
+    &.blue-dashed {
+      background: rgba(14, 165, 233, 0.25);
+      border: 1px dashed #38bdf8;
+    }
+  }
   .flow-status-msg {
     font-size: 11px;
     color: var(--theme-ac, #3883fa);
@@ -2922,28 +3571,91 @@
       color: var(--theme-t-bright, #f1f5f9);
     }
   }
-  .flow-zoom-floating {
+
+  /* Floating Zoom in Bottom Right of Canvas Viewport */
+  .flow-floating-zoom {
     position: absolute;
-    bottom: 16px;
-    left: 16px;
-    z-index: 10;
+    bottom: 20px;
+    right: 20px;
+    z-index: 25;
     display: flex;
     align-items: center;
-    background: var(--theme-bg-card, rgba(37, 37, 38, 0.95));
-    backdrop-filter: blur(8px);
-    border: 1px solid var(--theme-b-main, #3e3e42);
-    border-radius: 8px;
-    box-shadow: var(--theme-shadow-md, 0 6px 20px rgba(0, 0, 0, 0.5));
-    padding: 3px 5px;
+    background: var(--theme-bg-panel, rgba(30, 30, 30, 0.88));
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--theme-b-main, rgba(255, 255, 255, 0.14));
+    border-radius: 20px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+    padding: 3px 6px;
     gap: 3px;
-  }
-  .zoom-floating-hint {
-    font-size: 10px;
-    color: var(--theme-t-muted, #64748b);
-    padding-left: 6px;
-    padding-right: 4px;
     user-select: none;
-    border-left: 1px solid var(--theme-b-subtle, #3e3e42);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+
+    &:hover {
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+      border-color: var(--theme-ac, rgba(56, 189, 248, 0.5));
+    }
+  }
+
+  /* Floating Legend in Bottom Left of Canvas Viewport */
+  .flow-floating-legend {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--theme-bg-panel, rgba(30, 30, 30, 0.88));
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--theme-b-main, rgba(255, 255, 255, 0.14));
+    border-radius: 20px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+    padding: 6px 14px;
+    font-size: 11px;
+    color: var(--theme-t-muted, #94a3b8);
+    user-select: none;
+    pointer-events: auto;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+
+    &:hover {
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+      border-color: var(--theme-ac, rgba(56, 189, 248, 0.5));
+    }
+
+    .legend-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--theme-t-bright, #e2e8f0);
+      padding-right: 10px;
+      border-right: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.14));
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .legend-items {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: nowrap;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 500;
+      white-space: nowrap;
+      transition: color 0.15s ease;
+
+      &:hover {
+        color: var(--theme-t-bright, #ffffff);
+      }
+    }
   }
 
   /* Work area with canvas on left and side panel on right */
@@ -2953,11 +3665,46 @@
     min-height: 0;
     position: relative;
     overflow: hidden;
+    z-index: 1;
   }
 
-  /* Spatial Canvas */
+  @media (max-width: 900px) {
+    .flow-toolbar {
+      padding: 6px 8px;
+      gap: 6px;
+    }
+    .flow-toolbar-palette .toolbar-group-label {
+      display: none;
+    }
+    .flow-btn-draggable .btn-drag-handle {
+      display: none;
+    }
+  }
+
+  @media (max-width: 750px) {
+    .flow-toolbar-palette .flow-btn span:not(.btn-icon) {
+      display: none;
+    }
+    .flow-toolbar-layout .flow-btn span:not(.btn-icon) {
+      display: none;
+    }
+  }
+
+  /* Viewport wrapper for spatial canvas with pinned floating overlays */
+  .flow-canvas-viewport {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+  }
+
+  /* Spatial Canvas (scrollable infinite canvas) */
   .flow-canvas {
     flex: 1;
+    width: 100%;
+    height: 100%;
     position: relative;
     background: var(--theme-bg-editor, #1e1e1e);
     overflow: auto;
@@ -3056,14 +3803,30 @@
     color: #3883fa;
   }
 
-  /* Connection Ball Control on Arrow ("Bola em cima da seta") */
+  /* Connection Ball Control on Arrow ("Bola acima da seta") */
   .conn-ball-overlay-wrap {
     position: absolute;
-    transform: translate(-50%, -50%);
+    transform: translate(-50%, calc(-100% - 14px));
     z-index: 25; /* Always above all node boxes (z-index: 2) */
     pointer-events: auto;
+    transition: transform 0.12s ease;
+
+    &.align-below {
+      transform: translate(-50%, 14px);
+
+      .conn-ball-control::after {
+        top: auto;
+        bottom: 100%;
+        border-color: transparent transparent #38bdf8 transparent;
+      }
+
+      .conn-ball-control.is-dotted::after {
+        border-color: transparent transparent #a855f7 transparent;
+      }
+    }
   }
   .conn-ball-control {
+    position: relative;
     display: inline-flex;
     align-items: center;
     background: #090d16;
@@ -3081,6 +3844,17 @@
     transition:
       border-color 0.2s,
       box-shadow 0.2s;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border-width: 5px;
+      border-style: solid;
+      border-color: #38bdf8 transparent transparent transparent;
+    }
   }
   @keyframes ball-pop {
     from {
@@ -3098,6 +3872,10 @@
     box-shadow:
       0 4px 16px rgba(0, 0, 0, 0.8),
       0 0 10px rgba(168, 85, 247, 0.5);
+
+    &::after {
+      border-color: #a855f7 transparent transparent transparent;
+    }
   }
   .ball-dot-btn {
     display: inline-flex;
@@ -3218,6 +3996,454 @@
   }
   .flow-node.status-error {
     border-color: #ef4444;
+  }
+
+  /* Circular BPMN Diagram Nodes */
+  .flow-node-circle {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition:
+      transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
+      box-shadow 0.18s,
+      border-color 0.18s;
+
+    .circle-inner {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .circle-symbol {
+      font-size: 20px;
+      line-height: 1;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .circle-symbol.start {
+      color: #ffffff;
+      font-size: 18px;
+      margin-left: 2px;
+    }
+
+    .circle-symbol.terminate {
+      color: #ffffff;
+      font-size: 17px;
+    }
+
+    .circle-symbol.throw {
+      color: #ffffff;
+      font-size: 18px;
+    }
+
+    .circle-symbol.catch {
+      color: #38bdf8;
+      font-size: 18px;
+    }
+
+    /* Start Node: Green Ball */
+    &.flow-node-start {
+      background: radial-gradient(circle at 35% 35%, #22c55e, #15803d);
+      border: 2.5px solid #4ade80;
+      box-shadow:
+        0 4px 14px rgba(34, 197, 94, 0.35),
+        inset 0 1px 2px rgba(255, 255, 255, 0.4);
+
+      &:hover {
+        box-shadow:
+          0 6px 20px rgba(34, 197, 94, 0.5),
+          inset 0 1px 2px rgba(255, 255, 255, 0.5);
+        transform: scale(1.06);
+      }
+    }
+
+    /* Terminate Node: Red/Dark Ball */
+    &.flow-node-terminate {
+      background: radial-gradient(circle at 35% 35%, #ef4444, #991b1b);
+      border: 2.5px solid #f87171;
+      box-shadow:
+        0 4px 14px rgba(239, 68, 68, 0.35),
+        inset 0 1px 2px rgba(255, 255, 255, 0.35);
+
+      &:hover {
+        box-shadow:
+          0 6px 20px rgba(239, 68, 68, 0.5),
+          inset 0 1px 2px rgba(255, 255, 255, 0.45);
+        transform: scale(1.06);
+      }
+    }
+
+    /* Event Throw Node: Solid Blue Ball */
+    &.flow-node-event-throw {
+      background: radial-gradient(circle at 35% 35%, #0284c7, #0369a1);
+      border: 2.5px solid #38bdf8;
+      box-shadow:
+        0 4px 16px rgba(2, 132, 199, 0.4),
+        inset 0 1px 2px rgba(255, 255, 255, 0.4);
+
+      &:hover {
+        box-shadow:
+          0 6px 22px rgba(2, 132, 199, 0.55),
+          inset 0 1px 2px rgba(255, 255, 255, 0.5);
+        transform: scale(1.06);
+      }
+    }
+
+    /* Event Catch Node: Dotted Blue Ball */
+    &.flow-node-event-catch {
+      background: radial-gradient(
+        circle at 50% 50%,
+        rgba(14, 165, 233, 0.22),
+        rgba(2, 132, 199, 0.08)
+      );
+      backdrop-filter: blur(4px);
+      border: 2.5px dashed #38bdf8;
+      box-shadow: 0 4px 14px rgba(56, 189, 248, 0.25);
+
+      &:hover {
+        box-shadow: 0 6px 20px rgba(56, 189, 248, 0.4);
+        transform: scale(1.06);
+        background: radial-gradient(
+          circle at 50% 50%,
+          rgba(14, 165, 233, 0.3),
+          rgba(2, 132, 199, 0.14)
+        );
+      }
+    }
+
+    /* Selection Glow */
+    &.is-selected {
+      z-index: 50;
+      box-shadow:
+        0 0 0 3px var(--theme-ac, #38bdf8),
+        0 8px 24px rgba(0, 0, 0, 0.4) !important;
+    }
+
+    &.has-switcher-open {
+      z-index: 100;
+    }
+
+    /* Running status pulse */
+    &.status-running {
+      animation: circle-pulse 1.2s infinite ease-in-out;
+    }
+
+    /* Ports for circle nodes */
+    .circle-port-input {
+      top: 50% !important;
+      left: -6px !important;
+      transform: translateY(-50%) !important;
+    }
+
+    .circle-port-output {
+      top: 50% !important;
+      right: -6px !important;
+      transform: translateY(-50%) !important;
+    }
+
+    /* Floating switch type button (top-left) */
+    .circle-switch-btn {
+      position: absolute;
+      top: -6px;
+      left: -6px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--theme-bg-panel, #1e1e1e);
+      border: 1px solid var(--theme-b-main, #444);
+      color: var(--theme-t-sub, #aaa);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 10;
+      padding: 0;
+      transition: all 0.15s ease;
+
+      &:hover,
+      &.active {
+        background: var(--theme-ac, #3883fa);
+        color: #fff;
+        border-color: var(--theme-ac, #3883fa);
+        box-shadow: 0 0 8px rgba(56, 131, 250, 0.4);
+      }
+    }
+
+    &:hover .circle-switch-btn,
+    &.is-selected .circle-switch-btn,
+    &.has-switcher-open .circle-switch-btn {
+      display: flex;
+    }
+
+    /* Floating delete button */
+    .circle-delete-btn {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--theme-bg-panel, #1e1e1e);
+      border: 1px solid var(--theme-b-main, #444);
+      color: var(--theme-t-sub, #aaa);
+      font-size: 12px;
+      line-height: 1;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 10;
+      padding: 0;
+
+      &:hover {
+        background: #ef4444;
+        color: #fff;
+        border-color: #ef4444;
+      }
+    }
+
+    &:hover .circle-delete-btn,
+    &.is-selected .circle-delete-btn {
+      display: flex;
+    }
+
+    /* Label badge beneath circle */
+    .circle-label-badge {
+      position: absolute;
+      top: 58px;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      background: var(--theme-bg-panel, #252526);
+      border: 1px solid var(--theme-b-main, #3e3e42);
+      border-radius: 12px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--theme-t-main, #e2e8f0);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+      pointer-events: none;
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+
+      .circle-badge-text.event {
+        color: #38bdf8;
+      }
+    }
+
+    /* Floating Type Switcher (Just like conn-ball-control on line) */
+    .circle-type-control {
+      position: absolute;
+      bottom: calc(100% + 10px);
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--theme-bg-panel, #1e1e1e);
+      border: 1px solid var(--theme-b-main, rgba(255, 255, 255, 0.16));
+      box-shadow:
+        0 6px 20px rgba(0, 0, 0, 0.4),
+        0 0 0 1px rgba(0, 0, 0, 0.1);
+      border-radius: 20px;
+      padding: 4px 6px;
+      white-space: nowrap;
+      z-index: 100;
+      pointer-events: auto;
+      cursor: default;
+
+      &::after {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        border-width: 5px;
+        border-style: solid;
+        border-color: var(--theme-b-main, rgba(255, 255, 255, 0.16)) transparent transparent
+          transparent;
+      }
+
+      &.align-left {
+        left: 0;
+        transform: translateX(0);
+
+        &::after {
+          left: 27px;
+          transform: translateX(-50%);
+        }
+      }
+
+      &.align-bottom {
+        bottom: auto;
+        top: calc(100% + 10px);
+
+        &::after {
+          top: auto;
+          bottom: 100%;
+          border-color: transparent transparent var(--theme-b-main, rgba(255, 255, 255, 0.16))
+            transparent;
+        }
+      }
+
+      .circle-type-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 12px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--theme-t-sub, #94a3b8);
+        font-size: 11px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.12s ease;
+
+        &:hover {
+          background: var(--theme-bg-hover, rgba(255, 255, 255, 0.08));
+          color: var(--theme-t-main, #fff);
+        }
+
+        &.active {
+          font-weight: 600;
+          color: var(--theme-t-bright, #fff);
+          background: var(--theme-bg-hover, rgba(255, 255, 255, 0.14));
+          border-color: var(--theme-b-subtle, rgba(255, 255, 255, 0.2));
+        }
+
+        .type-disc {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          display: inline-block;
+
+          &.green {
+            background: #22c55e;
+          }
+          &.red {
+            background: #ef4444;
+          }
+          &.blue {
+            background: #0284c7;
+          }
+          &.blue-dashed {
+            background: rgba(14, 165, 233, 0.3);
+            border: 1px dashed #38bdf8;
+          }
+        }
+      }
+    }
+  }
+
+  @keyframes circle-pulse {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.12);
+    }
+  }
+
+  /* Side panel event configuration tab */
+  .tab-pane-event {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .event-config-card {
+    background: var(--theme-bg-panel, #1e1e1e);
+    border: 1px solid var(--theme-b-main, #333);
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .event-type-badge {
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 12px;
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    &.event-throw {
+      background: rgba(2, 132, 199, 0.15);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+    }
+    &.event-catch {
+      background: rgba(14, 165, 233, 0.1);
+      color: #38bdf8;
+      border: 1px dashed rgba(56, 189, 248, 0.5);
+    }
+    &.start {
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+      border: 1px solid rgba(74, 222, 128, 0.4);
+    }
+    &.terminate {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(248, 113, 113, 0.4);
+    }
+  }
+  .event-help-text {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--theme-t-sub, #94a3b8);
+  }
+  .event-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .event-field-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--theme-t-main, #e2e8f0);
+  }
+  .event-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .event-input {
+    flex: 1;
+    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--theme-bg-input, #18181b);
+    border: 1px solid var(--theme-b-main, #3f3f46);
+    color: var(--theme-t-main, #fff);
+  }
+  .event-tip {
+    font-size: 11px;
+    color: var(--theme-t-sub, #64748b);
+  }
+  .event-run-info {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--theme-t-main, #cbd5e1);
   }
 
   /* Ports */
@@ -4413,9 +5639,45 @@
     border-radius: 50%;
     animation: flow-spin 0.8s linear infinite;
   }
-  @keyframes flow-spin {
-    to {
-      transform: rotate(360deg);
+  /* Light Theme Overrides for Floating Controls */
+  :global(.jse-theme-default) .circle-type-control,
+  :global(.jse-theme-light) .circle-type-control {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+
+    &::after {
+      border-color: #cbd5e1 transparent transparent transparent;
+    }
+
+    .circle-type-btn {
+      color: #64748b;
+
+      &:hover {
+        background: rgba(0, 0, 0, 0.05);
+        color: #0f172a;
+      }
+
+      &.active {
+        color: #0f172a;
+        background: rgba(0, 0, 0, 0.08);
+        border-color: #cbd5e1;
+      }
+    }
+  }
+
+  :global(.jse-theme-default) .flow-floating-zoom,
+  :global(.jse-theme-light) .flow-floating-zoom,
+  :global(.jse-theme-default) .flow-floating-legend,
+  :global(.jse-theme-light) .flow-floating-legend {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: #cbd5e1;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    color: #475569;
+
+    .legend-badge {
+      color: #0f172a;
+      border-right-color: #cbd5e1;
     }
   }
 </style>

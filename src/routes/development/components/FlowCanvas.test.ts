@@ -23,12 +23,15 @@ describe('FlowCanvas', () => {
     expect(getByText(target, '▶ Run Flow')).toBeTruthy()
     expect(getByText(target, '＋ REST Block')).toBeTruthy()
     expect(getByText(target, '＋ JS Block')).toBeTruthy()
+    expect(getByText(target, '＋ Evento')).toBeTruthy()
     expect(getByText(target, 'Auto Layout')).toBeTruthy()
+    expect(getByText(target, 'Example')).toBeTruthy()
+    expect(getByText(target, 'Clear')).toBeTruthy()
 
-    // Should have nodes rendered
-    expect(target.querySelectorAll('.flow-node').length).toBe(3)
+    // Should have 7 nodes rendered in default Rick & Morty flow
+    expect(target.querySelectorAll('.flow-node').length).toBe(7)
     // Connections rendered in SVG
-    expect(target.querySelectorAll('.conn-line').length).toBe(2)
+    expect(target.querySelectorAll('.conn-line').length).toBe(5)
   })
 
   it('adds a new JS node when clicking + JS Block', async () => {
@@ -294,8 +297,9 @@ describe('FlowCanvas', () => {
     document.body.appendChild(target)
 
     const graph = createDefaultFlowGraph()
-    // Give the first node a response
-    graph.nodes[0].lastRun = {
+    // Give the first REST node a response
+    const restNode = graph.nodes.find((n) => n.type === 'rest')!
+    restNode.lastRun = {
       durationMs: 120,
       status: 200,
       timestamp: Date.now(),
@@ -324,5 +328,155 @@ describe('FlowCanvas', () => {
       '1. Buscar Personagem (200)',
       '{"results": [{"id": 1}]}'
     )
+  })
+
+  it('adds a new Event node when clicking ＋ Evento', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = { nodes: [], connections: [] }
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    const addEventBtn = getByText(target, '＋ Evento')
+    await fireEvent.click(addEventBtn)
+    await tick()
+
+    expect(target.querySelectorAll('.flow-node').length).toBe(1)
+    expect(target.querySelector('.flow-node-circle')).toBeTruthy()
+
+    // Floating type switcher should open automatically on new event creation
+    expect(target.querySelector('.circle-type-control')).toBeTruthy()
+  })
+
+  it('shows floating type switcher on circle node via circular arrow button and switches between types', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = createDefaultFlowGraph()
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    // Find the circular Start node
+    const circleNode = target.querySelector('.flow-node-circle') as HTMLElement
+    expect(circleNode).toBeTruthy()
+
+    // Click it to select
+    await fireEvent.click(circleNode)
+    await tick()
+
+    // Switch button should be present on selected node, but switcher popup is not yet open
+    const switchBtn = circleNode.querySelector('.circle-switch-btn') as HTMLElement
+    expect(switchBtn).toBeTruthy()
+    expect(target.querySelector('.circle-type-control')).toBeNull()
+
+    // Clicking the circular arrow switch button opens the floating switcher
+    await fireEvent.click(switchBtn)
+    await tick()
+
+    const switcher = target.querySelector('.circle-type-control') as HTMLElement
+    expect(switcher).toBeTruthy()
+    expect(getByText(switcher, 'Início')).toBeTruthy()
+    expect(getByText(switcher, 'Terminate')).toBeTruthy()
+    expect(getByText(switcher, 'Salto')).toBeTruthy()
+    expect(getByText(switcher, 'Receptor')).toBeTruthy()
+
+    // Click 'Terminate' to switch type
+    const termBtn = getByText(switcher, 'Terminate')
+    await fireEvent.click(termBtn)
+    await tick()
+
+    expect(circleNode.classList.contains('flow-node-terminate')).toBe(true)
+    // Switcher closes after selection
+    expect(target.querySelector('.circle-type-control')).toBeNull()
+  })
+
+  it('displays connection line selector pill when clicking a connection wire and allows switching kind', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = createDefaultFlowGraph()
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    const connGroup = target.querySelector('.connection-group') as HTMLElement
+    expect(connGroup).toBeTruthy()
+
+    await fireEvent.click(connGroup)
+    await tick()
+
+    const connBallWrap = target.querySelector('.conn-ball-overlay-wrap') as HTMLElement
+    expect(connBallWrap).toBeTruthy()
+
+    const connControl = connBallWrap.querySelector('.conn-ball-control') as HTMLElement
+    expect(connControl).toBeTruthy()
+    expect(getByText(connControl, 'Blue')).toBeTruthy()
+    expect(getByText(connControl, 'Purple')).toBeTruthy()
+
+    // Toggle to dotted / purple
+    const purpleBtn = getByText(connControl, 'Purple')
+    await fireEvent.click(purpleBtn)
+    await tick()
+
+    expect(connControl.classList.contains('is-dotted')).toBe(true)
+  })
+
+  it('toggles the File actions dropdown menu and displays menu items', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = createDefaultFlowGraph()
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    const fileMenuBtn = target.querySelector('.flow-file-menu button') as HTMLButtonElement
+    expect(fileMenuBtn).toBeTruthy()
+    expect(target.querySelector('.flow-menu')).toBeNull()
+
+    // Click to open
+    await fireEvent.click(fileMenuBtn)
+    await tick()
+
+    const menu = target.querySelector('.flow-menu') as HTMLElement
+    expect(menu).toBeTruthy()
+    expect(getByText(menu, '📂 Open…')).toBeTruthy()
+    expect(getByText(menu, '💾 Save')).toBeTruthy()
+    expect(getByText(menu, '📝 Save As…')).toBeTruthy()
+    expect(getByText(menu, '📥 Import blocks…')).toBeTruthy()
+    expect(getByText(menu, '📤 Export (download)')).toBeTruthy()
+
+    // Click again to close
+    await fireEvent.click(fileMenuBtn)
+    await tick()
+
+    expect(target.querySelector('.flow-menu')).toBeNull()
   })
 })
