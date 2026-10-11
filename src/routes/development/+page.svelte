@@ -1091,8 +1091,7 @@
   ): number {
     const primId = targetPrimaryId ?? activePrimaryTabId
     const targetPrimary =
-      primaryTabs.find((p) => p.id === primId) ??
-      getPaneActivePrimary(activeLeafId)
+      primaryTabs.find((p) => p.id === primId) ?? getPaneActivePrimary(activeLeafId)
     const targetLeafId = findLeafForPrimary(targetPrimary.id)
 
     const newSubId = nextTabId++
@@ -1967,7 +1966,8 @@
     if (bundle.flowGraph) {
       $flowGraphStore = bundle.flowGraph
       const activeP = primaryTabs.find((p) => p.id === activePrimaryTabId) ?? primaryTabs[0]
-      if (activeP && !activeP.requestState.flowGraph) activeP.requestState.flowGraph = bundle.flowGraph
+      if (activeP && !activeP.requestState.flowGraph)
+        activeP.requestState.flowGraph = bundle.flowGraph
     }
     if (bundle.environments) $environments = bundle.environments
     if (bundle.globalEnvironment) $globalEnvironment = bundle.globalEnvironment
@@ -2088,11 +2088,14 @@
       paneActivePrimaryMap: { 1: pt.id }
     }
 
-    const currentFlow = pt.spatialFlows?.find((f) => f.id === pt.activeSpatialFlowId) ?? pt.spatialFlows?.[0]
+    const currentFlow =
+      pt.spatialFlows?.find((f) => f.id === pt.activeSpatialFlowId) ?? pt.spatialFlows?.[0]
 
     return {
       workspace: wsSnapshot,
-      flowGraph: currentFlow?.graph ? JSON.parse(JSON.stringify(currentFlow.graph)) : createDefaultFlowGraph(),
+      flowGraph: currentFlow?.graph
+        ? JSON.parse(JSON.stringify(currentFlow.graph))
+        : createDefaultFlowGraph(),
       environments: $environments as Record<string, Record<string, string>>,
       globalEnvironment: $globalEnvironment as Record<string, string>,
       activeEnvName: $activeEnvName as string
@@ -2134,7 +2137,8 @@
       await writable.close()
       showDiskSaveLabel(`Workspace "${pt.title}" salvo: ${handle.name}`)
     } catch (err) {
-      if ((err as Error)?.name !== 'AbortError') showDiskSaveLabel(`Erro ao salvar workspace "${pt.title}"`)
+      if ((err as Error)?.name !== 'AbortError')
+        showDiskSaveLabel(`Erro ao salvar workspace "${pt.title}"`)
     }
   }
 
@@ -2262,14 +2266,35 @@
       type: 'custom',
       items: [
         { icon: '📄', label: 'Novo Arquivo (Nova Aba)', action: () => addTab() },
-        { icon: '📂', label: 'Abrir Arquivos (com permissão de escrita)…', action: () => void openFilesFromPicker() },
+        {
+          icon: '📂',
+          label: 'Abrir Arquivos (com permissão de escrita)…',
+          action: () => void openFilesFromPicker()
+        },
         { icon: '📁', label: 'Abrir Pasta de Projeto…', action: () => void openFolder() },
-        ...(folderPendingPermission ? [{ icon: '🔌', label: 'Reconectar Arquivos Salvos', action: () => void reconnectFiles() }] : []),
+        ...(folderPendingPermission
+          ? [
+              {
+                icon: '🔌',
+                label: 'Reconectar Arquivos Salvos',
+                action: () => void reconnectFiles()
+              }
+            ]
+          : []),
         { separator: true, label: 'sep-1' },
         { icon: '💾', label: 'Salvar Arquivo Ativo no Disco', action: () => void saveToDisk() },
         { icon: '💾', label: 'Salvar Todos os Arquivos', action: () => saveAllToDisk() },
         { icon: '⬇', label: 'Baixar Todos os Arquivos (.zip)', action: () => downloadAllTabs() },
-        ...(folderName ? [{ separator: true, label: 'sep-2' }, { icon: '❌', label: `Fechar Pasta "${folderName}"`, action: () => void closeFolder() }] : [])
+        ...(folderName
+          ? [
+              { separator: true, label: 'sep-2' },
+              {
+                icon: '❌',
+                label: `Fechar Pasta "${folderName}"`,
+                action: () => void closeFolder()
+              }
+            ]
+          : [])
       ]
     }
   }
@@ -2281,17 +2306,50 @@
       type: 'custom',
       items: [
         { icon: '➕', label: 'Novo Workspace', action: () => addPrimaryTab() },
-        { icon: '🗂', label: 'Abrir Arquivo de Workspace (.jsew)…', action: () => void openWorkspaceFile() },
+        {
+          icon: '🗂',
+          label: 'Abrir Arquivo de Workspace (.jsew)…',
+          action: () => void openWorkspaceFile()
+        },
         { separator: true, label: 'sep-1' },
-        { icon: '💾', label: `Salvar Workspace Ativo ("${activePrimary?.title || 'Workspace'}")`, action: () => void saveSingleWorkspaceFile(activePrimaryTabId) },
-        { icon: '⬇', label: `Exportar Workspace Ativo (.jsew)`, action: () => exportSingleWorkspace(activePrimaryTabId) },
-        { icon: '📦', label: 'Salvar Todos os Workspaces (.jsew)…', action: () => void saveWorkspaceFile(false) },
-        { icon: '📝', label: 'Salvar Todos os Workspaces Como…', action: () => void saveWorkspaceFile(true) },
+        {
+          icon: '💾',
+          label: `Salvar Workspace Ativo ("${activePrimary?.title || 'Workspace'}")`,
+          action: () => void saveSingleWorkspaceFile(activePrimaryTabId)
+        },
+        {
+          icon: '⬇',
+          label: `Exportar Workspace Ativo (.jsew)`,
+          action: () => exportSingleWorkspace(activePrimaryTabId)
+        },
+        {
+          icon: '📦',
+          label: 'Salvar Todos os Workspaces (.jsew)…',
+          action: () => void saveWorkspaceFile(false)
+        },
+        {
+          icon: '📝',
+          label: 'Salvar Todos os Workspaces Como…',
+          action: () => void saveWorkspaceFile(true)
+        },
         { separator: true, label: 'sep-2' },
-        { icon: '📁', label: 'Novo Grupo de Flows no Workspace Ativo', action: () => handleCreateGroup(activePrimaryTabId) },
-        { icon: '🔀', label: 'Novo Spatial Flow no Workspace Ativo', action: () => handleCreateFlow(activePrimaryTabId, activeGroupObj?.id ?? 'group-1') },
+        {
+          icon: '📁',
+          label: 'Novo Grupo de Flows no Workspace Ativo',
+          action: () => handleCreateGroup(activePrimaryTabId)
+        },
+        {
+          icon: '🔀',
+          label: 'Novo Spatial Flow no Workspace Ativo',
+          action: () => handleCreateFlow(activePrimaryTabId, activeGroupObj?.id ?? 'group-1')
+        },
         { separator: true, label: 'sep-3' },
-        { icon: '🧹', label: 'Fechar Outros Workspaces', disabled: primaryTabs.length <= 1, action: () => closeOtherWorkspaces(activePrimaryTabId) }
+        {
+          icon: '🧹',
+          label: 'Fechar Outros Workspaces',
+          disabled: primaryTabs.length <= 1,
+          action: () => closeOtherWorkspaces(activePrimaryTabId)
+        }
       ]
     }
   }
@@ -2304,7 +2362,11 @@
       items: [
         { icon: '🧪', label: 'Carregar Exemplo Rick & Morty Flow', action: () => loadFlowSample() },
         { separator: true, label: 'sep-1' },
-        { icon: '📊', label: 'Carregar Exemplo Customers & Orders', action: () => loadSample('customers') },
+        {
+          icon: '📊',
+          label: 'Carregar Exemplo Customers & Orders',
+          action: () => loadSample('customers')
+        },
         { icon: '🏷', label: 'Carregar Exemplo Tags & Arrays', action: () => loadSample('tags') },
         { icon: '📦', label: 'Carregar Exemplo Objeto JSON', action: () => loadSample('object') },
         { icon: '📋', label: 'Carregar Exemplo Array Longo', action: () => loadSample('long') },
@@ -2740,14 +2802,79 @@
       },
       customers: {
         json: [
-          { id: 1003, name: 'Pedro Almeida', email: 'pedro.almeida@example.com', active: false, address: { city: 'Braga', country: 'PT', postalCode: '4700-555' }, orders: [{ id: 'ORD-5004', amount: 45.75, status: 'cancelled' }] },
-          { id: 1005, name: 'Ricardo Sousa', email: 'ricardo.sousa@example.com', active: true, address: { city: 'Aveiro', country: 'PT', postalCode: '3800-888' }, orders: [{ id: 'ORD-5007', amount: 99.99, status: 'completed' }] },
-          { id: 1001, name: 'João Silva', email: 'joao.silva@example.com', active: true, address: { city: 'Porto', country: 'PT', postalCode: '4000-001' }, orders: [{ id: 'ORD-5001', amount: 125.5, status: 'completed' }, { id: 'ORD-5002', amount: 89.9, status: 'pending' }] },
-          { id: 1008, name: 'Sofia Mendes', email: 'sofia.mendes@example.com', active: true, address: { city: 'Leiria', country: 'PT', postalCode: '2400-100' }, orders: [{ id: 'ORD-5009', amount: 149.5, status: 'pending' }, { id: 'ORD-5010', amount: 67.3, status: 'completed' }] },
-          { id: 1002, name: 'Maria Costa', email: 'maria.costa@example.com', active: true, address: { city: 'Lisboa', country: 'PT', postalCode: '1000-123' }, orders: [{ id: 'ORD-5003', amount: 250, status: 'completed' }] },
-          { id: 1007, name: 'Miguel Rocha', email: 'miguel.rocha@example.com', active: true, address: { city: 'Guimarães', country: 'PT', postalCode: '4800-333' }, orders: [{ id: 'ORD-5008', amount: 315.2, status: 'completed' }] },
-          { id: 1004, name: 'Ana Martins', email: 'ana.martins@example.com', active: true, address: { city: 'Coimbra', country: 'PT', postalCode: '3000-222' }, orders: [{ id: 'ORD-5005', amount: 700, status: 'completed' }, { id: 'ORD-5006', amount: 12.99, status: 'pending' }] },
-          { id: 1006, name: 'Carla Ferreira', email: 'carla.ferreira@example.com', active: false, address: { city: 'Faro', country: 'PT', postalCode: '8000-777' }, orders: [] }
+          {
+            id: 1003,
+            name: 'Pedro Almeida',
+            email: 'pedro.almeida@example.com',
+            active: false,
+            address: { city: 'Braga', country: 'PT', postalCode: '4700-555' },
+            orders: [{ id: 'ORD-5004', amount: 45.75, status: 'cancelled' }]
+          },
+          {
+            id: 1005,
+            name: 'Ricardo Sousa',
+            email: 'ricardo.sousa@example.com',
+            active: true,
+            address: { city: 'Aveiro', country: 'PT', postalCode: '3800-888' },
+            orders: [{ id: 'ORD-5007', amount: 99.99, status: 'completed' }]
+          },
+          {
+            id: 1001,
+            name: 'João Silva',
+            email: 'joao.silva@example.com',
+            active: true,
+            address: { city: 'Porto', country: 'PT', postalCode: '4000-001' },
+            orders: [
+              { id: 'ORD-5001', amount: 125.5, status: 'completed' },
+              { id: 'ORD-5002', amount: 89.9, status: 'pending' }
+            ]
+          },
+          {
+            id: 1008,
+            name: 'Sofia Mendes',
+            email: 'sofia.mendes@example.com',
+            active: true,
+            address: { city: 'Leiria', country: 'PT', postalCode: '2400-100' },
+            orders: [
+              { id: 'ORD-5009', amount: 149.5, status: 'pending' },
+              { id: 'ORD-5010', amount: 67.3, status: 'completed' }
+            ]
+          },
+          {
+            id: 1002,
+            name: 'Maria Costa',
+            email: 'maria.costa@example.com',
+            active: true,
+            address: { city: 'Lisboa', country: 'PT', postalCode: '1000-123' },
+            orders: [{ id: 'ORD-5003', amount: 250, status: 'completed' }]
+          },
+          {
+            id: 1007,
+            name: 'Miguel Rocha',
+            email: 'miguel.rocha@example.com',
+            active: true,
+            address: { city: 'Guimarães', country: 'PT', postalCode: '4800-333' },
+            orders: [{ id: 'ORD-5008', amount: 315.2, status: 'completed' }]
+          },
+          {
+            id: 1004,
+            name: 'Ana Martins',
+            email: 'ana.martins@example.com',
+            active: true,
+            address: { city: 'Coimbra', country: 'PT', postalCode: '3000-222' },
+            orders: [
+              { id: 'ORD-5005', amount: 700, status: 'completed' },
+              { id: 'ORD-5006', amount: 12.99, status: 'pending' }
+            ]
+          },
+          {
+            id: 1006,
+            name: 'Carla Ferreira',
+            email: 'carla.ferreira@example.com',
+            active: false,
+            address: { city: 'Faro', country: 'PT', postalCode: '8000-777' },
+            orders: []
+          }
         ],
         text: undefined
       },
@@ -3775,7 +3902,9 @@
       primaryTabs = [...primaryTabs]
       tabsRenderVersion++
       scheduleAutosave()
-      showDiskSaveLabel(`Spatial Flow "${activeFlowObj.name}" saved in "${activeGroupObj?.name || 'General'}"!`)
+      showDiskSaveLabel(
+        `Spatial Flow "${activeFlowObj.name}" saved in "${activeGroupObj?.name || 'General'}"!`
+      )
       return
     }
     saveFlowModalTitle = asNew ? 'Save Spatial Flow As…' : 'Save Spatial Flow'
@@ -3887,7 +4016,8 @@
     const grp = pt.flowGroups.find((g) => g.id === groupId)
     const hasFlows = pt.spatialFlows?.some((f) => f.groupId === groupId)
     if (hasFlows) {
-      if (!confirm(`O grupo "${grp?.name}" possui fluxos dentro. Deseja excluí-lo e seus fluxos?`)) return
+      if (!confirm(`O grupo "${grp?.name}" possui fluxos dentro. Deseja excluí-lo e seus fluxos?`))
+        return
       pt.spatialFlows = pt.spatialFlows?.filter((f) => f.groupId !== groupId)
     }
     pt.flowGroups = pt.flowGroups.filter((g) => g.id !== groupId)
@@ -3909,7 +4039,10 @@
     if (ptIndex === -1) return
     const pt = primaryTabs[ptIndex]
     const grp = pt.flowGroups?.find((g) => g.id === groupId)
-    const name = prompt(`Nome do novo Spatial Flow em "${grp?.name || 'Grupo'}":`, `Flow ${(pt.spatialFlows?.length ?? 0) + 1}`)
+    const name = prompt(
+      `Nome do novo Spatial Flow em "${grp?.name || 'Grupo'}":`,
+      `Flow ${(pt.spatialFlows?.length ?? 0) + 1}`
+    )
     if (!name?.trim()) return
 
     const newFlow = createDefaultSpatialFlow(name.trim(), groupId, { nodes: [], connections: [] })
@@ -4002,8 +4135,8 @@
         handleSelectFlow(primaryTabId, importedFlow.id)
         scheduleAutosave()
         showDiskSaveLabel(`Spatial Flow "${importedFlow.name}" importado com sucesso!`)
-      } catch (err: any) {
-        alert(`Erro ao importar Spatial Flow: ${err.message}`)
+      } catch (err) {
+        alert(`Erro ao importar Spatial Flow: ${(err as Error).message}`)
       }
     }
     input.click()
@@ -4288,19 +4421,28 @@
               <section class="sb-section">
                 <h3 class="sb-title">Folder: {folderName}</h3>
                 {#if folderEntries.length > 0}
-                  <FolderTree entries={folderEntries} onOpen={(entry) => void openFolderFile(entry)} />
+                  <FolderTree
+                    entries={folderEntries}
+                    onOpen={(entry) => void openFolderFile(entry)}
+                  />
                 {:else}
                   <p class="sb-note">No files found.</p>
                 {/if}
               </section>
             {/if}
             <div class="sb-btn-group">
-              <button class="sb-btn" on:click={() => void openFilesFromPicker()}>📂 Open files (writable)</button>
+              <button class="sb-btn" on:click={() => void openFilesFromPicker()}
+                >📂 Open files (writable)</button
+              >
               <button class="sb-btn" on:click={() => void openFolder()}>📁 Open folder…</button>
               {#if folderPendingPermission}
-                <button class="sb-btn" on:click={() => void reconnectFiles()}>🔌 Reconnect saved files</button>
+                <button class="sb-btn" on:click={() => void reconnectFiles()}
+                  >🔌 Reconnect saved files</button
+                >
               {/if}
-              <button class="sb-btn" on:click={() => void saveToDisk()}>💾 Save active tab to disk</button>
+              <button class="sb-btn" on:click={() => void saveToDisk()}
+                >💾 Save active tab to disk</button
+              >
               <button class="sb-btn" on:click={saveAllToDisk}>💾 Save all files</button>
               <button class="sb-btn" on:click={downloadAllTabs}>⬇ Download all tabs</button>
             </div>
@@ -4313,14 +4455,19 @@
                 <button
                   class="sb-btn"
                   title="Open a workspace file (replaces current workspace)"
-                  on:click={() => void openWorkspaceFile()}
-                >🗂 Open workspace…</button>
+                  on:click={() => void openWorkspaceFile()}>🗂 Open workspace…</button
+                >
                 <button
                   class="sb-btn"
-                  title={workspaceFileName ? `Save to ${workspaceFileName}` : 'Save whole workspace to a file'}
+                  title={workspaceFileName
+                    ? `Save to ${workspaceFileName}`
+                    : 'Save whole workspace to a file'}
                   on:click={() => void saveWorkspaceFile(false)}
-                >💾 Save workspace{workspaceFileName ? `: ${workspaceFileName}` : ''}</button>
-                <button class="sb-btn" on:click={() => void saveWorkspaceFile(true)}>📝 Save workspace as…</button>
+                  >💾 Save workspace{workspaceFileName ? `: ${workspaceFileName}` : ''}</button
+                >
+                <button class="sb-btn" on:click={() => void saveWorkspaceFile(true)}
+                  >📝 Save workspace as…</button
+                >
               </div>
             {/if}
 
@@ -4353,7 +4500,9 @@
             <div class="sb-samples-group">
               <button class="sb-btn" on:click={() => loadSample('array')}>Array</button>
               <button class="sb-btn" on:click={() => loadSample('tags')}>Tags & Arrays</button>
-              <button class="sb-btn" on:click={() => loadSample('customers')}>Customers & Orders</button>
+              <button class="sb-btn" on:click={() => loadSample('customers')}
+                >Customers & Orders</button
+              >
               <button class="sb-btn" on:click={() => loadSample('object')}>Object</button>
               <button class="sb-btn" on:click={() => loadSample('long')}>Long Array</button>
               <button class="sb-btn" on:click={() => loadSample('empty')}>Empty Text</button>
@@ -4361,8 +4510,8 @@
               <button
                 class="sb-btn"
                 title="Load full example into the Spatial Flow and open the requests panel"
-                on:click={loadFlowSample}
-              >🔀 Flow · Rick & Morty</button>
+                on:click={loadFlowSample}>🔀 Flow · Rick & Morty</button
+              >
             </div>
           </svelte:fragment>
         </SidebarResizablePanels>
@@ -4944,7 +5093,9 @@
             <div class="requests-flow-container">
               {#key `${activePrimaryTabId}-${activeFlowObj?.id ?? 'def'}`}
                 <FlowCanvas
-                  flowGraph={activeFlowObj?.graph ? JSON.parse(JSON.stringify(activeFlowObj.graph)) : { nodes: [], connections: [] }}
+                  flowGraph={activeFlowObj?.graph
+                    ? JSON.parse(JSON.stringify(activeFlowObj.graph))
+                    : { nodes: [], connections: [] }}
                   bind:environments={$environments}
                   bind:globalEnvironment={$globalEnvironment}
                   activeEnvName={$activeEnvName}
@@ -4953,7 +5104,7 @@
                   activeGroupName={activeGroupObj?.name ?? 'General'}
                   {availableFlows}
                   onSaveFlowToWorkspace={(asNew: boolean) => openSaveFlowModal(asNew)}
-                  onSaveGraph={(g: any) => {
+                  onSaveGraph={(g) => {
                     if (activeFlowObj) {
                       activeFlowObj.graph = JSON.parse(JSON.stringify(g))
                       activeFlowObj.updatedAt = Date.now()
@@ -6068,7 +6219,9 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: background 0.1s, border-color 0.1s;
+    transition:
+      background 0.1s,
+      border-color 0.1s;
     &:hover {
       background: rgba(255, 255, 255, 0.08);
       border-color: $ac;

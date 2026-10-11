@@ -17,6 +17,15 @@ const file = path.join(packageFolder, 'index.js')
 export default {
   input: 'src/lib/index-vanilla.ts',
   external: getVanillaDependencies(),
+  onwarn(warning, warn) {
+    if (warning.code === 'CIRCULAR_DEPENDENCY') {
+      return
+    }
+    if (warning.filename?.includes('node_modules') || warning.id?.includes('node_modules')) {
+      return
+    }
+    warn(warning)
+  },
   output: [
     {
       file,
@@ -34,7 +43,14 @@ export default {
 
       emitCss: true,
 
-      preprocess: sveltePreprocess()
+      preprocess: sveltePreprocess(),
+
+      onwarn(warning, handler) {
+        if (warning.filename?.includes('node_modules')) {
+          return
+        }
+        handler(warning)
+      }
     }),
 
     postcss({

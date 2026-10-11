@@ -90,18 +90,31 @@ export function createDefaultSpatialFlow(
   }
 }
 
-export function ensurePrimaryTabFlows(primary: PrimaryTabState, fallbackGraph?: FlowGraph): PrimaryTabState {
-  const groups = primary.flowGroups && primary.flowGroups.length > 0
-    ? [...primary.flowGroups]
-    : [createDefaultFlowGroup('group-1', 'General')]
-  
-  const flows = primary.spatialFlows && primary.spatialFlows.length > 0
-    ? [...primary.spatialFlows]
-    : [createDefaultSpatialFlow('Main Flow', groups[0].id, (primary.requestState.flowGraph as FlowGraph) ?? fallbackGraph ?? { nodes: [], connections: [] })]
-  
-  const activeId = primary.activeSpatialFlowId && flows.some((f) => f.id === primary.activeSpatialFlowId)
-    ? primary.activeSpatialFlowId
-    : flows[0].id
+export function ensurePrimaryTabFlows(
+  primary: PrimaryTabState,
+  fallbackGraph?: FlowGraph
+): PrimaryTabState {
+  const groups =
+    primary.flowGroups && primary.flowGroups.length > 0
+      ? [...primary.flowGroups]
+      : [createDefaultFlowGroup('group-1', 'General')]
+
+  const flows =
+    primary.spatialFlows && primary.spatialFlows.length > 0
+      ? [...primary.spatialFlows]
+      : [
+          createDefaultSpatialFlow(
+            'Main Flow',
+            groups[0].id,
+            (primary.requestState.flowGraph as FlowGraph) ??
+              fallbackGraph ?? { nodes: [], connections: [] }
+          )
+        ]
+
+  const activeId =
+    primary.activeSpatialFlowId && flows.some((f) => f.id === primary.activeSpatialFlowId)
+      ? primary.activeSpatialFlowId
+      : flows[0].id
 
   return {
     ...primary,

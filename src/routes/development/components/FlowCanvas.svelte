@@ -48,7 +48,8 @@
   export let onManageEnvironments: (() => void) | undefined = undefined
   export let activeFlowName = ''
   export let activeGroupName = ''
-  export let availableFlows: { id: string; name: string; groupName: string; graph?: FlowGraph }[] = []
+  export let availableFlows: { id: string; name: string; groupName: string; graph?: FlowGraph }[] =
+    []
   export let onSaveFlowToWorkspace: ((asNew: boolean) => void) | undefined = undefined
 
   // Execution state
@@ -1307,7 +1308,9 @@
                   const targetInfo = availableFlows.find((f) => f.id === targetId)
                   const targetName = targetInfo?.name || node.eventData.targetFlowName || 'Sub-Flow'
 
-                  showToast(`⚡ [Sub-Flow Beta] Executando "${targetName}"... (Pode consumir mais CPU)`)
+                  showToast(
+                    `⚡ [Sub-Flow Beta] Executando "${targetName}"... (Pode consumir mais CPU)`
+                  )
 
                   const subStart = Date.now()
                   let subSuccess = true
@@ -1318,18 +1321,24 @@
                     try {
                       // Find receptor nodes (event-catch) matching this event name in target flow
                       const matchingReceptors = targetInfo.graph.nodes.filter(
-                        (sn) => sn.type === 'event-catch' && (sn.eventData?.eventName || '').trim().toLowerCase() === evName
+                        (sn) =>
+                          sn.type === 'event-catch' &&
+                          (sn.eventData?.eventName || '').trim().toLowerCase() === evName
                       )
 
                       let nodesToExecute = targetInfo.graph.nodes
                       if (matchingReceptors.length > 0) {
-                        subLogs.push(`Encontrado(s) ${matchingReceptors.length} receptor(es) (Catch) para o evento "${evName}" em "${targetName}".`)
+                        subLogs.push(
+                          `Encontrado(s) ${matchingReceptors.length} receptor(es) (Catch) para o evento "${evName}" em "${targetName}".`
+                        )
                         // Find all nodes reachable from these matching receptors
                         const reachable = new Set<string>()
                         const queue = matchingReceptors.map((r) => r.id)
                         while (queue.length > 0) {
                           const curId = queue.shift()!
-                          const outConns = (targetInfo.graph.connections || []).filter((c) => c.fromId === curId)
+                          const outConns = (targetInfo.graph.connections || []).filter(
+                            (c) => c.fromId === curId
+                          )
                           for (const c of outConns) {
                             if (!reachable.has(c.toId)) {
                               reachable.add(c.toId)
@@ -1341,12 +1350,18 @@
                           nodesToExecute = targetInfo.graph.nodes.filter((n) => reachable.has(n.id))
                         }
                       } else if (evName) {
-                        subLogs.push(`Nenhum receptor com evento "${evName}" em "${targetName}". Executando fluxo padrão.`)
+                        subLogs.push(
+                          `Nenhum receptor com evento "${evName}" em "${targetName}". Executando fluxo padrão.`
+                        )
                       }
 
                       for (const subNode of nodesToExecute) {
                         if (subNode.type === 'rest' && subNode.restData) {
-                          const resUrl = resolveVariables(subNode.restData.url, currentEnv, globalEnvironment).resolved
+                          const resUrl = resolveVariables(
+                            subNode.restData.url,
+                            currentEnv,
+                            globalEnvironment
+                          ).resolved
                           if (resUrl) {
                             try {
                               let subProxyToUse = globalProxy
@@ -1355,7 +1370,10 @@
                                 subProxyToUse = 'https://corsproxy.io/?url={url}'
                               else if (subNode.restData.proxyMode === 'allorigins')
                                 subProxyToUse = 'https://api.allorigins.win/raw?url={url}'
-                              else if (subNode.restData.proxyMode === 'custom' && subNode.restData.customProxyUrl)
+                              else if (
+                                subNode.restData.proxyMode === 'custom' &&
+                                subNode.restData.customProxyUrl
+                              )
                                 subProxyToUse = subNode.restData.customProxyUrl
 
                               const { res } = await fetchWithProxy(
@@ -1363,29 +1381,43 @@
                                 {
                                   method: subNode.restData.method || 'GET',
                                   headers: parseHeadersText(
-                                    resolveVariables(subNode.restData.headers || '', currentEnv, globalEnvironment).resolved
+                                    resolveVariables(
+                                      subNode.restData.headers || '',
+                                      currentEnv,
+                                      globalEnvironment
+                                    ).resolved
                                   ),
                                   body:
                                     subNode.restData.bodyType !== 'none'
-                                      ? resolveVariables(subNode.restData.body || '', currentEnv, globalEnvironment).resolved
+                                      ? resolveVariables(
+                                          subNode.restData.body || '',
+                                          currentEnv,
+                                          globalEnvironment
+                                        ).resolved
                                       : undefined
                                 },
                                 subProxyToUse
                               )
                               subLastResp = await res.text()
-                              subLogs.push(`REST ${subNode.restData.method} ${resUrl}: HTTP ${res.status}`)
-                            } catch (e: any) {
-                              subLogs.push(`Erro REST: ${e.message}`)
+                              subLogs.push(
+                                `REST ${subNode.restData.method} ${resUrl}: HTTP ${res.status}`
+                              )
+                            } catch (e) {
+                              subLogs.push(`Erro REST: ${(e as Error).message}`)
                             }
                           }
                         } else if (subNode.type === 'js' && subNode.jsData) {
-                          const jsRes = executeJsSandbox(subNode.jsData.code, currentEnv, globalEnvironment)
+                          const jsRes = executeJsSandbox(
+                            subNode.jsData.code,
+                            currentEnv,
+                            globalEnvironment
+                          )
                           if (jsRes.logs?.length) subLogs.push(...jsRes.logs)
                         }
                       }
-                    } catch (err: any) {
+                    } catch (err) {
                       subSuccess = false
-                      subLogs.push(`Erro na execução do sub-flow: ${err.message}`)
+                      subLogs.push(`Erro na execução do sub-flow: ${(err as Error).message}`)
                     }
                   }
 
@@ -1395,7 +1427,9 @@
                     durationMs: subDuration,
                     status: subSuccess ? 'SUBFLOW_OK' : 'SUBFLOW_ERROR',
                     outputSummary: `Sub-flow "${targetName}" executado em ${subDuration}ms. Descarregado da memória.`,
-                    responseText: subLastResp || JSON.stringify({ subFlow: targetName, durationMs: subDuration }, null, 2),
+                    responseText:
+                      subLastResp ||
+                      JSON.stringify({ subFlow: targetName, durationMs: subDuration }, null, 2),
                     logs: subLogs,
                     timestamp: Date.now()
                   }
@@ -2028,7 +2062,11 @@
                   {#if node.status === 'running'}
                     <span class="flow-spinner"></span>
                   {:else if node.type === 'event-throw' && node.eventData?.targetFlowId}
-                    <span class="circle-symbol jump-cross" title={`Cross-flow jump: ${node.eventData?.targetFlowName || 'Outro Flow'}`}>🔀</span>
+                    <span
+                      class="circle-symbol jump-cross"
+                      title={`Cross-flow jump: ${node.eventData?.targetFlowName || 'Outro Flow'}`}
+                      >🔀</span
+                    >
                   {:else if node.type === 'start'}
                     <span class="circle-symbol start">▶</span>
                   {:else if node.type === 'terminate'}
@@ -3343,12 +3381,18 @@
                         <span class="beta-badge">BETA</span>
                       </div>
                       <p class="cross-flow-help">
-                        Dispara este evento em outro Spatial Flow do seu workspace, ativando os nós receptores (◌ Catch) que correspondem a este nome de evento no fluxo de destino.
+                        Dispara este evento em outro Spatial Flow do seu workspace, ativando os nós
+                        receptores (◌ Catch) que correspondem a este nome de evento no fluxo de
+                        destino.
                         <span class="cross-flow-warn">
-                          ⚠️ A execução de sub-fluxos pode ser custosa para a máquina. Ao concluir, o sub-fluxo é descarregado da memória mantendo o histórico de respostas neste bloco.
+                          ⚠️ A execução de sub-fluxos pode ser custosa para a máquina. Ao concluir,
+                          o sub-fluxo é descarregado da memória mantendo o histórico de respostas
+                          neste bloco.
                         </span>
                       </p>
-                      <label class="event-field-label" for="target-flow-select">Spatial Flow Alvo:</label>
+                      <label class="event-field-label" for="target-flow-select"
+                        >Spatial Flow Alvo:</label
+                      >
                       <select
                         id="target-flow-select"
                         class="side-method-select side-flow-select"
@@ -5893,11 +5937,16 @@
   }
 
   @keyframes cross-flow-pulse {
-    0%, 100% {
-      box-shadow: 0 0 14px rgba(168, 85, 247, 0.45), inset 0 0 8px rgba(56, 189, 248, 0.25);
+    0%,
+    100% {
+      box-shadow:
+        0 0 14px rgba(168, 85, 247, 0.45),
+        inset 0 0 8px rgba(56, 189, 248, 0.25);
     }
     50% {
-      box-shadow: 0 0 24px rgba(168, 85, 247, 0.8), inset 0 0 14px rgba(56, 189, 248, 0.55);
+      box-shadow:
+        0 0 24px rgba(168, 85, 247, 0.8),
+        inset 0 0 14px rgba(56, 189, 248, 0.55);
     }
   }
 

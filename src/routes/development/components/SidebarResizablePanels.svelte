@@ -266,7 +266,9 @@
     letter-spacing: 0.5px;
     cursor: pointer;
     flex-shrink: 0;
-    transition: background 0.1s, color 0.1s;
+    transition:
+      background 0.1s,
+      color 0.1s;
     &:hover {
       background: var(--theme-bg-hover, rgba(255, 255, 255, 0.05));
       color: var(--theme-t-bright, #ffffff);

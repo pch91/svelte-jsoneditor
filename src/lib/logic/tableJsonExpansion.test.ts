@@ -273,9 +273,24 @@ describe('tableJsonExpansion', () => {
       const vRows = buildVisualRows(primitiveArrayData, vCols)
       // Row 0 has 2 tags -> 2 subrows (0.0, 0.1). Row 1 has 1 tag -> 1 subrow (1.0). Total: 3 visual rows.
       expect(vRows.length).toBe(3)
-      expect(vRows[0]).toEqual({ originalRowIndex: 0, subRowIndex: 0, isSubRow: false, subRowTotal: 2 })
-      expect(vRows[1]).toEqual({ originalRowIndex: 0, subRowIndex: 1, isSubRow: true, subRowTotal: 2 })
-      expect(vRows[2]).toEqual({ originalRowIndex: 1, subRowIndex: 0, isSubRow: false, subRowTotal: 1 })
+      expect(vRows[0]).toEqual({
+        originalRowIndex: 0,
+        subRowIndex: 0,
+        isSubRow: false,
+        subRowTotal: 2
+      })
+      expect(vRows[1]).toEqual({
+        originalRowIndex: 0,
+        subRowIndex: 1,
+        isSubRow: true,
+        subRowTotal: 2
+      })
+      expect(vRows[2]).toEqual({
+        originalRowIndex: 1,
+        subRowIndex: 0,
+        isSubRow: false,
+        subRowTotal: 1
+      })
     })
 
     test('getVisualCellValue returns individual primitive elements for subrows', () => {
@@ -304,7 +319,11 @@ describe('tableJsonExpansion', () => {
 
     test('collapsing primitive array restores original single column', () => {
       const originalColumns = [['id'], ['tags']]
-      const collapsedCols = buildVisualColumns(originalColumns, { '/tags': false }, primitiveArrayData)
+      const collapsedCols = buildVisualColumns(
+        originalColumns,
+        { '/tags': false },
+        primitiveArrayData
+      )
       expect(collapsedCols.length).toBe(2)
       expect(collapsedCols[1].displayName).toBe('tags')
       expect(collapsedCols[1].isExpandedSubColumn).toBe(false)

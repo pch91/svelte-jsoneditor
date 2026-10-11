@@ -36,7 +36,9 @@
           <span class="header-icon">⚙</span>
           <div>
             <h2 class="header-title">Editor Settings & Preferences</h2>
-            <p class="header-subtitle">Configure layout, chrome, table visualization, and encoding</p>
+            <p class="header-subtitle">
+              Configure layout, chrome, table visualization, and encoding
+            </p>
           </div>
         </div>
         <button
@@ -160,7 +162,9 @@
             <label class="setting-item">
               <div class="setting-info">
                 <span class="setting-label">Auto-Expand Columns (Flatten)</span>
-                <span class="setting-desc">Expand nested objects & arrays by default with sub-columns and badges</span>
+                <span class="setting-desc"
+                  >Expand nested objects & arrays by default with sub-columns and badges</span
+                >
               </div>
               <button
                 type="button"

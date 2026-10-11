@@ -64,9 +64,9 @@
 </script>
 
 {#if open}
-  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="modal-backdrop" on:click={onClose} role="dialog" aria-modal="true" tabindex="-1">
-    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="modal-dialog" on:click|stopPropagation on:keydown={handleKeydown}>
       <div class="modal-header">
         <div class="modal-title-wrap">
@@ -95,7 +95,11 @@
 
         <label class="modal-field">
           <span class="modal-label">Target Group</span>
-          <select class="modal-select" on:change={handleGroupSelect} value={creatingNewGroup ? '__new__' : chosenGroupId}>
+          <select
+            class="modal-select"
+            on:change={handleGroupSelect}
+            value={creatingNewGroup ? '__new__' : chosenGroupId}
+          >
             {#each groups as g}
               <option value={g.id}>📁 {g.name}</option>
             {/each}
@@ -241,7 +245,9 @@
     border: 1px solid var(--theme-b-input, #3c3c3c);
     border-radius: 4px;
     outline: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
     &:focus {
       border-color: var(--theme-ac, #0078d4);
       box-shadow: 0 0 0 1px var(--theme-ac, #0078d4);
@@ -264,7 +270,10 @@
     font-weight: 500;
     border-radius: 4px;
     cursor: pointer;
-    transition: background 0.12s, border-color 0.12s, color 0.12s;
+    transition:
+      background 0.12s,
+      border-color 0.12s,
+      color 0.12s;
   }
 
   .btn-secondary {

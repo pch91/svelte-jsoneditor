@@ -105,7 +105,6 @@ export function getSubColumnsInfo(
   let isArray = false
   let isStringJson = false
   let hasObjectElements = false
-  let hasPrimitiveElements = false
 
   if (!Array.isArray(json)) {
     return { subKeys: [], isArray: false, isPrimitiveArray: false, isStringJson: false }
@@ -128,8 +127,6 @@ export function getSubColumnsInfo(
           for (const k of Object.keys(item)) {
             keysSet.add(k)
           }
-        } else if (item !== undefined) {
-          hasPrimitiveElements = true
         }
       }
     } else if (val !== null && typeof val === 'object') {
@@ -550,11 +547,7 @@ export function transformOperationsForStringJson(
  * Extracts the scalar value for sorting from a row, traversing
  * nested objects, arrays, and stringified JSON.
  */
-export function getRowSortValue(
-  row: unknown,
-  path: JSONPath,
-  direction: 1 | -1 = 1
-): unknown {
+export function getRowSortValue(row: unknown, path: JSONPath, direction: 1 | -1 = 1): unknown {
   if (!path || path.length === 0) {
     return tryParseJson(row).parsed
   }

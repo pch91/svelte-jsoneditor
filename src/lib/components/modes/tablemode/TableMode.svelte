@@ -2081,17 +2081,8 @@
                   {@const cellPath = isExpandedView
                     ? vCol.isExpandedSubColumn && vCol.isArrayElement
                       ? vCol.subKey && !vCol.isPrimitiveArray
-                        ? [
-                            String(rowIndex),
-                            ...vCol.parentPath,
-                            String(effSubRow),
-                            vCol.subKey
-                          ]
-                        : [
-                            String(rowIndex),
-                            ...vCol.parentPath,
-                            String(effSubRow)
-                          ]
+                        ? [String(rowIndex), ...vCol.parentPath, String(effSubRow), vCol.subKey]
+                        : [String(rowIndex), ...vCol.parentPath, String(effSubRow)]
                       : [String(rowIndex), ...vCol.fullPath]
                     : [String(rowIndex), ...vCol.parentPath]}
                   {@const isSelected =

@@ -9,7 +9,6 @@
 </script>
 
 <script lang="ts">
-
   export let x = 0
   export let y = 0
   export let items: TabMenuItem[] = []
@@ -40,7 +39,12 @@
     {#if item.separator}
       <div class="tab-menu-separator"></div>
     {:else}
-      <button type="button" class="tab-menu-item" disabled={item.disabled} on:click={() => run(item)}>
+      <button
+        type="button"
+        class="tab-menu-item"
+        disabled={item.disabled}
+        on:click={() => run(item)}
+      >
         {#if item.icon}
           <span class="tab-menu-icon">{item.icon}</span>
         {/if}
@@ -80,7 +84,9 @@
     text-align: left;
     cursor: pointer;
     border-radius: 4px;
-    transition: background 0.08s, color 0.08s;
+    transition:
+      background 0.08s,
+      color 0.08s;
     &:hover {
       background: var(--theme-ac, #0078d4);
       color: #ffffff;
