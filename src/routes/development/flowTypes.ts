@@ -5,6 +5,23 @@ export type FlowNodeType = 'rest' | 'js' | 'start' | 'terminate' | 'event-throw'
 
 export interface FlowNodeEventData {
   eventName: string
+  targetFlowId?: string
+  targetFlowName?: string
+}
+
+export interface WorkspaceSpatialFlow {
+  id: string
+  name: string
+  groupId: string
+  graph: FlowGraph
+  createdAt: number
+  updatedAt: number
+}
+
+export interface WorkspaceFlowGroup {
+  id: string
+  name: string
+  collapsed?: boolean
 }
 
 export interface FlowNodeRestData {
@@ -292,6 +309,13 @@ export function migrateChainToFlowGraph(
  * 6. REST: GET episode with {{charId}} -> captures episodeName
  * 7. Terminate (Bola Vermelha): halts execution
  */
+export function createEmptyFlowGraph(): FlowGraph {
+  return {
+    nodes: [],
+    connections: []
+  }
+}
+
 export function createDefaultFlowGraph(): FlowGraph {
   return {
     nodes: [

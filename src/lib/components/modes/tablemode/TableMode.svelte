@@ -285,7 +285,7 @@
   let maxSampleCount = 10_000
   let columns: JSONPath[] = []
   $: columns = isJSONArray(json)
-    ? maintainColumnOrder(getColumns(json, flattenColumns, maxSampleCount), columns)
+    ? maintainColumnOrder(getColumns(json, false, maxSampleCount), columns)
     : []
 
   let expandedColumns: Record<string, boolean> = {}
@@ -302,6 +302,46 @@
         {} as Record<string, boolean>
       )
     : ({} as Record<string, boolean>)
+
+  // Auto-expand default visualization (modo novo):
+  // When flattenColumns is enabled, expandable columns start expanded by default!
+  let lastInitializedDoc: unknown = undefined
+  let lastFlattenColumnsSetting = flattenColumns
+
+  $: if (isJSONArray(json) && columns.length > 0) {
+    const isNewDoc = lastInitializedDoc !== json
+    const isSettingChanged = lastFlattenColumnsSetting !== flattenColumns
+
+    if (isSettingChanged) {
+      lastFlattenColumnsSetting = flattenColumns
+      if (flattenColumns) {
+        const next: Record<string, boolean> = {}
+        for (const col of columns) {
+          const key = compileJSONPointer(col)
+          if (expandableColumnsMap[key]) {
+            next[key] = true
+          }
+        }
+        expandedColumns = next
+      } else {
+        expandedColumns = {}
+      }
+      itemHeightsCache = {}
+    } else if (isNewDoc) {
+      lastInitializedDoc = json
+      if (flattenColumns && Object.keys(expandedColumns).length === 0) {
+        const next: Record<string, boolean> = {}
+        for (const col of columns) {
+          const key = compileJSONPointer(col)
+          if (expandableColumnsMap[key]) {
+            next[key] = true
+          }
+        }
+        expandedColumns = next
+        itemHeightsCache = {}
+      }
+    }
+  }
 
   $: visualColumns = isJSONArray(json)
     ? buildVisualColumns(columns, expandedColumns, json as unknown[])

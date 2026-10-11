@@ -32,7 +32,13 @@
     relativeTime
   } from '../requestsUtils.js'
 
-  export let flowGraph: FlowGraph = createDefaultFlowGraph()
+  export let flowGraph: FlowGraph = { nodes: [], connections: [] }
+  $: if (!flowGraph) {
+    flowGraph = { nodes: [], connections: [] }
+  } else {
+    if (!flowGraph.nodes) flowGraph.nodes = []
+    if (!flowGraph.connections) flowGraph.connections = []
+  }
   export let environments: Record<string, Record<string, string>> = {}
   export let globalEnvironment: Record<string, string> = {}
   export let activeEnvName = ''
@@ -40,6 +46,10 @@
   export let onSaveGraph: ((graph: FlowGraph) => void) | undefined = undefined
   export let onOpenInEditor: ((title: string, text: string) => void) | undefined = undefined
   export let onManageEnvironments: (() => void) | undefined = undefined
+  export let activeFlowName = ''
+  export let activeGroupName = ''
+  export let availableFlows: { id: string; name: string; groupName: string; graph?: FlowGraph }[] = []
+  export let onSaveFlowToWorkspace: ((asNew: boolean) => void) | undefined = undefined
 
   // Execution state
   let flowRunning = false
@@ -1291,15 +1301,129 @@
               } else if (node.type === 'event-throw') {
                 const evName = (node.eventData?.eventName || '').trim().toLowerCase()
                 if (evName) activeEvents.add(evName)
-                node.status = 'success'
-                node.lastRun = {
-                  durationMs: 0,
-                  status: 'EVENT_THROWN',
-                  outputSummary: `Disparou: "${node.eventData?.eventName || ''}"`,
-                  timestamp: Date.now()
+
+                if (node.eventData?.targetFlowId) {
+                  const targetId = node.eventData.targetFlowId
+                  const targetInfo = availableFlows.find((f) => f.id === targetId)
+                  const targetName = targetInfo?.name || node.eventData.targetFlowName || 'Sub-Flow'
+
+                  showToast(`⚡ [Sub-Flow Beta] Executando "${targetName}"... (Pode consumir mais CPU)`)
+
+                  const subStart = Date.now()
+                  let subSuccess = true
+                  let subLogs: string[] = [`Início do sub-flow: ${targetName}`]
+                  let subLastResp = ''
+
+                  if (targetInfo?.graph && targetInfo.graph.nodes?.length) {
+                    try {
+                      // Find receptor nodes (event-catch) matching this event name in target flow
+                      const matchingReceptors = targetInfo.graph.nodes.filter(
+                        (sn) => sn.type === 'event-catch' && (sn.eventData?.eventName || '').trim().toLowerCase() === evName
+                      )
+
+                      let nodesToExecute = targetInfo.graph.nodes
+                      if (matchingReceptors.length > 0) {
+                        subLogs.push(`Encontrado(s) ${matchingReceptors.length} receptor(es) (Catch) para o evento "${evName}" em "${targetName}".`)
+                        // Find all nodes reachable from these matching receptors
+                        const reachable = new Set<string>()
+                        const queue = matchingReceptors.map((r) => r.id)
+                        while (queue.length > 0) {
+                          const curId = queue.shift()!
+                          const outConns = (targetInfo.graph.connections || []).filter((c) => c.fromId === curId)
+                          for (const c of outConns) {
+                            if (!reachable.has(c.toId)) {
+                              reachable.add(c.toId)
+                              queue.push(c.toId)
+                            }
+                          }
+                        }
+                        if (reachable.size > 0) {
+                          nodesToExecute = targetInfo.graph.nodes.filter((n) => reachable.has(n.id))
+                        }
+                      } else if (evName) {
+                        subLogs.push(`Nenhum receptor com evento "${evName}" em "${targetName}". Executando fluxo padrão.`)
+                      }
+
+                      for (const subNode of nodesToExecute) {
+                        if (subNode.type === 'rest' && subNode.restData) {
+                          const resUrl = resolveVariables(subNode.restData.url, currentEnv, globalEnvironment).resolved
+                          if (resUrl) {
+                            try {
+                              let subProxyToUse = globalProxy
+                              if (subNode.restData.proxyMode === 'direct') subProxyToUse = ''
+                              else if (subNode.restData.proxyMode === 'corsproxy')
+                                subProxyToUse = 'https://corsproxy.io/?url={url}'
+                              else if (subNode.restData.proxyMode === 'allorigins')
+                                subProxyToUse = 'https://api.allorigins.win/raw?url={url}'
+                              else if (subNode.restData.proxyMode === 'custom' && subNode.restData.customProxyUrl)
+                                subProxyToUse = subNode.restData.customProxyUrl
+
+                              const { res } = await fetchWithProxy(
+                                resUrl,
+                                {
+                                  method: subNode.restData.method || 'GET',
+                                  headers: parseHeadersText(
+                                    resolveVariables(subNode.restData.headers || '', currentEnv, globalEnvironment).resolved
+                                  ),
+                                  body:
+                                    subNode.restData.bodyType !== 'none'
+                                      ? resolveVariables(subNode.restData.body || '', currentEnv, globalEnvironment).resolved
+                                      : undefined
+                                },
+                                subProxyToUse
+                              )
+                              subLastResp = await res.text()
+                              subLogs.push(`REST ${subNode.restData.method} ${resUrl}: HTTP ${res.status}`)
+                            } catch (e: any) {
+                              subLogs.push(`Erro REST: ${e.message}`)
+                            }
+                          }
+                        } else if (subNode.type === 'js' && subNode.jsData) {
+                          const jsRes = executeJsSandbox(subNode.jsData.code, currentEnv, globalEnvironment)
+                          if (jsRes.logs?.length) subLogs.push(...jsRes.logs)
+                        }
+                      }
+                    } catch (err: any) {
+                      subSuccess = false
+                      subLogs.push(`Erro na execução do sub-flow: ${err.message}`)
+                    }
+                  }
+
+                  const subDuration = Date.now() - subStart
+                  node.status = subSuccess ? 'success' : 'error'
+                  node.lastRun = {
+                    durationMs: subDuration,
+                    status: subSuccess ? 'SUBFLOW_OK' : 'SUBFLOW_ERROR',
+                    outputSummary: `Sub-flow "${targetName}" executado em ${subDuration}ms. Descarregado da memória.`,
+                    responseText: subLastResp || JSON.stringify({ subFlow: targetName, durationMs: subDuration }, null, 2),
+                    logs: subLogs,
+                    timestamp: Date.now()
+                  }
+                  if (!node.history) node.history = []
+                  node.history = [
+                    {
+                      id: `sub-${Date.now()}`,
+                      timestamp: Date.now(),
+                      status: subSuccess ? 200 : 500,
+                      durationMs: subDuration,
+                      responseText: node.lastRun.responseText,
+                      logs: subLogs
+                    },
+                    ...node.history
+                  ].slice(0, 5)
+
+                  showToast(`Sub-flow "${targetName}" concluído e liberado da memória!`)
+                } else {
+                  node.status = 'success'
+                  node.lastRun = {
+                    durationMs: 0,
+                    status: 'EVENT_THROWN',
+                    outputSummary: `Disparou: "${node.eventData?.eventName || ''}"`,
+                    timestamp: Date.now()
+                  }
+                  showToast(`Evento disparado: "${node.eventData?.eventName || ''}"`)
                 }
                 completedNodes.add(node.id)
-                showToast(`Evento disparado: "${node.eventData?.eventName || ''}"`)
               } else if (node.type === 'event-catch') {
                 node.status = 'success'
                 node.lastRun = {
@@ -1645,6 +1769,35 @@
     <!-- Spacer pushes File & Actions to the right -->
     <div class="flow-toolbar-spacer"></div>
 
+    {#if activeFlowName}
+      <div class="flow-active-badge" title="Spatial Flow ativo neste Workspace">
+        <span class="active-group-label">{activeGroupName ? `📁 ${activeGroupName} /` : ''}</span>
+        <span class="active-flow-label">🔀 {activeFlowName}</span>
+      </div>
+    {/if}
+
+    {#if onSaveFlowToWorkspace}
+      <button
+        type="button"
+        class="flow-btn flow-btn-primary"
+        title="Salvar alterações no Spatial Flow deste workspace"
+        on:click={() => onSaveFlowToWorkspace && onSaveFlowToWorkspace(false)}
+      >
+        <span class="btn-icon">💾</span>
+        <span>Salvar</span>
+      </button>
+
+      <button
+        type="button"
+        class="flow-btn"
+        title="Salvar como um novo Spatial Flow ou em outro Grupo"
+        on:click={() => onSaveFlowToWorkspace && onSaveFlowToWorkspace(true)}
+      >
+        <span class="btn-icon">📝</span>
+        <span>Salvar Como…</span>
+      </button>
+    {/if}
+
     <!-- Group 4: File & Flow Actions (Distinctly on the right) -->
     <div class="flow-toolbar-group flow-toolbar-actions">
       <!-- File menu (Open / Save / Save As / Import / Export) -->
@@ -1838,6 +1991,7 @@
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 class="flow-node flow-node-circle flow-node-{node.type}"
+                class:is-cross-flow={node.type === 'event-throw' && !!node.eventData?.targetFlowId}
                 class:is-selected={node.id === selectedNodeId}
                 class:is-dragging={node.id === draggingNodeId}
                 class:has-switcher-open={activeCircleSwitcherId === node.id}
@@ -1873,6 +2027,8 @@
                 <div class="circle-inner" title={node.title}>
                   {#if node.status === 'running'}
                     <span class="flow-spinner"></span>
+                  {:else if node.type === 'event-throw' && node.eventData?.targetFlowId}
+                    <span class="circle-symbol jump-cross" title={`Cross-flow jump: ${node.eventData?.targetFlowName || 'Outro Flow'}`}>🔀</span>
                   {:else if node.type === 'start'}
                     <span class="circle-symbol start">▶</span>
                   {:else if node.type === 'terminate'}
@@ -1928,7 +2084,11 @@
 
                 <!-- Label Badge below circle -->
                 <div class="circle-label-badge" title={node.title}>
-                  {#if node.type === 'event-throw' || node.type === 'event-catch'}
+                  {#if node.type === 'event-throw' && node.eventData?.targetFlowId}
+                    <span class="circle-badge-text cross-event"
+                      >🔀 {node.eventData?.targetFlowName || 'Sub-Flow'}</span
+                    >
+                  {:else if node.type === 'event-throw' || node.type === 'event-catch'}
                     <span class="circle-badge-text event"
                       >{node.eventData?.eventName || 'valida total'}</span
                     >
@@ -3174,6 +3334,45 @@
                         : 'Deve coincidir com o nome disparado no nó de salto (bola cheia).'}
                     </span>
                   </div>
+
+                  <!-- Cross-Flow Jump Configuration (Beta) - apenas para nó emissor (Throw) -->
+                  {#if selectedNode.type === 'event-throw'}
+                    <div class="event-input-group cross-flow-config-card">
+                      <div class="cross-flow-header">
+                        <span class="cross-flow-title">🔀 Salto de Spatial Flow</span>
+                        <span class="beta-badge">BETA</span>
+                      </div>
+                      <p class="cross-flow-help">
+                        Dispara este evento em outro Spatial Flow do seu workspace, ativando os nós receptores (◌ Catch) que correspondem a este nome de evento no fluxo de destino.
+                        <span class="cross-flow-warn">
+                          ⚠️ A execução de sub-fluxos pode ser custosa para a máquina. Ao concluir, o sub-fluxo é descarregado da memória mantendo o histórico de respostas neste bloco.
+                        </span>
+                      </p>
+                      <label class="event-field-label" for="target-flow-select">Spatial Flow Alvo:</label>
+                      <select
+                        id="target-flow-select"
+                        class="side-method-select side-flow-select"
+                        value={selectedNode.eventData?.targetFlowId ?? ''}
+                        on:change={(e) => {
+                          const targetId = e.currentTarget.value
+                          const match = availableFlows.find((f) => f.id === targetId)
+                          if (selectedNode) {
+                            selectedNode.eventData = {
+                              ...(selectedNode.eventData ?? { eventName: '' }),
+                              targetFlowId: targetId || undefined,
+                              targetFlowName: match ? match.name : undefined
+                            }
+                            notifyChange()
+                          }
+                        }}
+                      >
+                        <option value="">(Nenhum — Salto padrão no mesmo fluxo)</option>
+                        {#each availableFlows as af}
+                          <option value={af.id}>📁 {af.groupName} / 🔀 {af.name}</option>
+                        {/each}
+                      </select>
+                    </div>
+                  {/if}
                 </div>
               </div>
             {:else if sidePanelTab === 'response'}
@@ -5679,5 +5878,104 @@
       color: #0f172a;
       border-right-color: #cbd5e1;
     }
+  }
+
+  /* Cross-Flow Jump (Beta) node visuals */
+  :global(.flow-node-circle.is-cross-flow) {
+    border-style: double !important;
+    border-width: 4px !important;
+    border-color: #a855f7 !important;
+    box-shadow:
+      0 0 16px rgba(168, 85, 247, 0.5),
+      inset 0 0 10px rgba(56, 189, 248, 0.3) !important;
+    background: radial-gradient(circle at 35% 35%, #581c87 0%, #1e1b4b 100%) !important;
+    animation: cross-flow-pulse 2.2s infinite ease-in-out;
+  }
+
+  @keyframes cross-flow-pulse {
+    0%, 100% {
+      box-shadow: 0 0 14px rgba(168, 85, 247, 0.45), inset 0 0 8px rgba(56, 189, 248, 0.25);
+    }
+    50% {
+      box-shadow: 0 0 24px rgba(168, 85, 247, 0.8), inset 0 0 14px rgba(56, 189, 248, 0.55);
+    }
+  }
+
+  .circle-badge-text.cross-event {
+    color: #c084fc !important;
+    font-weight: 700 !important;
+  }
+
+  .circle-symbol.jump-cross {
+    font-size: 16px;
+    filter: drop-shadow(0 0 4px #a855f7);
+  }
+
+  /* Active Flow Badge */
+  .flow-active-badge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    background: rgba(56, 189, 248, 0.1);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .active-group-label {
+    color: var(--theme-t-muted, #9d9d9d);
+  }
+  .active-flow-label {
+    color: var(--theme-accent-text, #38bdf8);
+  }
+
+  /* Cross Flow Config Card in Side Panel */
+  .cross-flow-config-card {
+    margin-top: 12px;
+    padding: 10px;
+    background: rgba(168, 85, 247, 0.08);
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .cross-flow-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .cross-flow-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #c084fc;
+  }
+  .beta-badge {
+    font-size: 9px;
+    font-weight: 800;
+    padding: 1px 5px;
+    background: #a855f7;
+    color: #ffffff;
+    border-radius: 8px;
+    letter-spacing: 0.5px;
+  }
+  .cross-flow-help {
+    font-size: 11px;
+    color: var(--theme-t-main, #cbd5e1);
+    margin: 0;
+    line-height: 1.4;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .cross-flow-warn {
+    font-size: 10px;
+    color: #fbbf24;
+    font-weight: 500;
+  }
+  .side-flow-select {
+    width: 100%;
+    margin-top: 4px;
   }
 </style>

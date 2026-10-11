@@ -57,12 +57,58 @@ export interface PrimaryTabRequestContext {
   flowGraph?: unknown
 }
 
+import type { WorkspaceSpatialFlow, WorkspaceFlowGroup, FlowGraph } from './flowTypes.js'
+
 export interface PrimaryTabState {
   id: number
   title: string
   subTabIds: number[]
   activeSubTabId: number
   requestState: PrimaryTabRequestContext
+  flowGroups?: WorkspaceFlowGroup[]
+  spatialFlows?: WorkspaceSpatialFlow[]
+  activeSpatialFlowId?: string
+}
+
+export function createDefaultFlowGroup(id = 'group-1', name = 'General'): WorkspaceFlowGroup {
+  return { id, name, collapsed: false }
+}
+
+export function createDefaultSpatialFlow(
+  name = 'Main Flow',
+  groupId = 'group-1',
+  graph?: FlowGraph
+): WorkspaceSpatialFlow {
+  const now = Date.now()
+  return {
+    id: `flow-${now}-${Math.random().toString(36).slice(2, 7)}`,
+    name,
+    groupId,
+    graph: graph ? JSON.parse(JSON.stringify(graph)) : { nodes: [], connections: [] },
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
+export function ensurePrimaryTabFlows(primary: PrimaryTabState, fallbackGraph?: FlowGraph): PrimaryTabState {
+  const groups = primary.flowGroups && primary.flowGroups.length > 0
+    ? [...primary.flowGroups]
+    : [createDefaultFlowGroup('group-1', 'General')]
+  
+  const flows = primary.spatialFlows && primary.spatialFlows.length > 0
+    ? [...primary.spatialFlows]
+    : [createDefaultSpatialFlow('Main Flow', groups[0].id, (primary.requestState.flowGraph as FlowGraph) ?? fallbackGraph ?? { nodes: [], connections: [] })]
+  
+  const activeId = primary.activeSpatialFlowId && flows.some((f) => f.id === primary.activeSpatialFlowId)
+    ? primary.activeSpatialFlowId
+    : flows[0].id
+
+  return {
+    ...primary,
+    flowGroups: groups,
+    spatialFlows: flows,
+    activeSpatialFlowId: activeId
+  }
 }
 
 export interface SubTabState {

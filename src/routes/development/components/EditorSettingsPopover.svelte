@@ -5,13 +5,9 @@
   export let navigationBar = true
   export let statusBar = true
   export let askToFormat = true
-  export let validateDoc = true
-  export let customRenderer = true
-  export let diffMode = false
+  export let flatten = true
   export let escapeCtrl = false
   export let escapeUni = false
-  export let flatten = true
-  export let multiQuery = true
 
   export let onClose: () => void = () => {}
 
@@ -40,7 +36,7 @@
           <span class="header-icon">⚙</span>
           <div>
             <h2 class="header-title">Editor Settings & Preferences</h2>
-            <p class="header-subtitle">Configure layout, chrome, validation, and encoding</p>
+            <p class="header-subtitle">Configure layout, chrome, table visualization, and encoding</p>
           </div>
         </div>
         <button
@@ -157,59 +153,23 @@
           </div>
         </section>
 
-        <!-- VALIDATION & RENDERING -->
+        <!-- TABLE MODE & VISUALIZATION -->
         <section class="settings-group">
-          <h3 class="group-title">Validation & Rendering</h3>
+          <h3 class="group-title">Table Mode</h3>
           <div class="settings-list">
             <label class="setting-item">
               <div class="setting-info">
-                <span class="setting-label">JSON Schema</span>
-                <span class="setting-desc">Validate against configured schema</span>
+                <span class="setting-label">Auto-Expand Columns (Flatten)</span>
+                <span class="setting-desc">Expand nested objects & arrays by default with sub-columns and badges</span>
               </div>
               <button
                 type="button"
                 role="switch"
-                aria-label="Toggle JSON Schema validation"
-                aria-checked={validateDoc}
+                aria-label="Toggle Auto-Expand Columns"
+                aria-checked={flatten}
                 class="ide-toggle-switch"
-                class:is-checked={validateDoc}
-                on:click={() => (validateDoc = !validateDoc)}
-              >
-                <span class="ide-toggle-knob"></span>
-              </button>
-            </label>
-
-            <label class="setting-item">
-              <div class="setting-info">
-                <span class="setting-label">Custom Renderer</span>
-                <span class="setting-desc">Color pickers, link decorators, and tags</span>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-label="Toggle Custom Renderer"
-                aria-checked={customRenderer}
-                class="ide-toggle-switch"
-                class:is-checked={customRenderer}
-                on:click={() => (customRenderer = !customRenderer)}
-              >
-                <span class="ide-toggle-knob"></span>
-              </button>
-            </label>
-
-            <label class="setting-item">
-              <div class="setting-info">
-                <span class="setting-label">Compare Panes (Diff)</span>
-                <span class="setting-desc">Highlight differences across split panes</span>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-label="Toggle Compare Panes"
-                aria-checked={diffMode}
-                class="ide-toggle-switch"
-                class:is-checked={diffMode}
-                on:click={() => (diffMode = !diffMode)}
+                class:is-checked={flatten}
+                on:click={() => (flatten = !flatten)}
               >
                 <span class="ide-toggle-knob"></span>
               </button>
@@ -217,9 +177,9 @@
           </div>
         </section>
 
-        <!-- ENCODING & TABLE -->
+        <!-- ENCODING & CHARACTERS -->
         <section class="settings-group">
-          <h3 class="group-title">Encoding & Options</h3>
+          <h3 class="group-title">Encoding & Characters</h3>
           <div class="settings-list">
             <label class="setting-item">
               <div class="setting-info">
@@ -252,42 +212,6 @@
                 class="ide-toggle-switch"
                 class:is-checked={escapeUni}
                 on:click={() => (escapeUni = !escapeUni)}
-              >
-                <span class="ide-toggle-knob"></span>
-              </button>
-            </label>
-
-            <label class="setting-item">
-              <div class="setting-info">
-                <span class="setting-label">Flatten Columns</span>
-                <span class="setting-desc">Flatten nested columns in Table mode</span>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-label="Toggle Flatten Columns"
-                aria-checked={flatten}
-                class="ide-toggle-switch"
-                class:is-checked={flatten}
-                on:click={() => (flatten = !flatten)}
-              >
-                <span class="ide-toggle-knob"></span>
-              </button>
-            </label>
-
-            <label class="setting-item">
-              <div class="setting-info">
-                <span class="setting-label">Multi Query</span>
-                <span class="setting-desc">Allow multiple query languages simultaneously</span>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-label="Toggle Multi Query"
-                aria-checked={multiQuery}
-                class="ide-toggle-switch"
-                class:is-checked={multiQuery}
-                on:click={() => (multiQuery = !multiQuery)}
               >
                 <span class="ide-toggle-knob"></span>
               </button>

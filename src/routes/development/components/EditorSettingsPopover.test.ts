@@ -40,4 +40,15 @@ describe('EditorSettingsPopover', () => {
     await fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-checked')).toBe('false')
   })
+
+  it('toggles Auto-Expand Columns switch correctly', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    mount(EditorSettingsPopover, { target, props: { open: true, flatten: true } })
+
+    const toggle = getByLabelText(target, 'Toggle Auto-Expand Columns')
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    await fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+  })
 })

@@ -26,6 +26,8 @@ export interface StoredWorkspaceTab {
   kind?: string
 }
 
+import type { WorkspaceSpatialFlow, WorkspaceFlowGroup } from './flowTypes.js'
+
 export interface StoredPrimaryTab {
   id: number
   title: string
@@ -40,6 +42,9 @@ export interface StoredPrimaryTab {
     sendMode: 'same' | 'new'
     flowGraph?: unknown
   }
+  flowGroups?: WorkspaceFlowGroup[]
+  spatialFlows?: WorkspaceSpatialFlow[]
+  activeSpatialFlowId?: string
 }
 
 export interface StoredWorkspace {

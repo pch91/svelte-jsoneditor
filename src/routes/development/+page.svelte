@@ -49,18 +49,25 @@
   } from './workspaceFile.js'
   import CommandPalette from './components/CommandPalette.svelte'
   import FolderTree from './components/FolderTree.svelte'
-  import TabContextMenu from './components/TabContextMenu.svelte'
+  import TabContextMenu, { type TabMenuItem } from './components/TabContextMenu.svelte'
   import EditorSettingsPopover from './components/EditorSettingsPopover.svelte'
   import CurlImportModal from './components/CurlImportModal.svelte'
   import FlowCanvas from './components/FlowCanvas.svelte'
   import EnvironmentManagerModal from './components/EnvironmentManagerModal.svelte'
   import CapturePathsTable from './components/CapturePathsTable.svelte'
+  import SidebarResizablePanels from './components/SidebarResizablePanels.svelte'
+  import WorkspaceTree from './components/WorkspaceTree.svelte'
+  import SaveFlowModal from './components/SaveFlowModal.svelte'
   import { tabScrollStrip } from './tabScrollAction.js'
   import {
     type FlowGraph,
     type FlowNode,
+    type WorkspaceSpatialFlow,
+    type WorkspaceFlowGroup,
     createDefaultFlowGraph,
-    migrateChainToFlowGraph
+    migrateChainToFlowGraph,
+    parseFlowFile,
+    serializeFlowFile
   } from './flowTypes.js'
   import type { CaptureRule } from './tabUtils.js'
   import {
@@ -82,6 +89,9 @@
     reorderTabIds,
     movePrimaryTabBetweenPanes,
     createDefaultRequestContext,
+    ensurePrimaryTabFlows,
+    createDefaultFlowGroup,
+    createDefaultSpatialFlow,
     type PrimaryTabState,
     type SubTabState,
     type SubTabKind
@@ -259,7 +269,14 @@
   let tabDragActive = false
   let draggedTabId: number | undefined
   let tabMenu:
-    | { x: number; y: number; tabId: number; type?: 'primary' | 'sub'; leafId?: number }
+    | {
+        x: number
+        y: number
+        tabId?: number
+        type?: 'primary' | 'sub' | 'custom'
+        leafId?: number
+        items?: TabMenuItem[]
+      }
     | undefined
 
   // ---- Requests panel (HTTP client) ----
@@ -296,6 +313,13 @@
     return prims.find((p) => p.id === activeId) ?? prims[0] ?? primaryTabs[0]
   }
 
+  function findLeafForPrimary(primaryId: number): number {
+    for (const [leafId, ids] of panePrimaryMap.entries()) {
+      if (ids && ids.includes(primaryId)) return leafId
+    }
+    return activeLeafId
+  }
+
   function getPaneSubTabs(
     primary: PrimaryTabState | undefined,
     _version?: number
@@ -319,7 +343,9 @@
       .filter((item) => item.idx !== -1)
   }
 
-  $: activePrimary = getPaneActivePrimary(activeLeafId, tabsRenderVersion)
+  $: activePrimary =
+    primaryTabs.find((p) => p.id === activePrimaryTabId) ??
+    getPaneActivePrimary(activeLeafId, tabsRenderVersion)
 
   $: {
     if (layoutLeaves.length > 0) {
@@ -381,26 +407,51 @@
     activePrimary.requestState.captures = reqCaptures
   }
 
-  // Spatial Flow graph is stored per Level 1 tab (like the form request state).
-  let flowOwnerState: unknown = undefined
+  // Spatial Flow multi-flow & groups state per Level 1 tab (Workspace)
+  let flowOwnerPrimaryId: number | undefined = undefined
+  let flowOwnerFlowId: string | undefined = undefined
+
   $: if (activePrimary) {
-    const rs = activePrimary.requestState
-    if (rs !== flowOwnerState) {
-      flowOwnerState = rs
-      if (rs.flowGraph) {
-        $flowGraphStore = rs.flowGraph as FlowGraph
-      } else if (!primaryTabs.some((p) => p.requestState.flowGraph)) {
-        // Legacy / first load: adopt the existing global graph for this tab
-        rs.flowGraph = $flowGraphStore
+    if (!activePrimary.flowGroups?.length || !activePrimary.spatialFlows?.length) {
+      const initialized = ensurePrimaryTabFlows(activePrimary, { nodes: [], connections: [] })
+      activePrimary.flowGroups = initialized.flowGroups
+      activePrimary.spatialFlows = initialized.spatialFlows
+      activePrimary.activeSpatialFlowId = initialized.activeSpatialFlowId
+    }
+
+    const curFlowId = activePrimary.activeSpatialFlowId
+    if (activePrimary.id !== flowOwnerPrimaryId || curFlowId !== flowOwnerFlowId) {
+      flowOwnerPrimaryId = activePrimary.id
+      flowOwnerFlowId = curFlowId
+      const activeFlow =
+        activePrimary.spatialFlows?.find((f) => f.id === curFlowId) ??
+        activePrimary.spatialFlows?.[0]
+      if (activeFlow?.graph) {
+        $flowGraphStore = JSON.parse(JSON.stringify(activeFlow.graph))
+        activePrimary.requestState.flowGraph = activeFlow.graph
       } else {
-        const fresh = createDefaultFlowGraph()
-        rs.flowGraph = fresh
-        $flowGraphStore = fresh
+        $flowGraphStore = { nodes: [], connections: [] }
       }
-    } else {
-      rs.flowGraph = $flowGraphStore
     }
   }
+
+  $: availableFlows = (activePrimary?.spatialFlows ?? []).map((f) => {
+    const grp = activePrimary?.flowGroups?.find((g) => g.id === f.groupId)
+    return {
+      id: f.id,
+      name: f.name,
+      groupName: grp ? grp.name : 'General',
+      graph: f.graph
+    }
+  })
+
+  $: activeFlowObj =
+    activePrimary?.spatialFlows?.find((f) => f.id === activePrimary.activeSpatialFlowId) ??
+    activePrimary?.spatialFlows?.[0]
+  $: activeGroupObj =
+    activePrimary?.flowGroups?.find((g) => g.id === activeFlowObj?.groupId) ??
+    activePrimary?.flowGroups?.[0]
+
   let reqActiveTab: 'params' | 'headers' | 'body' | 'auth' | 'captures' | 'env' = 'params'
   let reqParams: QueryParam[] = []
   let reqHeaderRows: HeaderRow[] = []
@@ -767,7 +818,8 @@
   }
 
   function selectPrimaryTab(primaryId: number) {
-    selectPrimaryTabInPane(activeLeafId, primaryId)
+    const targetLeafId = findLeafForPrimary(primaryId)
+    selectPrimaryTabInPane(targetLeafId, primaryId)
   }
 
   function selectSubTabInPane(leafId: number, primary: PrimaryTabState, subTabId: number) {
@@ -1034,16 +1086,22 @@
     title: string,
     text: string,
     mode: Mode = Mode.tree,
-    kind: SubTabKind = 'custom'
+    kind: SubTabKind = 'custom',
+    targetPrimaryId?: number
   ): number {
-    const activeP = getPaneActivePrimary(activeLeafId)
+    const primId = targetPrimaryId ?? activePrimaryTabId
+    const targetPrimary =
+      primaryTabs.find((p) => p.id === primId) ??
+      getPaneActivePrimary(activeLeafId)
+    const targetLeafId = findLeafForPrimary(targetPrimary.id)
+
     const newSubId = nextTabId++
     const idx = addDocWithId(newSubId, title, text, mode)
-    const { updatedPrimary, subTab } = addSubTabToPrimary(activeP, newSubId, title, kind)
+    const { updatedPrimary, subTab } = addSubTabToPrimary(targetPrimary, newSubId, title, kind)
     subTabsMeta.set(newSubId, subTab)
     primaryTabs = primaryTabs.map((p) => (p.id === updatedPrimary.id ? updatedPrimary : p))
     tabsRenderVersion++
-    selectSubTabInPane(activeLeafId, updatedPrimary, newSubId)
+    selectSubTabInPane(targetLeafId, updatedPrimary, newSubId)
     return idx
   }
 
@@ -1202,14 +1260,15 @@
     window.addEventListener('mouseup', onUp)
   }
 
-  function buildPrimaryTabMenuItems(primaryId: number, leafId?: number) {
+  function buildPrimaryTabMenuItems(primaryId: number, leafId?: number): TabMenuItem[] {
     const p = primaryTabs.find((pt) => pt.id === primaryId)
     const effectiveLeafId = leafId ?? activeLeafId
     const currentPaneTabs = getPanePrimaryTabs(effectiveLeafId)
     const isSingle = currentPaneTabs.length <= 1 && layoutLeaves.length <= 1
     return [
       {
-        label: '+ Nova Sub-aba',
+        icon: '➕',
+        label: 'Nova Sub-aba (Level 2)',
         disabled: false,
         action: () => {
           if (p) {
@@ -1219,32 +1278,75 @@
         }
       },
       {
-        label: 'Renomear…',
+        icon: '💾',
+        label: `Salvar Workspace ("${p?.title ?? 'Workspace'}")`,
+        disabled: false,
+        action: () => void saveSingleWorkspaceFile(primaryId)
+      },
+      {
+        icon: '⬇',
+        label: `Exportar Workspace (.jsew)`,
+        disabled: false,
+        action: () => exportSingleWorkspace(primaryId)
+      },
+      { separator: true, label: 'sep-1' },
+      {
+        icon: '📁',
+        label: 'Novo Grupo de Flows',
+        disabled: false,
+        action: () => handleCreateGroup(primaryId)
+      },
+      {
+        icon: '🔀',
+        label: 'Novo Spatial Flow',
+        disabled: false,
+        action: () => handleCreateFlow(primaryId, p?.flowGroups?.[0]?.id ?? 'group-1')
+      },
+      { separator: true, label: 'sep-2' },
+      {
+        icon: '✏️',
+        label: 'Renomear Workspace…',
         disabled: false,
         action: () => {
-          const n = prompt('Renomear aba principal:', p?.title)
-          if (n) renamePrimaryTab(primaryId, n)
+          handleRenameWorkspace(primaryId, p?.title)
         }
       },
       {
+        icon: '📄',
+        label: 'Duplicar Workspace',
+        disabled: false,
+        action: () => duplicateWorkspace(primaryId)
+      },
+      { separator: true, label: 'sep-3' },
+      {
+        icon: '◫',
         label: 'Dividir tela (Split Vertical)',
         disabled: layoutLeaves.length >= 4,
         action: () => splitActiveLeaf('vertical')
       },
       {
+        icon: '⊟',
         label: 'Dividir tela (Split Horizontal)',
         disabled: layoutLeaves.length >= 4,
         action: () => splitActiveLeaf('horizontal')
       },
+      { separator: true, label: 'sep-4' },
       {
-        label: 'Close Main Tab',
+        icon: '🧹',
+        label: 'Fechar Outros Workspaces',
+        disabled: primaryTabs.length <= 1,
+        action: () => closeOtherWorkspaces(primaryId)
+      },
+      {
+        icon: '❌',
+        label: 'Fechar Workspace',
         disabled: isSingle,
         action: () => closePrimaryTabInPane(effectiveLeafId, primaryId)
       }
     ]
   }
 
-  function buildSubTabMenuItems(subTabId: number, leafId?: number) {
+  function buildSubTabMenuItems(subTabId: number, leafId?: number): TabMenuItem[] {
     const meta = subTabsMeta.get(subTabId)
     const canPromote = canPromoteSubTab(meta)
     const canClose = canCloseSubTab(meta)
@@ -1255,13 +1357,16 @@
       ...(canPromote
         ? [
             {
-              label: '⇡ Promote to Main Tab (Level 1)',
+              icon: '⇡',
+              label: 'Promover a Workspace (Level 1)',
               disabled: false,
               action: () => promoteSubTabInPane(effectiveLeafId, subTabId)
-            }
+            },
+            { separator: true, label: 'sep-promote' }
           ]
         : []),
       {
+        icon: '✏️',
         label: 'Renomear…',
         disabled: false,
         action: () => {
@@ -1270,10 +1375,18 @@
           if (n) renameSubTab(subTabId, n)
         }
       },
+      {
+        icon: '💾',
+        label: 'Salvar Arquivo no Disco',
+        disabled: false,
+        action: () => void saveToDisk()
+      },
       ...(canClose
         ? [
+            { separator: true, label: 'sep-close' },
             {
-              label: 'Close Sub-tab',
+              icon: '❌',
+              label: 'Fechar Sub-aba',
               disabled: isSingle,
               action: () => {
                 if (primary) closeSubTabInPane(effectiveLeafId, primary, subTabId)
@@ -1578,24 +1691,19 @@
   const askToFormat = useLocalStorage('svelte-jsoneditor-demo-askToFormat', true)
   const escapeCtrl = useLocalStorage('svelte-jsoneditor-demo-escapeControlCharacters', false)
   const escapeUni = useLocalStorage('svelte-jsoneditor-demo-escapeUnicodeCharacters', false)
-  const flatten = useLocalStorage('svelte-jsoneditor-demo-flattenColumns', false)
-  const validateDoc = useLocalStorage('svelte-jsoneditor-demo-validate', false)
-  const customRenderer = useLocalStorage('svelte-jsoneditor-demo-useCustomValueRenderer', false)
-  const multiQuery = useLocalStorage('svelte-jsoneditor-demo-multipleQueryLanguages', true)
+  const flatten = useLocalStorage('svelte-jsoneditor-demo-flattenColumns', true)
 
-  $: queryLangs = $multiQuery
-    ? [
-        jsonQueryLanguage,
-        jmespathQueryLanguage,
-        jsonpathQueryLanguage,
-        javascriptQueryLanguage,
-        lodashQueryLanguage
-      ]
-    : [jsonQueryLanguage]
+  const queryLangs = [
+    jsonQueryLanguage,
+    jmespathQueryLanguage,
+    jsonpathQueryLanguage,
+    javascriptQueryLanguage,
+    lodashQueryLanguage
+  ]
   let queryLangId = jsonQueryLanguage.id
   $: selParser = parsers.find((p) => p.id === $selectedParserId)?.value ?? JSON
   $: selPath = pathParsers.find((p) => p.id === $selectedPathId)?.value ?? pathParsers[0].value
-  $: selValidator = $validateDoc ? validator : undefined
+  $: selValidator = undefined
 
   function refresh() {
     tabRefs.forEach((r) => r?.refresh())
@@ -1639,7 +1747,7 @@
       }
     }
 
-    if ($validateDoc) void collectProblems()
+    if (showProblems) void collectProblems()
   }
 
   $: diffRevision =
@@ -1694,7 +1802,10 @@
       title: pt.title,
       subTabIds: pt.subTabIds,
       activeSubTabId: pt.activeSubTabId,
-      requestState: pt.requestState
+      requestState: pt.requestState,
+      flowGroups: pt.flowGroups,
+      spatialFlows: pt.spatialFlows,
+      activeSpatialFlowId: pt.activeSpatialFlowId
     })),
     activePrimaryTabId,
     panePrimaryMap: Object.fromEntries([...panePrimaryMap.entries()].map(([k, v]) => [k, v])),
@@ -1751,21 +1862,28 @@
       nextTabId = Math.max(saved.nextTabId, ...saved.tabs.map((t) => t.id)) + 1
 
       if (saved.primaryTabs && saved.primaryTabs.length > 0) {
-        primaryTabs = saved.primaryTabs.map((pt) => ({
-          ...pt,
-          requestState: pt.requestState ?? createDefaultRequestContext()
-        }))
+        primaryTabs = saved.primaryTabs.map((pt) =>
+          ensurePrimaryTabFlows({
+            ...pt,
+            requestState: pt.requestState ?? createDefaultRequestContext(),
+            flowGroups: pt.flowGroups,
+            spatialFlows: pt.spatialFlows,
+            activeSpatialFlowId: pt.activeSpatialFlowId
+          })
+        )
         activePrimaryTabId = saved.activePrimaryTabId ?? primaryTabs[0].id
         nextPrimaryTabId =
           Math.max(saved.nextPrimaryTabId ?? 1, ...primaryTabs.map((p) => p.id)) + 1
       } else {
-        primaryTabs = saved.tabs.map((t, i) => ({
-          id: i + 1,
-          title: t.title || `Editor ${i + 1}`,
-          subTabIds: [t.id],
-          activeSubTabId: t.id,
-          requestState: createDefaultRequestContext()
-        }))
+        primaryTabs = saved.tabs.map((t, i) =>
+          ensurePrimaryTabFlows({
+            id: i + 1,
+            title: t.title || `Editor ${i + 1}`,
+            subTabIds: [t.id],
+            activeSubTabId: t.id,
+            requestState: createDefaultRequestContext()
+          })
+        )
         activePrimaryTabId = primaryTabs[0]?.id ?? 1
         nextPrimaryTabId = primaryTabs.length + 1
       }
@@ -1937,6 +2055,273 @@
     input.click()
   }
 
+  function buildSingleWorkspaceBundle(primaryId: number): WorkspaceBundle {
+    const pt = primaryTabs.find((p) => p.id === primaryId)
+    if (!pt) return buildWorkspaceBundle()
+
+    const tabs = pt.subTabIds.map((sid) => {
+      const idx = getTabIdx(sid)
+      return {
+        id: sid,
+        title: tabTitles[idx] || 'Document',
+        text: getTabJsonText(idx),
+        mode: tabModes[idx] || Mode.tree
+      }
+    })
+
+    const primarySnapshot: PrimaryTabState = {
+      ...pt,
+      spatialFlows: pt.spatialFlows ? JSON.parse(JSON.stringify(pt.spatialFlows)) : [],
+      flowGroups: pt.flowGroups ? JSON.parse(JSON.stringify(pt.flowGroups)) : []
+    }
+
+    const wsSnapshot: StoredWorkspace = {
+      version: 1,
+      tabs,
+      splitDir: 'vertical',
+      panes: [{ id: 0, tabIdx: 0 }],
+      nextTabId,
+      nextPrimaryTabId,
+      primaryTabs: [primarySnapshot],
+      activePrimaryTabId: pt.id,
+      panePrimaryMap: { 1: [pt.id] },
+      paneActivePrimaryMap: { 1: pt.id }
+    }
+
+    const currentFlow = pt.spatialFlows?.find((f) => f.id === pt.activeSpatialFlowId) ?? pt.spatialFlows?.[0]
+
+    return {
+      workspace: wsSnapshot,
+      flowGraph: currentFlow?.graph ? JSON.parse(JSON.stringify(currentFlow.graph)) : createDefaultFlowGraph(),
+      environments: $environments as Record<string, Record<string, string>>,
+      globalEnvironment: $globalEnvironment as Record<string, string>,
+      activeEnvName: $activeEnvName as string
+    }
+  }
+
+  function exportSingleWorkspace(primaryId: number) {
+    const pt = primaryTabs.find((p) => p.id === primaryId)
+    if (!pt) return
+    const bundle = buildSingleWorkspaceBundle(primaryId)
+    const text = serializeWorkspaceFile(bundle)
+    const blob = new Blob([text], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${pt.title.replace(/[^a-zA-Z0-9_-]/g, '_')}${WORKSPACE_FILE_EXT}`
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    showDiskSaveLabel(`Workspace "${pt.title}" exportado!`)
+  }
+
+  async function saveSingleWorkspaceFile(primaryId: number, saveAs = false) {
+    const pt = primaryTabs.find((p) => p.id === primaryId)
+    if (!pt) return
+    const text = serializeWorkspaceFile(buildSingleWorkspaceBundle(primaryId))
+    const w = window as WorkspacePickerWindow
+    if (!w.showSaveFilePicker) {
+      exportSingleWorkspace(primaryId)
+      return
+    }
+    try {
+      const handle = await w.showSaveFilePicker({
+        suggestedName: `${pt.title.replace(/[^a-zA-Z0-9_-]/g, '_')}${WORKSPACE_FILE_EXT}`,
+        types: WORKSPACE_PICKER_TYPES
+      })
+      const writable = await handle.createWritable()
+      await writable.write(text)
+      await writable.close()
+      showDiskSaveLabel(`Workspace "${pt.title}" salvo: ${handle.name}`)
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') showDiskSaveLabel(`Erro ao salvar workspace "${pt.title}"`)
+    }
+  }
+
+  function duplicateWorkspace(primaryId: number) {
+    const pt = primaryTabs.find((p) => p.id === primaryId)
+    if (!pt) return
+    const newPrimId = nextPrimaryTabId++
+    const newTitle = `${pt.title} (Cópia)`
+    const newSubTabIds: number[] = []
+
+    for (const sid of pt.subTabIds) {
+      const idx = getTabIdx(sid)
+      const newSid = nextTabId++
+      const title = tabTitles[idx] || 'Document'
+      const text = getTabJsonText(idx)
+      const mode = tabModes[idx] || Mode.tree
+      addDocWithId(newSid, title, text, mode)
+      const origMeta = subTabsMeta.get(sid)
+      subTabsMeta.set(newSid, {
+        id: newSid,
+        primaryTabId: newPrimId,
+        title,
+        kind: origMeta?.kind ?? 'main'
+      })
+      newSubTabIds.push(newSid)
+    }
+
+    const newGroups = pt.flowGroups ? JSON.parse(JSON.stringify(pt.flowGroups)) : []
+    const newFlows = pt.spatialFlows ? JSON.parse(JSON.stringify(pt.spatialFlows)) : []
+
+    const newPrimary: PrimaryTabState = {
+      id: newPrimId,
+      title: newTitle,
+      subTabIds: newSubTabIds,
+      activeSubTabId: newSubTabIds[0] ?? nextTabId,
+      requestState: JSON.parse(JSON.stringify(pt.requestState)),
+      flowGroups: newGroups,
+      spatialFlows: newFlows,
+      activeSpatialFlowId: pt.activeSpatialFlowId
+    }
+
+    primaryTabs = [...primaryTabs, newPrimary]
+    const existing = panePrimaryMap.get(activeLeafId) ?? []
+    panePrimaryMap.set(activeLeafId, [...existing, newPrimId])
+    panePrimaryMap = new Map(panePrimaryMap)
+    tabsRenderVersion++
+    selectPrimaryTab(newPrimId)
+    scheduleAutosave()
+    showDiskSaveLabel(`Workspace "${newTitle}" criado!`)
+  }
+
+  function removeWorkspace(primaryId: number) {
+    if (primaryTabs.length <= 1) {
+      alert('Não é possível remover o único workspace.')
+      return
+    }
+    const pt = primaryTabs.find((p) => p.id === primaryId)
+    if (!confirm(`Deseja fechar/remover o workspace "${pt?.title}"?`)) return
+    const leafId = findLeafForPrimary(primaryId)
+    closePrimaryTabInPane(leafId, primaryId)
+    showDiskSaveLabel(`Workspace "${pt?.title}" removido!`)
+  }
+
+  function handleDuplicateFlow(primaryTabId: number, flowId: string) {
+    const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
+    if (ptIndex === -1) return
+    const pt = primaryTabs[ptIndex]
+    const origFlow = pt.spatialFlows?.find((f) => f.id === flowId)
+    if (!origFlow) return
+
+    const clonedGraph = origFlow.graph
+      ? JSON.parse(JSON.stringify(origFlow.graph))
+      : { nodes: [], connections: [] }
+
+    const newFlow = createDefaultSpatialFlow(
+      `${origFlow.name} (Cópia)`,
+      origFlow.groupId,
+      clonedGraph
+    )
+    if (!pt.spatialFlows) pt.spatialFlows = []
+    pt.spatialFlows.push(newFlow)
+
+    primaryTabs[ptIndex] = { ...pt }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+
+    handleSelectFlow(primaryTabId, newFlow.id)
+    scheduleAutosave()
+    showDiskSaveLabel(`Spatial Flow duplicado: "${newFlow.name}"`)
+  }
+
+  function handleRenameWorkspace(primaryId: number, currentName?: string) {
+    const pt = primaryTabs.find((p) => p.id === primaryId)
+    const name = prompt('Renomear Workspace:', currentName ?? pt?.title ?? 'Workspace')
+    if (!name?.trim() || name.trim() === pt?.title) return
+    renamePrimaryTab(primaryId, name.trim())
+    showDiskSaveLabel(`Workspace renomeado para "${name.trim()}"!`)
+  }
+
+  function closeOtherWorkspaces(keepPrimaryId: number) {
+    if (primaryTabs.length <= 1) return
+    const pt = primaryTabs.find((p) => p.id === keepPrimaryId)
+    if (!confirm(`Deseja fechar todos os outros workspaces e manter apenas "${pt?.title}"?`)) return
+    const toRemove = primaryTabs.filter((p) => p.id !== keepPrimaryId)
+    for (const p of toRemove) {
+      const leafId = findLeafForPrimary(p.id)
+      closePrimaryTabInPane(leafId, p.id)
+    }
+    showDiskSaveLabel('Outros workspaces fechados!')
+  }
+
+  async function closeFolder() {
+    directoryHandle = undefined
+    folderName = ''
+    folderEntries = []
+    folderPendingPermission = false
+    await saveDirectoryHandle(undefined)
+    showDiskSaveLabel('Pasta de arquivos fechada')
+  }
+
+  function openFilesZoneContextMenu(e: MouseEvent) {
+    tabMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      type: 'custom',
+      items: [
+        { icon: '📄', label: 'Novo Arquivo (Nova Aba)', action: () => addTab() },
+        { icon: '📂', label: 'Abrir Arquivos (com permissão de escrita)…', action: () => void openFilesFromPicker() },
+        { icon: '📁', label: 'Abrir Pasta de Projeto…', action: () => void openFolder() },
+        ...(folderPendingPermission ? [{ icon: '🔌', label: 'Reconectar Arquivos Salvos', action: () => void reconnectFiles() }] : []),
+        { separator: true, label: 'sep-1' },
+        { icon: '💾', label: 'Salvar Arquivo Ativo no Disco', action: () => void saveToDisk() },
+        { icon: '💾', label: 'Salvar Todos os Arquivos', action: () => saveAllToDisk() },
+        { icon: '⬇', label: 'Baixar Todos os Arquivos (.zip)', action: () => downloadAllTabs() },
+        ...(folderName ? [{ separator: true, label: 'sep-2' }, { icon: '❌', label: `Fechar Pasta "${folderName}"`, action: () => void closeFolder() }] : [])
+      ]
+    }
+  }
+
+  function openWorkspacesZoneContextMenu(e: MouseEvent) {
+    tabMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      type: 'custom',
+      items: [
+        { icon: '➕', label: 'Novo Workspace', action: () => addPrimaryTab() },
+        { icon: '🗂', label: 'Abrir Arquivo de Workspace (.jsew)…', action: () => void openWorkspaceFile() },
+        { separator: true, label: 'sep-1' },
+        { icon: '💾', label: `Salvar Workspace Ativo ("${activePrimary?.title || 'Workspace'}")`, action: () => void saveSingleWorkspaceFile(activePrimaryTabId) },
+        { icon: '⬇', label: `Exportar Workspace Ativo (.jsew)`, action: () => exportSingleWorkspace(activePrimaryTabId) },
+        { icon: '📦', label: 'Salvar Todos os Workspaces (.jsew)…', action: () => void saveWorkspaceFile(false) },
+        { icon: '📝', label: 'Salvar Todos os Workspaces Como…', action: () => void saveWorkspaceFile(true) },
+        { separator: true, label: 'sep-2' },
+        { icon: '📁', label: 'Novo Grupo de Flows no Workspace Ativo', action: () => handleCreateGroup(activePrimaryTabId) },
+        { icon: '🔀', label: 'Novo Spatial Flow no Workspace Ativo', action: () => handleCreateFlow(activePrimaryTabId, activeGroupObj?.id ?? 'group-1') },
+        { separator: true, label: 'sep-3' },
+        { icon: '🧹', label: 'Fechar Outros Workspaces', disabled: primaryTabs.length <= 1, action: () => closeOtherWorkspaces(activePrimaryTabId) }
+      ]
+    }
+  }
+
+  function openSamplesZoneContextMenu(e: MouseEvent) {
+    tabMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      type: 'custom',
+      items: [
+        { icon: '🧪', label: 'Carregar Exemplo Rick & Morty Flow', action: () => loadFlowSample() },
+        { separator: true, label: 'sep-1' },
+        { icon: '📊', label: 'Carregar Exemplo Customers & Orders', action: () => loadSample('customers') },
+        { icon: '🏷', label: 'Carregar Exemplo Tags & Arrays', action: () => loadSample('tags') },
+        { icon: '📦', label: 'Carregar Exemplo Objeto JSON', action: () => loadSample('object') },
+        { icon: '📋', label: 'Carregar Exemplo Array Longo', action: () => loadSample('long') },
+        { icon: '📄', label: 'Carregar Exemplo Texto Vazio', action: () => loadSample('empty') }
+      ]
+    }
+  }
+
+  function handleCustomContextMenu(e: MouseEvent, items: TabMenuItem[]) {
+    tabMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      type: 'custom',
+      items
+    }
+  }
+
   onMount(async () => {
     applyWorkspace(await loadWorkspace())
     hydrated = true
@@ -2031,7 +2416,7 @@
   let problems: TabProblem[] = []
 
   async function collectProblems() {
-    if (!$validateDoc) {
+    if (!showProblems) {
       problems = []
       return
     }
@@ -2047,7 +2432,7 @@
     problems = items
   }
 
-  $: if ($validateDoc) {
+  $: if (showProblems) {
     void tick().then(collectProblems)
   } else {
     problems = []
@@ -3271,10 +3656,21 @@
       history: []
     }
 
-    $flowGraphStore = {
+    const updatedGraph = {
       ...currentGraph,
       nodes: [...currentGraph.nodes, newNode]
     }
+    $flowGraphStore = updatedGraph
+    if (activeFlowObj) {
+      activeFlowObj.graph = JSON.parse(JSON.stringify(updatedGraph))
+      activeFlowObj.updatedAt = Date.now()
+    }
+    if (activePrimary) {
+      activePrimary.requestState.flowGraph = updatedGraph
+    }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+    scheduleAutosave()
     showDiskSaveLabel(`Block "${newNode.title}" added to the Spatial Flow!`)
   }
 
@@ -3329,20 +3725,288 @@
         : []
     }
 
-    $flowGraphStore = {
+    const updatedGraph = {
       ...currentGraph,
       nodes: [...currentGraph.nodes, newNode]
     }
+    $flowGraphStore = updatedGraph
+    if (activeFlowObj) {
+      activeFlowObj.graph = JSON.parse(JSON.stringify(updatedGraph))
+      activeFlowObj.updatedAt = Date.now()
+    }
+    if (activePrimary) {
+      activePrimary.requestState.flowGraph = updatedGraph
+    }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+    scheduleAutosave()
     showDiskSaveLabel(`History "${newNode.title}" added to the Flow!`)
   }
 
   /** Load the sample spatial flow and open the Requests panel. */
   function loadFlowSample() {
     ensureExampleEnv()
-    $flowGraphStore = createDefaultFlowGraph()
+    const sample = createDefaultFlowGraph()
+    $flowGraphStore = sample
+    if (activeFlowObj) {
+      activeFlowObj.graph = JSON.parse(JSON.stringify(sample))
+      activeFlowObj.updatedAt = Date.now()
+    }
+    if (activePrimary) {
+      activePrimary.requestState.flowGraph = sample
+    }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+    scheduleAutosave()
     $requestsViewMode = 'flow'
     showRequests = true
     showDiskSaveLabel('Rick & Morty flow loaded!')
+  }
+
+  let saveFlowModalOpen = false
+  let saveFlowModalTitle = 'Save Spatial Flow'
+
+  function openSaveFlowModal(asNew: boolean) {
+    if (!asNew && activeFlowObj) {
+      activeFlowObj.updatedAt = Date.now()
+      if (activePrimary) {
+        activePrimary.requestState.flowGraph = activeFlowObj.graph
+      }
+      primaryTabs = [...primaryTabs]
+      tabsRenderVersion++
+      scheduleAutosave()
+      showDiskSaveLabel(`Spatial Flow "${activeFlowObj.name}" saved in "${activeGroupObj?.name || 'General'}"!`)
+      return
+    }
+    saveFlowModalTitle = asNew ? 'Save Spatial Flow As…' : 'Save Spatial Flow'
+    saveFlowModalOpen = true
+  }
+
+  function handleSaveFlowFromModal(name: string, groupId: string, newGroupName?: string) {
+    const ptIndex = primaryTabs.findIndex((p) => p.id === activePrimaryTabId)
+    if (ptIndex === -1) return
+    const pt = primaryTabs[ptIndex]
+    if (!pt.flowGroups) pt.flowGroups = []
+    if (!pt.spatialFlows) pt.spatialFlows = []
+
+    let targetGroupId = groupId
+    if (newGroupName) {
+      const newGrp = createDefaultFlowGroup(`grp-${Date.now()}`, newGroupName)
+      pt.flowGroups.push(newGrp)
+      targetGroupId = newGrp.id
+    }
+
+    const currentGraph = activeFlowObj?.graph
+      ? JSON.parse(JSON.stringify(activeFlowObj.graph))
+      : { nodes: [], connections: [] }
+
+    const newFlow = createDefaultSpatialFlow(name, targetGroupId, currentGraph)
+    pt.spatialFlows.push(newFlow)
+
+    primaryTabs[ptIndex] = { ...pt }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+
+    handleSelectFlow(pt.id, newFlow.id)
+    scheduleAutosave()
+    showDiskSaveLabel(`Spatial Flow "${newFlow.name}" saved successfully!`)
+  }
+
+  function handleSelectFlow(primaryTabId: number, flowId: string) {
+    const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
+    if (ptIndex === -1) return
+    const pt = primaryTabs[ptIndex]
+
+    selectPrimaryTab(primaryTabId)
+
+    pt.activeSpatialFlowId = flowId
+    flowOwnerPrimaryId = pt.id
+    flowOwnerFlowId = flowId
+
+    const flow = pt.spatialFlows?.find((f) => f.id === flowId)
+    const targetGraph = flow?.graph
+      ? JSON.parse(JSON.stringify(flow.graph))
+      : { nodes: [], connections: [] }
+
+    $flowGraphStore = targetGraph
+    pt.requestState.flowGraph = targetGraph
+
+    primaryTabs[ptIndex] = { ...pt }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+
+    showRequests = true
+    $requestsViewMode = 'flow'
+    scheduleAutosave()
+    showDiskSaveLabel(`Spatial Flow "${flow?.name ?? 'Flow'}" carregado!`)
+  }
+
+  function handleCreateGroup(primaryTabId: number) {
+    const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
+    if (ptIndex === -1) return
+    const pt = primaryTabs[ptIndex]
+    const name = prompt('Nome do novo Grupo de Flows:', `Grupo ${(pt.flowGroups?.length ?? 0) + 1}`)
+    if (!name?.trim()) return
+
+    if (!pt.flowGroups) pt.flowGroups = []
+    const newGrp = createDefaultFlowGroup(`grp-${Date.now()}`, name.trim())
+    pt.flowGroups.push(newGrp)
+    primaryTabs[ptIndex] = { ...pt }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+    scheduleAutosave()
+    showDiskSaveLabel(`Grupo "${newGrp.name}" criado!`)
+  }
+
+  function handleRenameGroup(primaryTabId: number, groupId: string, currentName: string) {
+    const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
+    if (ptIndex === -1) return
+    const pt = primaryTabs[ptIndex]
+    const name = prompt('Renomear Grupo:', currentName)
+    if (!name?.trim() || name.trim() === currentName) return
+
+    const grp = pt.flowGroups?.find((g) => g.id === groupId)
+    if (grp) {
+      grp.name = name.trim()
+      primaryTabs[ptIndex] = { ...pt }
+      primaryTabs = [...primaryTabs]
+      tabsRenderVersion++
+      scheduleAutosave()
+      showDiskSaveLabel(`Grupo renomeado para "${grp.name}"!`)
+    }
+  }
+
+  function handleDeleteGroup(primaryTabId: number, groupId: string) {
+    const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
+    if (ptIndex === -1) return
+    const pt = primaryTabs[ptIndex]
+    if (!pt || !pt.flowGroups || pt.flowGroups.length <= 1) {
+      alert('Não é possível remover o único grupo do workspace.')
+      return
+    }
+    const grp = pt.flowGroups.find((g) => g.id === groupId)
+    const hasFlows = pt.spatialFlows?.some((f) => f.groupId === groupId)
+    if (hasFlows) {
+      if (!confirm(`O grupo "${grp?.name}" possui fluxos dentro. Deseja excluí-lo e seus fluxos?`)) return
+      pt.spatialFlows = pt.spatialFlows?.filter((f) => f.groupId !== groupId)
+    }
+    pt.flowGroups = pt.flowGroups.filter((g) => g.id !== groupId)
+    if (!pt.spatialFlows?.length) {
+      const defGrp = pt.flowGroups[0]
+      const defFlow = createDefaultSpatialFlow('Main Flow', defGrp.id, createDefaultFlowGraph())
+      pt.spatialFlows = [defFlow]
+      pt.activeSpatialFlowId = defFlow.id
+    }
+    primaryTabs[ptIndex] = { ...pt }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+    scheduleAutosave()
+    showDiskSaveLabel(`Grupo removido!`)
+  }
+
+  function handleCreateFlow(primaryTabId: number, groupId: string) {
+    const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
+    if (ptIndex === -1) return
+    const pt = primaryTabs[ptIndex]
+    const grp = pt.flowGroups?.find((g) => g.id === groupId)
+    const name = prompt(`Nome do novo Spatial Flow em "${grp?.name || 'Grupo'}":`, `Flow ${(pt.spatialFlows?.length ?? 0) + 1}`)
+    if (!name?.trim()) return
+
+    const newFlow = createDefaultSpatialFlow(name.trim(), groupId, { nodes: [], connections: [] })
+    if (!pt.spatialFlows) pt.spatialFlows = []
+    pt.spatialFlows.push(newFlow)
+
+    primaryTabs[ptIndex] = { ...pt }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+
+    handleSelectFlow(primaryTabId, newFlow.id)
+    scheduleAutosave()
+    showDiskSaveLabel(`Spatial Flow "${newFlow.name}" criado!`)
+  }
+
+  function handleRenameFlow(primaryTabId: number, flowId: string, currentName: string) {
+    const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
+    if (ptIndex === -1) return
+    const pt = primaryTabs[ptIndex]
+    const name = prompt('Renomear Spatial Flow:', currentName)
+    if (!name?.trim() || name.trim() === currentName) return
+
+    const flow = pt.spatialFlows?.find((f) => f.id === flowId)
+    if (flow) {
+      flow.name = name.trim()
+      primaryTabs[ptIndex] = { ...pt }
+      primaryTabs = [...primaryTabs]
+      tabsRenderVersion++
+      scheduleAutosave()
+      showDiskSaveLabel(`Spatial Flow renomeado para "${flow.name}"!`)
+    }
+  }
+
+  function handleDeleteFlow(primaryTabId: number, flowId: string) {
+    const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
+    if (ptIndex === -1) return
+    const pt = primaryTabs[ptIndex]
+    if (!pt || !pt.spatialFlows || pt.spatialFlows.length <= 1) {
+      alert('O workspace deve manter ao menos um Spatial Flow.')
+      return
+    }
+    const flow = pt.spatialFlows.find((f) => f.id === flowId)
+    if (!confirm(`Deseja excluir o Spatial Flow "${flow?.name}"?`)) return
+
+    pt.spatialFlows = pt.spatialFlows.filter((f) => f.id !== flowId)
+    if (pt.activeSpatialFlowId === flowId) {
+      const nextFlow = pt.spatialFlows[0]
+      pt.activeSpatialFlowId = nextFlow.id
+      $flowGraphStore = JSON.parse(JSON.stringify(nextFlow.graph ?? { nodes: [], connections: [] }))
+    }
+    primaryTabs[ptIndex] = { ...pt }
+    primaryTabs = [...primaryTabs]
+    tabsRenderVersion++
+    scheduleAutosave()
+    showDiskSaveLabel(`Spatial Flow excluído!`)
+  }
+
+  function handleExportFlow(flow: WorkspaceSpatialFlow) {
+    const jsonStr = serializeFlowFile(flow.graph)
+    const blob = new Blob([jsonStr], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${flow.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.flow.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    showDiskSaveLabel(`Exportado: "${a.download}"`)
+  }
+
+  function handleImportFlow(primaryTabId: number, groupId: string) {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json,.flow.json,application/json'
+    input.onchange = async () => {
+      const file = input.files?.[0]
+      if (!file) return
+      try {
+        const text = await file.text()
+        const graph = parseFlowFile(text)
+        const flowName = file.name.replace(/\.(flow\.)?json$/i, '')
+        const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
+        if (ptIndex === -1) return
+        const pt = primaryTabs[ptIndex]
+        if (!pt.spatialFlows) pt.spatialFlows = []
+        const importedFlow = createDefaultSpatialFlow(flowName, groupId, graph)
+        pt.spatialFlows.push(importedFlow)
+        primaryTabs[ptIndex] = { ...pt }
+        primaryTabs = [...primaryTabs]
+        tabsRenderVersion++
+        handleSelectFlow(primaryTabId, importedFlow.id)
+        scheduleAutosave()
+        showDiskSaveLabel(`Spatial Flow "${importedFlow.name}" importado com sucesso!`)
+      } catch (err: any) {
+        alert(`Erro ao importar Spatial Flow: ${err.message}`)
+      }
+    }
+    input.click()
   }
 
   /** Write back to disk every tab that has a file handle and unsaved changes. */
@@ -3611,80 +4275,97 @@
   <div class="main-area">
     {#if $showSidebar}
       <aside class="sidebar">
-        {#if folderName}
-          <section class="sb-section">
-            <h3 class="sb-title">Folder: {folderName}</h3>
-            {#if folderEntries.length > 0}
-              <FolderTree entries={folderEntries} onOpen={(entry) => void openFolderFile(entry)} />
-            {:else}
-              <p class="sb-note">No files found.</p>
-            {/if}
-          </section>
-        {/if}
-        <section class="sb-section">
-          <h3 class="sb-title">📁 Files & Workspace</h3>
-          <p class="sb-note">
-            The workspace autosaves in this browser and is restored when reopening the same address
-            (host and port).
-          </p>
-          <button class="sb-btn" on:click={() => void openFilesFromPicker()}
-            >📂 Open files (writable)</button
-          >
-          <button class="sb-btn" on:click={() => void openFolder()}>📁 Open folder…</button>
-          {#if folderPendingPermission}
-            <button class="sb-btn" on:click={() => void reconnectFiles()}
-              >🔌 Reconnect saved files</button
-            >
-          {/if}
-          <button class="sb-btn" on:click={() => void saveToDisk()}
-            >💾 Save active tab to disk</button
-          >
-          <button class="sb-btn" on:click={saveAllToDisk}>💾 Save all files</button>
-          <button class="sb-btn" on:click={downloadAllTabs}>⬇ Download all tabs</button>
-          <p class="sb-note">
-            Workspace file (<code>{WORKSPACE_FILE_EXT}</code>): all main tabs, sub-tabs, Spatial
-            Flow and environments in one file.
-          </p>
-          <button
-            class="sb-btn"
-            title="Open a workspace file (replaces the current tabs and flow)"
-            on:click={() => void openWorkspaceFile()}>🗂 Open workspace…</button
-          >
-          <button
-            class="sb-btn"
-            title={workspaceFileName
-              ? `Save to ${workspaceFileName}`
-              : 'Save the whole workspace to a file'}
-            on:click={() => void saveWorkspaceFile(false)}
-            >💾 Save workspace{workspaceFileName ? `: ${workspaceFileName}` : ''}</button
-          >
-          <button class="sb-btn" on:click={() => void saveWorkspaceFile(true)}
-            >📝 Save workspace as…</button
-          >
-        </section>
-        <button
-          class="sb-section-head"
-          on:click={() => ($sidebarSamplesOpen = !$sidebarSamplesOpen)}
+        <SidebarResizablePanels
+          samplesOpen={$sidebarSamplesOpen}
+          onToggleSamples={() => ($sidebarSamplesOpen = !$sidebarSamplesOpen)}
+          onContextMenuFiles={openFilesZoneContextMenu}
+          onContextMenuWorkspaces={openWorkspacesZoneContextMenu}
+          onContextMenuSamples={openSamplesZoneContextMenu}
         >
-          <span class="sb-caret">{$sidebarSamplesOpen ? '▾' : '▸'}</span>
-          🧪 Samples
-        </button>
-        {#if $sidebarSamplesOpen}
-          <section class="sb-section">
-            <button class="sb-btn" on:click={() => loadSample('array')}>Array</button>
-            <button class="sb-btn" on:click={() => loadSample('tags')}>Tags & Arrays</button>
-            <button class="sb-btn" on:click={() => loadSample('customers')}>Customers & Orders</button>
-            <button class="sb-btn" on:click={() => loadSample('object')}>Object</button>
-            <button class="sb-btn" on:click={() => loadSample('long')}>Long Array</button>
-            <button class="sb-btn" on:click={() => loadSample('empty')}>Empty Text</button>
-            <button class="sb-btn" on:click={() => loadSample('invalid')}>Invalid JSON</button>
-            <button
-              class="sb-btn"
-              title="Load full example into the Spatial Flow and open the requests panel"
-              on:click={loadFlowSample}>🔀 Flow · Rick & Morty</button
-            >
-          </section>
-        {/if}
+          <!-- AREA 1: FILES & FOLDERS -->
+          <svelte:fragment slot="files">
+            {#if folderName}
+              <section class="sb-section">
+                <h3 class="sb-title">Folder: {folderName}</h3>
+                {#if folderEntries.length > 0}
+                  <FolderTree entries={folderEntries} onOpen={(entry) => void openFolderFile(entry)} />
+                {:else}
+                  <p class="sb-note">No files found.</p>
+                {/if}
+              </section>
+            {/if}
+            <div class="sb-btn-group">
+              <button class="sb-btn" on:click={() => void openFilesFromPicker()}>📂 Open files (writable)</button>
+              <button class="sb-btn" on:click={() => void openFolder()}>📁 Open folder…</button>
+              {#if folderPendingPermission}
+                <button class="sb-btn" on:click={() => void reconnectFiles()}>🔌 Reconnect saved files</button>
+              {/if}
+              <button class="sb-btn" on:click={() => void saveToDisk()}>💾 Save active tab to disk</button>
+              <button class="sb-btn" on:click={saveAllToDisk}>💾 Save all files</button>
+              <button class="sb-btn" on:click={downloadAllTabs}>⬇ Download all tabs</button>
+            </div>
+          </svelte:fragment>
+
+          <!-- AREA 2: WORKSPACES & SPATIAL FLOWS -->
+          <svelte:fragment slot="workspaces">
+            {#if primaryTabs.length === 0}
+              <div class="sb-ws-actions">
+                <button
+                  class="sb-btn"
+                  title="Open a workspace file (replaces current workspace)"
+                  on:click={() => void openWorkspaceFile()}
+                >🗂 Open workspace…</button>
+                <button
+                  class="sb-btn"
+                  title={workspaceFileName ? `Save to ${workspaceFileName}` : 'Save whole workspace to a file'}
+                  on:click={() => void saveWorkspaceFile(false)}
+                >💾 Save workspace{workspaceFileName ? `: ${workspaceFileName}` : ''}</button>
+                <button class="sb-btn" on:click={() => void saveWorkspaceFile(true)}>📝 Save workspace as…</button>
+              </div>
+            {/if}
+
+            <div class="ws-tree-wrapper">
+              <WorkspaceTree
+                {primaryTabs}
+                activePrimaryId={activePrimaryTabId}
+                onSelectFlow={handleSelectFlow}
+                onCreateGroup={handleCreateGroup}
+                onRenameGroup={handleRenameGroup}
+                onDeleteGroup={handleDeleteGroup}
+                onCreateFlow={handleCreateFlow}
+                onRenameFlow={handleRenameFlow}
+                onDeleteFlow={handleDeleteFlow}
+                onExportFlow={handleExportFlow}
+                onImportFlow={handleImportFlow}
+                onSaveWorkspace={saveSingleWorkspaceFile}
+                onExportWorkspace={exportSingleWorkspace}
+                onRenameWorkspace={handleRenameWorkspace}
+                onDuplicateWorkspace={duplicateWorkspace}
+                onDeleteWorkspace={removeWorkspace}
+                onDuplicateFlow={handleDuplicateFlow}
+                onContextMenu={handleCustomContextMenu}
+              />
+            </div>
+          </svelte:fragment>
+
+          <!-- AREA 3: SAMPLES (Minimizado por padrão) -->
+          <svelte:fragment slot="samples">
+            <div class="sb-samples-group">
+              <button class="sb-btn" on:click={() => loadSample('array')}>Array</button>
+              <button class="sb-btn" on:click={() => loadSample('tags')}>Tags & Arrays</button>
+              <button class="sb-btn" on:click={() => loadSample('customers')}>Customers & Orders</button>
+              <button class="sb-btn" on:click={() => loadSample('object')}>Object</button>
+              <button class="sb-btn" on:click={() => loadSample('long')}>Long Array</button>
+              <button class="sb-btn" on:click={() => loadSample('empty')}>Empty Text</button>
+              <button class="sb-btn" on:click={() => loadSample('invalid')}>Invalid JSON</button>
+              <button
+                class="sb-btn"
+                title="Load full example into the Spatial Flow and open the requests panel"
+                on:click={loadFlowSample}
+              >🔀 Flow · Rick & Morty</button>
+            </div>
+          </svelte:fragment>
+        </SidebarResizablePanels>
       </aside>
     {/if}
 
@@ -3774,6 +4455,9 @@
                     on:dragover={(e) => onPrimaryTabDragOverInPane(e, lr.leafId, pt.id)}
                     on:drop={(e) => onPrimaryTabDrop(e, lr.leafId, pt.id)}
                   >
+                    {#if pt.id === activePrimaryTabId}
+                      <span class="tab-active-dot" title="Workspace selecionado"></span>
+                    {/if}
                     <span
                       class="tab-dirty"
                       class:dirty={pt.subTabIds.some((sid) => dirtyFlags[getTabIdx(sid)])}
@@ -4008,7 +4692,7 @@
                     validator={selValidator}
                     queryLanguages={queryLangs}
                     bind:queryLanguageId={queryLangId}
-                    onRenderValue={$customRenderer ? customRenderValue : renderValue}
+                    onRenderValue={renderValue}
                     onClassName={diffMode ? onClassNameDiff : undefined}
                     onChange={() => bumpRevision(i)}
                     onChangeMode={(m: Mode) => {
@@ -4258,20 +4942,36 @@
 
           {#if $requestsViewMode === 'flow'}
             <div class="requests-flow-container">
-              <FlowCanvas
-                bind:flowGraph={$flowGraphStore}
-                bind:environments={$environments}
-                bind:globalEnvironment={$globalEnvironment}
-                activeEnvName={$activeEnvName}
-                globalProxy={String($corsProxy).trim()}
-                onSaveGraph={(g) => ($flowGraphStore = g)}
-                onManageEnvironments={() => (envManagerOpen = true)}
-                onOpenInEditor={(title, text) => {
-                  const mode = guessMode(title, text)
-                  addSubTabWithContent(title, text, mode, 'response')
-                  showDiskSaveLabel(`Aberto no editor: "${title}"`)
-                }}
-              />
+              {#key `${activePrimaryTabId}-${activeFlowObj?.id ?? 'def'}`}
+                <FlowCanvas
+                  flowGraph={activeFlowObj?.graph ? JSON.parse(JSON.stringify(activeFlowObj.graph)) : { nodes: [], connections: [] }}
+                  bind:environments={$environments}
+                  bind:globalEnvironment={$globalEnvironment}
+                  activeEnvName={$activeEnvName}
+                  globalProxy={String($corsProxy).trim()}
+                  activeFlowName={activeFlowObj?.name ?? 'Main Flow'}
+                  activeGroupName={activeGroupObj?.name ?? 'General'}
+                  {availableFlows}
+                  onSaveFlowToWorkspace={(asNew: boolean) => openSaveFlowModal(asNew)}
+                  onSaveGraph={(g: any) => {
+                    if (activeFlowObj) {
+                      activeFlowObj.graph = JSON.parse(JSON.stringify(g))
+                      activeFlowObj.updatedAt = Date.now()
+                    }
+                    if (activePrimary) {
+                      activePrimary.requestState.flowGraph = g
+                    }
+                    $flowGraphStore = g
+                    scheduleAutosave()
+                  }}
+                  onManageEnvironments={() => (envManagerOpen = true)}
+                  onOpenInEditor={(title: string, text: string) => {
+                    const mode = guessMode(title, text)
+                    addSubTabWithContent(title, text, mode, 'response', activePrimary?.id)
+                    showDiskSaveLabel(`Aberto no editor: "${title}"`)
+                  }}
+                />
+              {/key}
             </div>
           {:else}
             <!-- Request row -->
@@ -4898,13 +5598,9 @@
     bind:navigationBar={$navigationBar}
     bind:statusBar={$statusBar}
     bind:askToFormat={$askToFormat}
-    bind:validateDoc={$validateDoc}
-    bind:customRenderer={$customRenderer}
-    bind:diffMode
+    bind:flatten={$flatten}
     bind:escapeCtrl={$escapeCtrl}
     bind:escapeUni={$escapeUni}
-    bind:flatten={$flatten}
-    bind:multiQuery={$multiQuery}
     onClose={() => (settingsPopoverOpen = false)}
   />
 
@@ -4927,13 +5623,26 @@
     onClose={() => (envManagerOpen = false)}
   />
 
+  <SaveFlowModal
+    open={saveFlowModalOpen}
+    title={saveFlowModalTitle}
+    initialName={activeFlowObj?.name ?? 'My Spatial Flow'}
+    groups={activePrimary?.flowGroups ?? []}
+    selectedGroupId={activeFlowObj?.groupId ?? ''}
+    onSave={handleSaveFlowFromModal}
+    onClose={() => (saveFlowModalOpen = false)}
+  />
+
   {#if tabMenu}
     <TabContextMenu
       x={tabMenu.x}
       y={tabMenu.y}
-      items={tabMenu.type === 'primary'
-        ? buildPrimaryTabMenuItems(tabMenu.tabId)
-        : buildSubTabMenuItems(tabMenu.tabId)}
+      items={tabMenu.items ??
+        (tabMenu.type === 'primary' && tabMenu.tabId !== undefined
+          ? buildPrimaryTabMenuItems(tabMenu.tabId, tabMenu.leafId)
+          : tabMenu.tabId !== undefined
+            ? buildSubTabMenuItems(tabMenu.tabId, tabMenu.leafId)
+            : [])}
       onClose={() => (tabMenu = undefined)}
     />
   {/if}
@@ -4979,6 +5688,21 @@
     --theme-shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
     --theme-shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.07);
 
+    --theme-sb-btn-bg: rgba(255, 255, 255, 0.08);
+    --theme-sb-btn-border: rgba(255, 255, 255, 0.14);
+    --theme-sb-btn-hover-bg: rgba(255, 255, 255, 0.16);
+    --theme-sb-btn-hover-border: rgba(255, 255, 255, 0.22);
+
+    --theme-sb-unsaved-bg: rgba(245, 158, 11, 0.25);
+    --theme-sb-unsaved-border: rgba(245, 158, 11, 0.55);
+    --theme-sb-unsaved-color: #fde68a;
+    --theme-sb-unsaved-hover-bg: rgba(245, 158, 11, 0.35);
+
+    --theme-sb-problems-bg: rgba(239, 68, 68, 0.25);
+    --theme-sb-problems-border: rgba(239, 68, 68, 0.5);
+    --theme-sb-problems-color: #fca5a5;
+    --theme-sb-problems-hover-bg: rgba(239, 68, 68, 0.35);
+
     color-scheme: dark;
 
     &.jse-theme-dark {
@@ -5006,6 +5730,21 @@
       --theme-ac-hover: #1177bb;
       --theme-ac-subtle: rgba(0, 120, 212, 0.18);
       --theme-accent-text: #38bdf8;
+
+      --theme-sb-btn-bg: rgba(255, 255, 255, 0.08);
+      --theme-sb-btn-border: rgba(255, 255, 255, 0.14);
+      --theme-sb-btn-hover-bg: rgba(255, 255, 255, 0.16);
+      --theme-sb-btn-hover-border: rgba(255, 255, 255, 0.22);
+
+      --theme-sb-unsaved-bg: rgba(245, 158, 11, 0.25);
+      --theme-sb-unsaved-border: rgba(245, 158, 11, 0.55);
+      --theme-sb-unsaved-color: #fde68a;
+      --theme-sb-unsaved-hover-bg: rgba(245, 158, 11, 0.35);
+
+      --theme-sb-problems-bg: rgba(239, 68, 68, 0.25);
+      --theme-sb-problems-border: rgba(239, 68, 68, 0.5);
+      --theme-sb-problems-color: #fca5a5;
+      --theme-sb-problems-hover-bg: rgba(239, 68, 68, 0.35);
 
       color-scheme: dark;
     }
@@ -5041,6 +5780,21 @@
       --theme-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
       --theme-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.06);
 
+      --theme-sb-btn-bg: rgba(15, 23, 42, 0.06);
+      --theme-sb-btn-border: rgba(15, 23, 42, 0.15);
+      --theme-sb-btn-hover-bg: rgba(15, 23, 42, 0.1);
+      --theme-sb-btn-hover-border: rgba(15, 23, 42, 0.24);
+
+      --theme-sb-unsaved-bg: #fef3c7;
+      --theme-sb-unsaved-border: #f59e0b;
+      --theme-sb-unsaved-color: #92400e;
+      --theme-sb-unsaved-hover-bg: #fde68a;
+
+      --theme-sb-problems-bg: #fee2e2;
+      --theme-sb-problems-border: #ef4444;
+      --theme-sb-problems-color: #b91c1c;
+      --theme-sb-problems-hover-bg: #fecaca;
+
       color-scheme: light;
     }
 
@@ -5069,6 +5823,21 @@
       --theme-ac-hover: #bf360c;
       --theme-ac-subtle: rgba(230, 81, 0, 0.12);
       --theme-accent-text: #e65100;
+
+      --theme-sb-btn-bg: rgba(60, 20, 10, 0.06);
+      --theme-sb-btn-border: rgba(60, 20, 10, 0.18);
+      --theme-sb-btn-hover-bg: rgba(60, 20, 10, 0.12);
+      --theme-sb-btn-hover-border: rgba(60, 20, 10, 0.28);
+
+      --theme-sb-unsaved-bg: #fff1d6;
+      --theme-sb-unsaved-border: #d97706;
+      --theme-sb-unsaved-color: #78350f;
+      --theme-sb-unsaved-hover-bg: #fed7aa;
+
+      --theme-sb-problems-bg: #ffe4e6;
+      --theme-sb-problems-border: #f43f5e;
+      --theme-sb-problems-color: #9f1239;
+      --theme-sb-problems-hover-bg: #fecdd3;
 
       color-scheme: light;
     }
@@ -5218,19 +5987,27 @@
     min-height: 0;
   }
   .sidebar {
-    width: 190px;
+    width: 220px;
     flex-shrink: 0;
     background: $bg2;
     border-right: 1px solid $b;
-    overflow-y: auto;
-    padding: 8px 0;
-    &::-webkit-scrollbar {
-      width: 6px;
-    }
-    &::-webkit-scrollbar-thumb {
-      background: #555;
-      border-radius: 3px;
-    }
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+  }
+  .sb-btn-group,
+  .sb-ws-actions,
+  .sb-samples-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 6px;
+  }
+  .ws-tree-wrapper {
+    flex: 1;
+    min-height: 0;
+    margin-top: 4px;
   }
   .sb-section {
     padding: 6px 12px;
@@ -5279,8 +6056,8 @@
   .sb-btn {
     display: block;
     width: 100%;
-    padding: 3px 8px;
-    margin: 2px 0;
+    padding: 4px 8px;
+    margin: 1px 0;
     font-size: 11px;
     background: transparent;
     color: $t;
@@ -5288,8 +6065,13 @@
     border-radius: 3px;
     cursor: pointer;
     text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.1s, border-color 0.1s;
     &:hover {
-      background: rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.08);
+      border-color: $ac;
     }
   }
   .sb-note {
@@ -5475,6 +6257,15 @@
       background: $bg-hover;
       color: $t-main;
     }
+  }
+  .tab-active-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #0ea5e9;
+    box-shadow: 0 0 6px rgba(14, 165, 233, 0.85);
+    flex-shrink: 0;
+    margin-right: 3px;
   }
   .tab-l1-icon {
     font-size: 11px;
@@ -6018,8 +6809,8 @@
     gap: 5px;
     height: 19px;
     padding: 0 7px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--theme-sb-btn-bg, rgba(255, 255, 255, 0.08));
+    border: 1px solid var(--theme-sb-btn-border, rgba(255, 255, 255, 0.12));
     border-radius: 3px;
     color: $t-bright;
     font-size: 11px;
@@ -6027,24 +6818,25 @@
     cursor: pointer;
     transition: all 0.12s;
     &:hover {
-      background: rgba(255, 255, 255, 0.16);
-      border-color: rgba(255, 255, 255, 0.22);
+      background: var(--theme-sb-btn-hover-bg, rgba(255, 255, 255, 0.16));
+      border-color: var(--theme-sb-btn-hover-border, rgba(255, 255, 255, 0.22));
     }
   }
   .sb-problems-active {
-    background: rgba(239, 68, 68, 0.25);
-    border-color: rgba(239, 68, 68, 0.5);
-    color: #fca5a5;
+    background: var(--theme-sb-problems-bg, rgba(239, 68, 68, 0.25));
+    border-color: var(--theme-sb-problems-border, rgba(239, 68, 68, 0.5));
+    color: var(--theme-sb-problems-color, #fca5a5);
     &:hover {
-      background: rgba(239, 68, 68, 0.35);
+      background: var(--theme-sb-problems-hover-bg, rgba(239, 68, 68, 0.35));
     }
   }
   .sb-unsaved {
-    background: rgba(245, 158, 11, 0.25);
-    border-color: rgba(245, 158, 11, 0.5);
-    color: #fde68a;
+    background: var(--theme-sb-unsaved-bg, rgba(245, 158, 11, 0.25));
+    border-color: var(--theme-sb-unsaved-border, rgba(245, 158, 11, 0.5));
+    color: var(--theme-sb-unsaved-color, #fde68a);
+    font-weight: 600;
     &:hover {
-      background: rgba(245, 158, 11, 0.35);
+      background: var(--theme-sb-unsaved-hover-bg, rgba(245, 158, 11, 0.35));
     }
   }
   .sb-input-wide {
@@ -6865,7 +7657,7 @@
     flex-shrink: 0;
     background: transparent;
     &.dirty {
-      background: #fff;
+      background: $t-bright;
       opacity: 0.9;
     }
   }
