@@ -159,6 +159,7 @@
     buildVisualColumns,
     buildVisualRows,
     getVisualCellValue,
+    getEffectiveSubRowIndex,
     isColumnExpandable,
     sortJsonWithExpansion,
     transformOperationsForStringJson
@@ -307,7 +308,18 @@
     : []
 
   $: visualRows =
-    isJSONArray(json) && isExpandedView ? buildVisualRows(json as unknown[], visualColumns) : []
+    isJSONArray(json) && isExpandedView
+      ? buildVisualRows(
+          json as unknown[],
+          visualColumns,
+          sortedColumn
+            ? {
+                path: sortedColumn.path,
+                direction: sortedColumn.sortDirection === SortDirection.desc ? -1 : 1
+              }
+            : undefined
+        )
+      : []
 
   function toggleExpandColumn(columnPath: JSONPath) {
     const colKey = compileJSONPointer(columnPath)
@@ -2022,19 +2034,23 @@
                     isExpandedView && Array.isArray(json)
                       ? getVisualCellValue(json, vRow, vCol)
                       : getIn(item, vCol.parentPath)}
+                  {@const effSubRow =
+                    isExpandedView && Array.isArray(json)
+                      ? getEffectiveSubRowIndex(json, vRow, vCol)
+                      : vRow.subRowIndex}
                   {@const cellPath = isExpandedView
                     ? vCol.isExpandedSubColumn && vCol.isArrayElement
                       ? vCol.subKey && !vCol.isPrimitiveArray
                         ? [
                             String(rowIndex),
                             ...vCol.parentPath,
-                            String(vRow.subRowIndex),
+                            String(effSubRow),
                             vCol.subKey
                           ]
                         : [
                             String(rowIndex),
                             ...vCol.parentPath,
-                            String(vRow.subRowIndex)
+                            String(effSubRow)
                           ]
                       : [String(rowIndex), ...vCol.fullPath]
                     : [String(rowIndex), ...vCol.parentPath]}

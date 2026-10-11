@@ -53,6 +53,8 @@ export interface PrimaryTabRequestContext {
   proxyMode?: 'inherit' | 'direct' | 'corsproxy' | 'allorigins' | 'custom'
   customProxyUrl?: string
   captures?: CaptureRule[]
+  /** Spatial Flow graph owned by this Level 1 tab (FlowGraph). */
+  flowGraph?: unknown
 }
 
 export interface PrimaryTabState {

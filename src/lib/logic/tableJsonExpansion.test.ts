@@ -311,11 +311,12 @@ describe('tableJsonExpansion', () => {
     })
 
     test('sortJsonWithExpansion sorts by primitive array first element', () => {
-      // Row 1 has ['tag1'], Row 0 has ['tag2']. tag1 comes before tag2.
+      // Row 0 tags are sorted to ['group2','tag2'], row 1 has ['tag1']. group2 comes before tag1.
       const patchAsc = sortJsonWithExpansion(primitiveArrayData, [], ['tags'], 1)
       const sortedAsc = (patchAsc[0] as JSONPatchReplace).value as typeof primitiveArrayData
-      expect(sortedAsc[0].id).toBe(2)
-      expect(sortedAsc[1].id).toBe(1)
+      expect(sortedAsc[0].id).toBe(1)
+      expect(sortedAsc[0].tags).toEqual(['group2', 'tag2'])
+      expect(sortedAsc[1].id).toBe(2)
     })
   })
 

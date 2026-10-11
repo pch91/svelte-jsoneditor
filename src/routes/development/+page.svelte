@@ -380,6 +380,27 @@
     activePrimary.requestState.customProxyUrl = reqCustomProxyUrl
     activePrimary.requestState.captures = reqCaptures
   }
+
+  // Spatial Flow graph is stored per Level 1 tab (like the form request state).
+  let flowOwnerState: unknown = undefined
+  $: if (activePrimary) {
+    const rs = activePrimary.requestState
+    if (rs !== flowOwnerState) {
+      flowOwnerState = rs
+      if (rs.flowGraph) {
+        $flowGraphStore = rs.flowGraph as FlowGraph
+      } else if (!primaryTabs.some((p) => p.requestState.flowGraph)) {
+        // Legacy / first load: adopt the existing global graph for this tab
+        rs.flowGraph = $flowGraphStore
+      } else {
+        const fresh = createDefaultFlowGraph()
+        rs.flowGraph = fresh
+        $flowGraphStore = fresh
+      }
+    } else {
+      rs.flowGraph = $flowGraphStore
+    }
+  }
   let reqActiveTab: 'params' | 'headers' | 'body' | 'auth' | 'captures' | 'env' = 'params'
   let reqParams: QueryParam[] = []
   let reqHeaderRows: HeaderRow[] = []
@@ -1825,7 +1846,11 @@
   function applyWorkspaceBundle(bundle: WorkspaceBundle) {
     fileHandles.clear()
     applyWorkspace(bundle.workspace)
-    if (bundle.flowGraph) $flowGraphStore = bundle.flowGraph
+    if (bundle.flowGraph) {
+      $flowGraphStore = bundle.flowGraph
+      const activeP = primaryTabs.find((p) => p.id === activePrimaryTabId) ?? primaryTabs[0]
+      if (activeP && !activeP.requestState.flowGraph) activeP.requestState.flowGraph = bundle.flowGraph
+    }
     if (bundle.environments) $environments = bundle.environments
     if (bundle.globalEnvironment) $globalEnvironment = bundle.globalEnvironment
     if (bundle.activeEnvName !== undefined) $activeEnvName = bundle.activeEnvName

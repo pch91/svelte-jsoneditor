@@ -38,6 +38,7 @@ export interface StoredPrimaryTab {
     body: string
     bodyType: 'none' | 'json' | 'text'
     sendMode: 'same' | 'new'
+    flowGraph?: unknown
   }
 }
 
