@@ -136,6 +136,13 @@
   export let onExtract: OnExtract | undefined = onExtractDefault
   export let onEditWithPreview: OnEditWithPreview | undefined = onEditWithPreviewDefault
   export let onEditNestedContent: OnEditNestedContent | undefined = onEditNestedContentDefault
+  export let compareDocuments: Array<{ id: number | string; title: string; content: Content }> = []
+  export let compareTargetId: number | string | undefined = undefined
+  export let onSelectTargetDocument: ((targetId: number | string) => void) | undefined = undefined
+  export let draggedSubTabId: number | undefined = undefined
+  export let onUpdateTargetDocument:
+    | ((targetId: number | string, newContent: Content) => void)
+    | undefined = undefined
 
   let instanceId = uniqueId()
   let hasFocus = false
@@ -421,6 +428,21 @@
         case 'onEditNestedContent':
           onEditNestedContent = props[name] ?? onEditNestedContentDefault
           break
+        case 'compareDocuments':
+          compareDocuments = props[name] ?? []
+          break
+        case 'compareTargetId':
+          compareTargetId = props[name]
+          break
+        case 'onSelectTargetDocument':
+          onSelectTargetDocument = props[name]
+          break
+        case 'draggedSubTabId':
+          draggedSubTabId = props[name]
+          break
+        case 'onUpdateTargetDocument':
+          onUpdateTargetDocument = props[name]
+          break
 
         default:
           // We should never reach this default case
@@ -631,6 +653,11 @@
         {onExtract}
         {onEditWithPreview}
         {onEditNestedContent}
+        {compareDocuments}
+        {compareTargetId}
+        {onSelectTargetDocument}
+        {draggedSubTabId}
+        {onUpdateTargetDocument}
       />
     {/key}
   </div>

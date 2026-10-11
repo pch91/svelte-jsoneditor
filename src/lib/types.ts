@@ -41,7 +41,14 @@ export interface VisibleSection {
 export enum Mode {
   text = 'text',
   tree = 'tree',
-  table = 'table'
+  table = 'table',
+  compare = 'compare'
+}
+
+export interface CompareDocumentItem {
+  id: number | string
+  title: string
+  content: Content
 }
 
 export enum SelectionType {
@@ -639,6 +646,11 @@ export interface JSONEditorPropsOptional {
   onExtract?: OnExtract
   onEditWithPreview?: OnEditWithPreview
   onEditNestedContent?: OnEditNestedContent
+  compareDocuments?: CompareDocumentItem[]
+  compareTargetId?: number | string
+  onSelectTargetDocument?: (targetId: number | string) => void
+  onUpdateTargetDocument?: (targetId: number | string, newContent: Content) => void
+  draggedSubTabId?: number
 }
 
 export interface JSONEditorModalProps {

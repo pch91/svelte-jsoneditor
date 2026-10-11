@@ -2023,13 +2023,19 @@
                       ? getVisualCellValue(json, vRow, vCol)
                       : getIn(item, vCol.parentPath)}
                   {@const cellPath = isExpandedView
-                    ? vCol.isExpandedSubColumn && vCol.isArrayElement && vCol.subKey
-                      ? [
-                          String(rowIndex),
-                          ...vCol.parentPath,
-                          String(vRow.subRowIndex),
-                          vCol.subKey
-                        ]
+                    ? vCol.isExpandedSubColumn && vCol.isArrayElement
+                      ? vCol.subKey && !vCol.isPrimitiveArray
+                        ? [
+                            String(rowIndex),
+                            ...vCol.parentPath,
+                            String(vRow.subRowIndex),
+                            vCol.subKey
+                          ]
+                        : [
+                            String(rowIndex),
+                            ...vCol.parentPath,
+                            String(vRow.subRowIndex)
+                          ]
                       : [String(rowIndex), ...vCol.fullPath]
                     : [String(rowIndex), ...vCol.parentPath]}
                   {@const isSelected =

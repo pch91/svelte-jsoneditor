@@ -112,7 +112,7 @@
 
   {#if sortDirection !== undefined}
     <span class="jse-column-sort-icon" title={`Currently sorted in ${sortDirectionName} order`}>
-      <Icon data={sortDirection === SortDirection.asc ? faCaretDown : faCaretUp} />
+      <Icon data={sortDirection === SortDirection.asc ? faCaretUp : faCaretDown} />
     </span>
   {/if}
 </button>

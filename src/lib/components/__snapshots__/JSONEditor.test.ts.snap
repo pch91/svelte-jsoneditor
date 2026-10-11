@@ -46,13 +46,25 @@ exports[`JSONEditor > render table mode 1`] = `
         
         <!---->
         <button
-          class="jse-button jse-group-button jse-last jse-selected svelte-3erbu0"
+          class="jse-button jse-group-button  jse-selected svelte-3erbu0"
           title="Switch to table mode (current mode: table)"
           type="button"
         >
           <!---->
            
           table
+          <!---->
+        </button>
+        
+        <!---->
+        <button
+          class="jse-button jse-group-button jse-last svelte-3erbu0"
+          title="Switch to compare mode (current mode: table)"
+          type="button"
+        >
+          <!---->
+           
+          compare
           <!---->
         </button>
         
@@ -672,13 +684,25 @@ exports[`JSONEditor > render text mode 1`] = `
         
         <!---->
         <button
-          class="jse-button jse-group-button jse-last svelte-3erbu0"
+          class="jse-button jse-group-button  svelte-3erbu0"
           title="Switch to table mode (current mode: text)"
           type="button"
         >
           <!---->
            
           table
+          <!---->
+        </button>
+        
+        <!---->
+        <button
+          class="jse-button jse-group-button jse-last svelte-3erbu0"
+          title="Switch to compare mode (current mode: text)"
+          type="button"
+        >
+          <!---->
+           
+          compare
           <!---->
         </button>
         
@@ -1408,13 +1432,25 @@ exports[`JSONEditor > render tree mode 1`] = `
         
         <!---->
         <button
-          class="jse-button jse-group-button jse-last svelte-3erbu0"
+          class="jse-button jse-group-button  svelte-3erbu0"
           title="Switch to table mode (current mode: tree)"
           type="button"
         >
           <!---->
            
           table
+          <!---->
+        </button>
+        
+        <!---->
+        <button
+          class="jse-button jse-group-button jse-last svelte-3erbu0"
+          title="Switch to compare mode (current mode: tree)"
+          type="button"
+        >
+          <!---->
+           
+          compare
           <!---->
         </button>
         

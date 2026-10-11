@@ -421,7 +421,7 @@ describe('operations', () => {
 
       assert.deepStrictEqual(updatedOperations, [
         { op: 'add', path: '/nested', value: {} },
-        { op: 'replace', path: '/nested/value', value: 42 }
+        { op: 'add', path: '/nested/value', value: 42 }
       ])
     })
 
@@ -435,7 +435,7 @@ describe('operations', () => {
 
       assert.deepStrictEqual(updatedOperations, [
         { op: 'add', path: '/2/nested', value: {} },
-        { op: 'replace', path: '/2/nested/value', value: 42 }
+        { op: 'add', path: '/2/nested/value', value: 42 }
       ])
     })
 
@@ -450,12 +450,20 @@ describe('operations', () => {
       assert.deepStrictEqual(updatedOperations, [
         { op: 'add', path: '/deep', value: {} },
         { op: 'add', path: '/deep/nested', value: {} },
-        { op: 'replace', path: '/deep/nested/value', value: 42 }
+        { op: 'add', path: '/deep/nested/value', value: 42 }
       ])
     })
 
-    test('should not create parent objects when already existing', () => {
-      const json = { deep: { nested: {} } }
+    test('should convert replace to add when property is missing in an existing object', () => {
+      const json = [{ id: 1 }]
+      const operations: JSONPatchOperation[] = [{ op: 'replace', path: '/0/name', value: 'Alice' }]
+      const updatedOperations = createNestedValueOperations(operations, json)
+
+      assert.deepStrictEqual(updatedOperations, [{ op: 'add', path: '/0/name', value: 'Alice' }])
+    })
+
+    test('should not change op to add when property already exists', () => {
+      const json = { deep: { nested: { value: 10 } } }
 
       const operations: JSONPatchOperation[] = [
         { op: 'replace', path: '/deep/nested/value', value: 42 }

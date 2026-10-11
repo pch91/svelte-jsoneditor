@@ -76,4 +76,25 @@ describe('JSONEditor', () => {
     expect(getByText(target, 'Joe')).toHaveClass('jse-value', 'jse-string')
     expect(target).toMatchSnapshot()
   })
+
+  test('render compare mode with document selection and target drop zone', () => {
+    const target = document.createElement('div')
+
+    mount(JSONEditor, {
+      target,
+      props: {
+        mode: Mode.compare,
+        content: { json: { name: 'Doc A', version: 1 } },
+        compareDocuments: [
+          { id: 2, title: 'Doc B', content: { json: { name: 'Doc B', version: 2 } } },
+          { id: 3, title: 'Doc C', content: { json: { name: 'Doc C', version: 3 } } }
+        ]
+      }
+    })
+
+    const main = target.getElementsByClassName('jse-main')[0]
+    expect(main.children[0]).toHaveClass('jse-compare-mode')
+    expect(target.querySelector('.target-quick-pills')).not.toBeNull()
+    expect(target.querySelector('.target-drop-zone')).not.toBeNull()
+  })
 })

@@ -1,5 +1,5 @@
 import type { JSONPatchOperation, JSONPatchReplace, JSONPath } from 'immutable-json-patch'
-import { compileJSONPointer, getIn, parseJSONPointer } from 'immutable-json-patch'
+import { compileJSONPointer, getIn, parseJSONPointer, setIn } from 'immutable-json-patch'
 import { stringifyJSONPath } from '$lib/utils/pathUtils.js'
 import { isObjectOrArray } from '$lib/utils/typeUtils.js'
 import { caseInsensitiveNaturalCompare, sortJson } from './sort.js'
@@ -13,6 +13,7 @@ export interface VisualColumn {
   parentName?: string
   isExpandedSubColumn: boolean
   isArrayElement: boolean
+  isPrimitiveArray?: boolean
   isStringJson: boolean
   colorIndex?: number
 }
@@ -88,6 +89,7 @@ export function isColumnExpandable(
 export interface SubColumnsInfo {
   subKeys: string[]
   isArray: boolean
+  isPrimitiveArray: boolean
   isStringJson: boolean
 }
 
@@ -102,9 +104,11 @@ export function getSubColumnsInfo(
   const keysSet = new Set<string>()
   let isArray = false
   let isStringJson = false
+  let hasObjectElements = false
+  let hasPrimitiveElements = false
 
   if (!Array.isArray(json)) {
-    return { subKeys: [], isArray: false, isStringJson: false }
+    return { subKeys: [], isArray: false, isPrimitiveArray: false, isStringJson: false }
   }
 
   const step = Math.max(1, Math.floor(json.length / maxSampleCount))
@@ -120,9 +124,12 @@ export function getSubColumnsInfo(
       isArray = true
       for (const item of val) {
         if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+          hasObjectElements = true
           for (const k of Object.keys(item)) {
             keysSet.add(k)
           }
+        } else if (item !== undefined) {
+          hasPrimitiveElements = true
         }
       }
     } else if (val !== null && typeof val === 'object') {
@@ -132,9 +139,12 @@ export function getSubColumnsInfo(
     }
   }
 
+  const isPrimitiveArray = isArray && (!hasObjectElements || keysSet.size === 0)
+
   return {
     subKeys: Array.from(keysSet),
     isArray,
+    isPrimitiveArray,
     isStringJson
   }
 }
@@ -157,7 +167,21 @@ export function buildVisualColumns(
       const parentName = col.length > 0 ? stringifyJSONPath(col) : 'value'
       const assignedColor = colorIdx++
 
-      if (info.subKeys.length > 0) {
+      if (info.isPrimitiveArray) {
+        result.push({
+          id: `${colKey}/*`,
+          parentPath: col,
+          subKey: undefined,
+          fullPath: col,
+          displayName: 'value',
+          parentName,
+          isExpandedSubColumn: true,
+          isArrayElement: true,
+          isPrimitiveArray: true,
+          isStringJson: info.isStringJson,
+          colorIndex: assignedColor
+        })
+      } else if (info.subKeys.length > 0) {
         for (const subKey of info.subKeys) {
           result.push({
             id: `${colKey}/${subKey}`,
@@ -168,6 +192,7 @@ export function buildVisualColumns(
             parentName,
             isExpandedSubColumn: true,
             isArrayElement: info.isArray,
+            isPrimitiveArray: false,
             isStringJson: info.isStringJson,
             colorIndex: assignedColor
           })
@@ -181,6 +206,7 @@ export function buildVisualColumns(
           displayName: parentName,
           isExpandedSubColumn: false,
           isArrayElement: false,
+          isPrimitiveArray: false,
           isStringJson: false
         })
       }
@@ -193,6 +219,7 @@ export function buildVisualColumns(
         displayName: colName,
         isExpandedSubColumn: false,
         isArrayElement: false,
+        isPrimitiveArray: false,
         isStringJson: false
       })
     }
@@ -268,8 +295,14 @@ export function getVisualCellValue(
   if (visualColumn.isArrayElement) {
     if (Array.isArray(parsed)) {
       const elem = parsed[visualRow.subRowIndex]
-      if (elem !== null && typeof elem === 'object' && visualColumn.subKey) {
+      if (visualColumn.isPrimitiveArray || !visualColumn.subKey) {
+        return elem
+      }
+      if (elem !== null && typeof elem === 'object') {
         return (elem as Record<string, unknown>)[visualColumn.subKey]
+      }
+      if (visualColumn.subKey === 'value') {
+        return elem
       }
     }
     return undefined
@@ -303,7 +336,7 @@ export function createVisualCellPatch(
 
   const rawVal = getIn(json[visualRow.originalRowIndex], visualColumn.parentPath)
   const { parsed, isStringJson } = tryParseJson(rawVal)
-  const subKey = visualColumn.subKey!
+  const subKey = visualColumn.subKey
 
   if (isStringJson) {
     // Preserve string type: update internal property and serialize back
@@ -311,26 +344,32 @@ export function createVisualCellPatch(
     try {
       cloned = JSON.parse(JSON.stringify(parsed))
     } catch {
-      cloned = {}
+      cloned = visualColumn.isArrayElement ? [] : {}
     }
 
     if (visualColumn.isArrayElement) {
       if (!Array.isArray(cloned)) {
         cloned = []
       }
-      const arr = cloned as Record<string, unknown>[]
+      const arr = cloned as unknown[]
       while (arr.length <= visualRow.subRowIndex) {
-        arr.push({})
+        arr.push(visualColumn.isPrimitiveArray ? null : {})
       }
-      if (typeof arr[visualRow.subRowIndex] !== 'object' || arr[visualRow.subRowIndex] === null) {
-        arr[visualRow.subRowIndex] = {}
+      if (visualColumn.isPrimitiveArray || !subKey) {
+        arr[visualRow.subRowIndex] = newValue
+      } else {
+        if (typeof arr[visualRow.subRowIndex] !== 'object' || arr[visualRow.subRowIndex] === null) {
+          arr[visualRow.subRowIndex] = {}
+        }
+        ;(arr[visualRow.subRowIndex] as Record<string, unknown>)[subKey] = newValue
       }
-      arr[visualRow.subRowIndex][subKey] = newValue
     } else {
       if (typeof cloned !== 'object' || cloned === null || Array.isArray(cloned)) {
         cloned = {}
       }
-      ;(cloned as Record<string, unknown>)[subKey] = newValue
+      if (subKey) {
+        ;(cloned as Record<string, unknown>)[subKey] = newValue
+      }
     }
 
     return {
@@ -341,20 +380,32 @@ export function createVisualCellPatch(
   } else {
     // Native JSON object or array
     if (visualColumn.isArrayElement) {
-      return {
-        op: 'replace',
-        path: compileJSONPointer([
-          rowPathStr,
-          ...visualColumn.parentPath,
-          String(visualRow.subRowIndex),
-          subKey
-        ]),
-        value: newValue
+      if (visualColumn.isPrimitiveArray || !subKey) {
+        return {
+          op: 'replace',
+          path: compileJSONPointer([
+            rowPathStr,
+            ...visualColumn.parentPath,
+            String(visualRow.subRowIndex)
+          ]),
+          value: newValue
+        }
+      } else {
+        return {
+          op: 'replace',
+          path: compileJSONPointer([
+            rowPathStr,
+            ...visualColumn.parentPath,
+            String(visualRow.subRowIndex),
+            subKey
+          ]),
+          value: newValue
+        }
       }
     } else {
       return {
         op: 'replace',
-        path: compileJSONPointer([rowPathStr, ...visualColumn.parentPath, subKey]),
+        path: compileJSONPointer([rowPathStr, ...visualColumn.parentPath, subKey!]),
         value: newValue
       }
     }
@@ -435,7 +486,11 @@ export function transformOperationsForStringJson(
  * Extracts the scalar value for sorting from a row, traversing
  * nested objects, arrays, and stringified JSON.
  */
-export function getRowSortValue(row: unknown, path: JSONPath): unknown {
+export function getRowSortValue(
+  row: unknown,
+  path: JSONPath,
+  direction: 1 | -1 = 1
+): unknown {
   if (row === null || typeof row !== 'object') {
     return undefined
   }
@@ -465,18 +520,23 @@ export function getRowSortValue(row: unknown, path: JSONPath): unknown {
       if (!isNaN(idx)) {
         current = parsed[idx]
       } else {
-        // segment is a property of the array elements (e.g. path is ['configuracao', 'tema'])
-        let found: unknown = undefined
+        // segment is a property of the array elements (e.g. path is ['orders', 'amount'])
+        const remainingPath = path.slice(i)
+        const candidates: unknown[] = []
         for (const item of parsed) {
-          if (item !== null && typeof item === 'object') {
-            const val = (item as Record<string, unknown>)[segment]
-            if (val !== undefined) {
-              found = val
-              break
-            }
+          const val = getRowSortValue(item, remainingPath, direction)
+          if (val !== undefined && val !== null) {
+            candidates.push(val)
           }
         }
-        current = found
+        if (candidates.length === 0) return undefined
+
+        // Pick best candidate according to direction:
+        // For asc (direction = 1): pick min (first in asc sort)
+        // For desc (direction = -1): pick max (first in desc sort)
+        const comp = createExpandedRowComparator([], direction)
+        candidates.sort(comp)
+        return candidates[0]
       }
     } else if (parsed !== null && typeof parsed === 'object') {
       current = (parsed as Record<string, unknown>)[segment]
@@ -486,19 +546,37 @@ export function getRowSortValue(row: unknown, path: JSONPath): unknown {
   }
 
   const { parsed: finalVal } = tryParseJson(current)
+  if (Array.isArray(finalVal)) {
+    if (finalVal.length === 0) return undefined
+    const comp = createExpandedRowComparator([], direction)
+    const sorted = finalVal.slice().sort(comp)
+    return sorted[0]
+  }
   return finalVal
 }
 
 /**
  * Creates a comparator that compares rows by any path (including expanded sub-columns).
  */
-export function createExpandedRowComparator(propertyPath: JSONPath, direction: 1 | -1) {
-  const sortableTypes: Record<string, number> = { boolean: 0, number: 1, string: 2, undefined: 4 }
+export function createExpandedRowComparator(
+  propertyPath: JSONPath,
+  direction: 1 | -1,
+  directionForValue: 1 | -1 = direction
+) {
+  const sortableTypes: Record<string, number> = { boolean: 0, number: 1, string: 2 }
   const otherTypes = 3
 
   return function comparator(a: unknown, b: unknown) {
-    const valueA = getRowSortValue(a, propertyPath)
-    const valueB = getRowSortValue(b, propertyPath)
+    const valueA = getRowSortValue(a, propertyPath, directionForValue)
+    const valueB = getRowSortValue(b, propertyPath, directionForValue)
+
+    // Handle undefined / null: always place at the end, regardless of sort direction
+    if (valueA === undefined || valueA === null) {
+      return valueB === undefined || valueB === null ? 0 : 1
+    }
+    if (valueB === undefined || valueB === null) {
+      return -1
+    }
 
     // Order mixed types
     if (typeof valueA !== typeof valueB) {
@@ -538,12 +616,61 @@ export function sortJsonWithExpansion(
   const target = getIn(json, rootPath)
 
   if (Array.isArray(target)) {
+    let clonedTarget: unknown[]
+    try {
+      clonedTarget = JSON.parse(JSON.stringify(target))
+    } catch {
+      clonedTarget = target.slice(0)
+    }
+
+    // 1. If itemPath traverses into an array property, sort each row's nested array first
+    let arrayPrefixIndex = -1
+    for (let i = 0; i < itemPath.length; i++) {
+      const prefix = itemPath.slice(0, i + 1)
+      for (const row of clonedTarget) {
+        if (row !== null && typeof row === 'object') {
+          const raw = getIn(row, prefix)
+          const { parsed } = tryParseJson(raw)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            arrayPrefixIndex = i
+            break
+          }
+        }
+      }
+      if (arrayPrefixIndex !== -1) break
+    }
+
+    if (arrayPrefixIndex !== -1) {
+      const prefixPath = itemPath.slice(0, arrayPrefixIndex + 1)
+      const subItemPath = itemPath.slice(arrayPrefixIndex + 1)
+      const subComparator = createExpandedRowComparator(subItemPath, direction)
+
+      for (let r = 0; r < clonedTarget.length; r++) {
+        const row = clonedTarget[r]
+        if (row !== null && typeof row === 'object') {
+          const rawVal = getIn(row, prefixPath)
+          const { parsed, isStringJson } = tryParseJson(rawVal)
+          if (Array.isArray(parsed)) {
+            const sortedArray = parsed.slice().sort(subComparator)
+            if (isStringJson) {
+              clonedTarget[r] = setIn(clonedTarget[r], prefixPath, JSON.stringify(sortedArray))
+            } else {
+              clonedTarget[r] = setIn(clonedTarget[r], prefixPath, sortedArray)
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Sort the parent rows
     const comparator = createExpandedRowComparator(itemPath, direction)
+    clonedTarget.sort(comparator)
+
     return [
       {
         op: 'replace',
         path: compileJSONPointer(rootPath),
-        value: target.slice(0).sort(comparator)
+        value: clonedTarget
       }
     ]
   }

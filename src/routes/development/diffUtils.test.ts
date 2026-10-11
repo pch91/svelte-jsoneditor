@@ -3,7 +3,12 @@ import {
   computeDiffPaths,
   contentToValue,
   jsonPathToPointer,
-  matchesDiffPath
+  matchesDiffPath,
+  detectIdentityKey,
+  alignObjectProperties,
+  alignArrayItems,
+  computeSemanticDiffReport,
+  applyMergeChunk
 } from './diffUtils.js'
 import type { Content } from '$lib/types.js'
 
@@ -80,6 +85,136 @@ describe('diffUtils', () => {
 
     it('returns undefined for missing content', () => {
       expect(contentToValue(undefined)).toBeUndefined()
+    })
+  })
+
+  describe('detectIdentityKey', () => {
+    it('detects common identity keys in array of objects', () => {
+      const items = [
+        { id: '101', name: 'Alpha' },
+        { id: '102', name: 'Beta' }
+      ]
+      expect(detectIdentityKey(items)).toBe('id')
+    })
+
+    it('detects _id or uuid or code', () => {
+      expect(detectIdentityKey([{ uuid: 'abc' }, { uuid: 'def' }])).toBe('uuid')
+      expect(detectIdentityKey([{ code: 'US' }, { code: 'BR' }])).toBe('code')
+    })
+
+    it('returns null for primitives or empty arrays', () => {
+      expect(detectIdentityKey([1, 2, 3])).toBeNull()
+      expect(detectIdentityKey([])).toBeNull()
+    })
+  })
+
+  describe('alignObjectProperties', () => {
+    it('aligns matching and missing properties sorted alphabetically', () => {
+      const source = { a: 1, c: 3 }
+      const target = { a: 1, b: 2, c: 99 }
+      const aligned = alignObjectProperties(source, target)
+
+      expect(aligned).toEqual([
+        {
+          key: 'a',
+          hasSource: true,
+          hasTarget: true,
+          sourceValue: 1,
+          targetValue: 1,
+          status: 'same'
+        },
+        {
+          key: 'b',
+          hasSource: false,
+          hasTarget: true,
+          sourceValue: undefined,
+          targetValue: 2,
+          status: 'added'
+        },
+        {
+          key: 'c',
+          hasSource: true,
+          hasTarget: true,
+          sourceValue: 3,
+          targetValue: 99,
+          status: 'modified'
+        }
+      ])
+    })
+  })
+
+  describe('alignArrayItems', () => {
+    it('matches array objects by id and detects reordering', () => {
+      const source = [
+        { id: '1', val: 'one' },
+        { id: '2', val: 'two' }
+      ]
+      const target = [
+        { id: '2', val: 'two' },
+        { id: '1', val: 'one' }
+      ]
+      const aligned = alignArrayItems(source, target, true)
+      expect(aligned.length).toBe(2)
+      expect(aligned[0].status).toBe('reordered')
+      expect(aligned[1].status).toBe('reordered')
+    })
+
+    it('handles additions and removals in array items', () => {
+      const source = [{ id: '1', val: 'one' }]
+      const target = [{ id: '2', val: 'two' }]
+      const aligned = alignArrayItems(source, target, true)
+      expect(aligned.some((item) => item.status === 'added')).toBe(true)
+      expect(aligned.some((item) => item.status === 'removed')).toBe(true)
+    })
+  })
+
+  describe('computeSemanticDiffReport', () => {
+    it('produces diff report with similarity percentage and categorized chunks', () => {
+      const source = {
+        title: 'App',
+        version: 1,
+        tags: ['editor', 'json']
+      }
+      const target = {
+        title: 'App Pro',
+        version: 1,
+        tags: ['editor', 'json', 'diff'],
+        author: 'John'
+      }
+
+      const report = computeSemanticDiffReport(source, target)
+      expect(report.stats.added).toBeGreaterThan(0) // author, 'diff' tag
+      expect(report.stats.modified).toBeGreaterThan(0) // title
+      expect(report.stats.similarityPercent).toBeGreaterThan(0)
+      expect(report.stats.similarityPercent).toBeLessThan(100)
+      expect(report.chunkByPath['/title']).toBeDefined()
+    })
+  })
+
+  describe('applyMergeChunk', () => {
+    it('pulls source chunk into target to merge a modification', () => {
+      const source = { title: 'App Original', count: 10 }
+      const target = { title: 'App Modified', count: 10 }
+      const report = computeSemanticDiffReport(source, target)
+      const chunk = report.chunks.find((c) => c.path === '/title')!
+
+      // Pull from source into target
+      const mergedTarget = applyMergeChunk(target, chunk, 'sourceToTarget') as typeof target
+      expect(mergedTarget.title).toBe('App Original')
+    })
+
+    it('pulls target chunk into source to merge an addition', () => {
+      const source: Record<string, unknown> = { a: 1 }
+      const target: Record<string, unknown> = { a: 1, b: 2 }
+      const report = computeSemanticDiffReport(source, target)
+      const chunk = report.chunks.find((c) => c.path === '/b')!
+
+      // Pull target into source
+      const mergedSource = applyMergeChunk(source, chunk, 'targetToSource') as Record<
+        string,
+        unknown
+      >
+      expect(mergedSource.b).toBe(2)
     })
   })
 })

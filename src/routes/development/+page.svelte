@@ -50,10 +50,12 @@
   import CommandPalette from './components/CommandPalette.svelte'
   import FolderTree from './components/FolderTree.svelte'
   import TabContextMenu from './components/TabContextMenu.svelte'
+  import EditorSettingsPopover from './components/EditorSettingsPopover.svelte'
   import CurlImportModal from './components/CurlImportModal.svelte'
   import FlowCanvas from './components/FlowCanvas.svelte'
   import EnvironmentManagerModal from './components/EnvironmentManagerModal.svelte'
   import CapturePathsTable from './components/CapturePathsTable.svelte'
+  import { tabScrollStrip } from './tabScrollAction.js'
   import {
     type FlowGraph,
     type FlowNode,
@@ -400,6 +402,10 @@
     createDefaultFlowGraph()
   )
 
+  $: flowRequestsCount = ((($flowGraphStore as FlowGraph)?.nodes ?? []) as FlowNode[]).filter(
+    (n: FlowNode) => n.type === 'rest' || (!n.type && !!n.restData)
+  ).length
+
   const chainOpen = useLocalStorage('svelte-jsoneditor-demo-chain-open', true)
   const historyOpen = useLocalStorage('svelte-jsoneditor-demo-history-open', true)
   const sidebarAdvancedOpen = useLocalStorage('svelte-jsoneditor-demo-sidebar-advanced', false)
@@ -424,6 +430,66 @@
   const activeEnvName = useLocalStorage('svelte-jsoneditor-demo-active-env', '')
   const globalEnvironment = useLocalStorage('svelte-jsoneditor-demo-global-env', {})
   let envManagerOpen = false
+  let settingsPopoverOpen = false
+
+  function handleUpdateTargetDocument(targetId: string | number, newContent: Content) {
+    const idx = getTabIdx(Number(targetId))
+    if (idx >= 0) {
+      tabContents[idx] = newContent
+      tabContents = [...tabContents]
+      bumpRevision(idx)
+      scheduleAutosave()
+    }
+  }
+
+  // Active comparison document targets mapped by source subTabId
+  let tabCompareTargets = new Map<number, number | string>()
+
+  function handleSelectTargetDocument(sourceSubTabId: number, targetId: number | string) {
+    tabCompareTargets.set(sourceSubTabId, targetId)
+    tabCompareTargets = new Map(tabCompareTargets)
+    tabsRenderVersion++
+    scheduleAutosave()
+  }
+
+  function getCompareTargetForSubTab(
+    sourceSubTabId: number,
+    _targetsMap?: Map<number, number | string>
+  ): number | string | undefined {
+    if (tabCompareTargets.has(sourceSubTabId)) {
+      return tabCompareTargets.get(sourceSubTabId)
+    }
+    const prim = primaryTabs.find((p) => p.subTabIds.includes(sourceSubTabId))
+    const other = prim?.subTabIds.find((id) => id !== sourceSubTabId)
+    return other
+  }
+
+  function getSubTabCompareInfo(
+    subTabId: number,
+    idx: number,
+    allPaneSubTabs: Array<{ subTabId: number; idx: number; meta?: SubTabState }>,
+    _targetsMap?: Map<number, number | string>,
+    _modes?: Mode[],
+    _titles?: string[]
+  ) {
+    const isSource = tabModes[idx] === Mode.compare
+    const targetId = isSource ? getCompareTargetForSubTab(subTabId, _targetsMap) : undefined
+    const targetIdx =
+      targetId !== undefined && targetId !== '__custom__' ? getTabIdx(Number(targetId)) : -1
+    const targetTitle =
+      targetIdx >= 0 ? tabTitles[targetIdx] : targetId === '__custom__' ? 'Custom JSON' : 'Target'
+
+    const sourceOfThis = allPaneSubTabs.find(
+      (other) =>
+        other.subTabId !== subTabId &&
+        tabModes[other.idx] === Mode.compare &&
+        String(getCompareTargetForSubTab(other.subTabId, _targetsMap)) === String(subTabId)
+    )
+    const isTarget = !!sourceOfThis
+    const sourceTitle = sourceOfThis ? tabTitles[sourceOfThis.idx] : 'Source'
+
+    return { isSource, isTarget, targetTitle, sourceTitle }
+  }
 
   /**
    * Pre-registered example chain (Rick and Morty API):
@@ -835,6 +901,13 @@
     const { updatedPrimary } = removeSubTabFromPrimary(primary, subTabId)
     primaryTabs = primaryTabs.map((p) => (p.id === updatedPrimary.id ? updatedPrimary : p))
     subTabsMeta.delete(subTabId)
+    tabCompareTargets.delete(subTabId)
+    for (const [srcId, tgtId] of tabCompareTargets.entries()) {
+      if (String(tgtId) === String(subTabId)) {
+        tabCompareTargets.delete(srcId)
+      }
+    }
+    tabCompareTargets = new Map(tabCompareTargets)
     closeTab(subTabId)
     tabsRenderVersion++
     selectSubTabInPane(leafId, updatedPrimary, updatedPrimary.activeSubTabId)
@@ -1314,9 +1387,12 @@
   function onSubTabDragStart(e: DragEvent, subTabId: number) {
     draggedTabId = subTabId
     tabDragActive = true
-    e.dataTransfer!.setData('text/plain', String(subTabId))
-    e.dataTransfer!.setData('application/x-subtab-id', String(subTabId))
-    e.dataTransfer!.effectAllowed = 'move'
+    if (e.dataTransfer) {
+      e.dataTransfer.setData('text/plain', String(subTabId))
+      e.dataTransfer.setData('application/x-subtab-id', String(subTabId))
+      e.dataTransfer.setData('application/x-jse-subtab', JSON.stringify({ subTabId }))
+      e.dataTransfer.effectAllowed = 'copyMove'
+    }
   }
 
   function onSubTabDragOver(e: DragEvent, targetSubId: number) {
@@ -1882,6 +1958,7 @@
     if (tabModes[i] !== m) {
       tabModes[i] = m
       tabModes = [...tabModes]
+      tabsRenderVersion++
       scheduleAutosave()
     }
   }
@@ -2243,6 +2320,27 @@
   function loadSample(name: string) {
     const samples: Record<string, Content> = {
       array: { json: [1, 2, 3, 4, 5], text: undefined },
+      tags: {
+        json: [
+          { id: 1, score: 84, tags: ['tag2', 'group2'], city: 'Porto' },
+          { id: 2, score: 95, tags: ['tag1'], city: 'Lisboa' },
+          { id: 3, score: 72, tags: ['tag2', 'group1', 'extra'], city: 'Coimbra' }
+        ],
+        text: undefined
+      },
+      customers: {
+        json: [
+          { id: 1003, name: 'Pedro Almeida', email: 'pedro.almeida@example.com', active: false, address: { city: 'Braga', country: 'PT', postalCode: '4700-555' }, orders: [{ id: 'ORD-5004', amount: 45.75, status: 'cancelled' }] },
+          { id: 1005, name: 'Ricardo Sousa', email: 'ricardo.sousa@example.com', active: true, address: { city: 'Aveiro', country: 'PT', postalCode: '3800-888' }, orders: [{ id: 'ORD-5007', amount: 99.99, status: 'completed' }] },
+          { id: 1001, name: 'João Silva', email: 'joao.silva@example.com', active: true, address: { city: 'Porto', country: 'PT', postalCode: '4000-001' }, orders: [{ id: 'ORD-5001', amount: 125.5, status: 'completed' }, { id: 'ORD-5002', amount: 89.9, status: 'pending' }] },
+          { id: 1008, name: 'Sofia Mendes', email: 'sofia.mendes@example.com', active: true, address: { city: 'Leiria', country: 'PT', postalCode: '2400-100' }, orders: [{ id: 'ORD-5009', amount: 149.5, status: 'pending' }, { id: 'ORD-5010', amount: 67.3, status: 'completed' }] },
+          { id: 1002, name: 'Maria Costa', email: 'maria.costa@example.com', active: true, address: { city: 'Lisboa', country: 'PT', postalCode: '1000-123' }, orders: [{ id: 'ORD-5003', amount: 250, status: 'completed' }] },
+          { id: 1007, name: 'Miguel Rocha', email: 'miguel.rocha@example.com', active: true, address: { city: 'Guimarães', country: 'PT', postalCode: '4800-333' }, orders: [{ id: 'ORD-5008', amount: 315.2, status: 'completed' }] },
+          { id: 1004, name: 'Ana Martins', email: 'ana.martins@example.com', active: true, address: { city: 'Coimbra', country: 'PT', postalCode: '3000-222' }, orders: [{ id: 'ORD-5005', amount: 700, status: 'completed' }, { id: 'ORD-5006', amount: 12.99, status: 'pending' }] },
+          { id: 1006, name: 'Carla Ferreira', email: 'carla.ferreira@example.com', active: false, address: { city: 'Faro', country: 'PT', postalCode: '8000-777' }, orders: [] }
+        ],
+        text: undefined
+      },
       object: { json: { name: 'John', age: 30, city: 'NYC' }, text: undefined },
       long: { json: range(0, 500), text: undefined },
       empty: { text: '', json: undefined },
@@ -3339,6 +3437,13 @@
       run: () => (diffMode = !diffMode)
     },
     {
+      id: 'settings',
+      group: 'Preferences',
+      label: 'Open Editor Settings & Preferences',
+      hint: '⚙',
+      run: () => (settingsPopoverOpen = true)
+    },
+    {
       id: 'problems',
       group: 'View',
       label: 'Toggle problems panel',
@@ -3350,6 +3455,12 @@
     { id: 'mode-tree', group: 'Mode', label: 'Mode: tree', run: () => setActiveMode(Mode.tree) },
     { id: 'mode-text', group: 'Mode', label: 'Mode: text', run: () => setActiveMode(Mode.text) },
     { id: 'mode-table', group: 'Mode', label: 'Mode: table', run: () => setActiveMode(Mode.table) },
+    {
+      id: 'mode-compare',
+      group: 'Mode',
+      label: 'Mode: compare',
+      run: () => setActiveMode(Mode.compare)
+    },
     ...themes.map((t) => ({
       id: `theme-${t.value}`,
       group: 'Theme',
@@ -3454,6 +3565,12 @@
       on:click={() => (showRequests = !showRequests)}
       title="Requests (HTTP client)">📡</button
     >
+    <button
+      class="tb-btn"
+      class:tb-active={settingsPopoverOpen}
+      on:click={() => (settingsPopoverOpen = !settingsPopoverOpen)}
+      title="Editor Settings & Preferences (⚙)">⚙</button
+    >
     <label class="tb-btn" title="Open file(s) — fallback" style="display:none"
       >📂<input
         type="file"
@@ -3520,64 +3637,6 @@
             >📝 Save workspace as…</button
           >
         </section>
-        <section class="sb-section">
-          <h3 class="sb-title">👁 Editor</h3>
-          <label class="sb-check" title="Prevent all editing in the document"
-            ><input type="checkbox" bind:checked={$readOnly} /> Read only</label
-          >
-          <label class="sb-check" title="Show the main menu bar at the top of the editor"
-            ><input type="checkbox" bind:checked={$mainMenuBar} /> Main menu</label
-          >
-          <label class="sb-check" title="Show the navigation bar (path of the selected item)"
-            ><input type="checkbox" bind:checked={$navigationBar} /> Navigation</label
-          >
-          <label class="sb-check" title="Show the status bar with validation info"
-            ><input type="checkbox" bind:checked={$statusBar} /> Status bar</label
-          >
-          <label class="sb-check" title="Ask confirmation before formatting the document"
-            ><input type="checkbox" bind:checked={$askToFormat} /> Ask to format</label
-          >
-        </section>
-        <button
-          class="sb-section-head"
-          on:click={() => ($sidebarAdvancedOpen = !$sidebarAdvancedOpen)}
-        >
-          <span class="sb-caret">{$sidebarAdvancedOpen ? '▾' : '▸'}</span>
-          ⚙ Advanced
-        </button>
-        {#if $sidebarAdvancedOpen}
-          <section class="sb-section">
-            <h3 class="sb-title">Validation</h3>
-            <label class="sb-check" title="Validate the document against a JSON Schema"
-              ><input type="checkbox" bind:checked={$validateDoc} /> JSON Schema</label
-            >
-            <label class="sb-check" title="Use the custom value renderer (colors, links)"
-              ><input type="checkbox" bind:checked={$customRenderer} /> Custom renderer</label
-            >
-            <label class="sb-check" title="Show two panes side by side and highlight differences"
-              ><input type="checkbox" bind:checked={diffMode} /> Compare panes (diff)</label
-            >
-          </section>
-          <section class="sb-section">
-            <h3 class="sb-title">Text</h3>
-            <label
-              class="sb-check"
-              title="Escape control characters in the rendered text (e.g. \\n)"
-              ><input type="checkbox" bind:checked={$escapeCtrl} /> Control characters</label
-            >
-            <label
-              class="sb-check"
-              title="Escape unicode characters in the rendered text (e.g. \\u00e9)"
-              ><input type="checkbox" bind:checked={$escapeUni} /> Unicode characters</label
-            >
-            <label class="sb-check" title="Flatten nested columns in table mode"
-              ><input type="checkbox" bind:checked={$flatten} /> Flat columns</label
-            >
-            <label class="sb-check" title="Allow multiple query languages at once"
-              ><input type="checkbox" bind:checked={$multiQuery} /> Multi query</label
-            >
-          </section>
-        {/if}
         <button
           class="sb-section-head"
           on:click={() => ($sidebarSamplesOpen = !$sidebarSamplesOpen)}
@@ -3588,6 +3647,8 @@
         {#if $sidebarSamplesOpen}
           <section class="sb-section">
             <button class="sb-btn" on:click={() => loadSample('array')}>Array</button>
+            <button class="sb-btn" on:click={() => loadSample('tags')}>Tags & Arrays</button>
+            <button class="sb-btn" on:click={() => loadSample('customers')}>Customers & Orders</button>
             <button class="sb-btn" on:click={() => loadSample('object')}>Object</button>
             <button class="sb-btn" on:click={() => loadSample('long')}>Long Array</button>
             <button class="sb-btn" on:click={() => loadSample('empty')}>Empty Text</button>
@@ -3627,203 +3688,246 @@
             on:drop={(e) => onPaneDrop(e, lr.leafId)}
           >
             <!-- TAB BAR LEVEL 1 (Abas Principais deste Painel) -->
-            <nav
-              class="tab-bar tab-bar-l1"
-              aria-label="Main Tabs (Level 1)"
-              on:dragover={(e) => {
-                if (draggedPrimaryId !== undefined) {
-                  e.preventDefault()
-                  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-                  dragOverLeafId = lr.leafId
-                } else if (
-                  draggedTabId !== undefined &&
-                  canPromoteSubTab(subTabsMeta.get(draggedTabId))
-                ) {
-                  e.preventDefault()
-                }
-              }}
-              on:drop={(e) => {
-                if (draggedPrimaryId !== undefined) {
-                  onPrimaryTabDrop(e, lr.leafId)
-                } else if (
-                  draggedTabId !== undefined &&
-                  canPromoteSubTab(subTabsMeta.get(draggedTabId))
-                ) {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  promoteSubTabInPane(lr.leafId, draggedTabId)
-                  onTabDragEnd()
-                }
-              }}
+            <div
+              class="tab-bar-strip tab-bar-strip-l1"
+              class:is-dragging-tab={draggedPrimaryId !== undefined || draggedTabId !== undefined}
+              use:tabScrollStrip={{ level: 1 }}
             >
-              {#each panePrimTabs as pt (pt.id)}
-                <button
-                  class="tab tab-l1"
-                  class:active={pt.id === paneActivePrim?.id}
-                  class:drag-over-before={dragOverTargetPrimaryId === pt.id &&
-                    dragOverTargetPrimaryPosition === 'before'}
-                  class:drag-over-after={dragOverTargetPrimaryId === pt.id &&
-                    dragOverTargetPrimaryPosition === 'after'}
-                  on:click={() => selectPrimaryTabInPane(lr.leafId, pt.id)}
-                  on:dblclick={() => {
-                    const n = prompt('Renomear aba principal:', pt.title)
-                    if (n) renamePrimaryTab(pt.id, n)
-                  }}
-                  on:contextmenu|preventDefault={(e) =>
-                    (tabMenu = {
-                      x: e.clientX,
-                      y: e.clientY,
-                      tabId: pt.id,
-                      type: 'primary',
-                      leafId: lr.leafId
-                    })}
-                  draggable="true"
-                  on:dragstart={(e) => onPrimaryTabDragStartInPane(e, lr.leafId, pt.id)}
-                  on:dragend={onTabDragEnd}
-                  on:dragover={(e) => onPrimaryTabDragOverInPane(e, lr.leafId, pt.id)}
-                  on:drop={(e) => onPrimaryTabDrop(e, lr.leafId, pt.id)}
-                >
-                  <span
-                    class="tab-dirty"
-                    class:dirty={pt.subTabIds.some((sid) => dirtyFlags[getTabIdx(sid)])}
-                  ></span>
-                  <span class="tab-l1-icon">📁</span>
-                  <span class="tab-label">{pt.title}</span>
-                  {#if pt.subTabIds.length > 1}
-                    <span class="tab-count-badge" title="{pt.subTabIds.length} sub-abas"
-                      >{pt.subTabIds.length}</span
-                    >
-                  {/if}
-                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                  <span
-                    class="tab-close"
-                    title="Close main tab (and its sub-tabs)"
-                    on:click|stopPropagation={() => closePrimaryTabInPane(lr.leafId, pt.id)}>×</span
-                  >
-                </button>
-              {/each}
-
-              <!-- Indicador de Mover para este Grid (mostrado na área vazia da barra ao arrastar de outro grid!) -->
-              {#if draggedPrimaryId !== undefined && draggedPrimarySourceLeafId !== lr.leafId}
-                <div
-                  class="tab-drop-move-pane"
-                  class:drag-hover={dragOverLeafId === lr.leafId &&
-                    dragOverTargetPrimaryId === undefined}
-                  on:dragover|preventDefault={(e) => {
-                    e.stopPropagation()
-                    dragOverLeafId = lr.leafId
-                    dragOverTargetPrimaryId = undefined
+              <nav
+                class="tab-bar tab-bar-l1"
+                aria-label="Main Tabs (Level 1)"
+                on:dragover={(e) => {
+                  if (draggedPrimaryId !== undefined) {
+                    e.preventDefault()
                     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-                  }}
-                  on:drop={(e) => onPrimaryTabDrop(e, lr.leafId)}
-                >
-                  <span class="tab-drop-icon">↳</span>
-                  <span>Mover para este grid</span>
-                </div>
-              {/if}
-
-              <!-- Área Azul para Subir Sub-abas para Nível 1 -->
-              {#if draggedTabId !== undefined && canPromoteSubTab(subTabsMeta.get(draggedTabId))}
-                <div
-                  class="tab-drop-promote"
-                  on:dragover|preventDefault
-                  on:drop={(e) => {
+                    dragOverLeafId = lr.leafId
+                  } else if (
+                    draggedTabId !== undefined &&
+                    canPromoteSubTab(subTabsMeta.get(draggedTabId))
+                  ) {
+                    e.preventDefault()
+                  }
+                }}
+                on:drop={(e) => {
+                  if (draggedPrimaryId !== undefined) {
+                    onPrimaryTabDrop(e, lr.leafId)
+                  } else if (
+                    draggedTabId !== undefined &&
+                    canPromoteSubTab(subTabsMeta.get(draggedTabId))
+                  ) {
                     e.preventDefault()
                     e.stopPropagation()
-                    if (draggedTabId !== undefined) {
-                      promoteSubTabInPane(lr.leafId, draggedTabId)
-                      onTabDragEnd()
-                    }
-                  }}
-                >
-                  <span class="tab-drop-promote-icon">⇡</span>
-                  <span>Drop here to move up to Level 1</span>
-                </div>
-              {/if}
-
-              <button
-                class="tab tab-add"
-                on:click={() => addPrimaryTabInPane(lr.leafId)}
-                title="Nova aba principal neste painel">+</button
+                    promoteSubTabInPane(lr.leafId, draggedTabId)
+                    onTabDragEnd()
+                  }
+                }}
               >
-            </nav>
-
-            <!-- TAB BAR LEVEL 2 (Abas Secundárias do Editor Ativo deste Painel) -->
-            <nav
-              class="tab-bar tab-bar-l2"
-              aria-label="Secondary Tabs (Level 2)"
-              on:dragover={(e) => {
-                if (draggedTabId !== undefined) {
-                  e.preventDefault()
-                  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-                }
-              }}
-              on:drop={(e) => {
-                if (paneActivePrim && draggedTabId !== undefined) {
-                  onSubTabDrop(e, paneActivePrim)
-                }
-              }}
-            >
-              {#each paneSubTabs as item (item.subTabId)}
-                <button
-                  class="tab tab-l2 tab-kind-{item.meta.kind}"
-                  class:active={item.subTabId === activeSubTabId}
-                  class:drag-over-before={dragOverTargetSubId === item.subTabId &&
-                    dragOverTargetSubPosition === 'before'}
-                  class:drag-over-after={dragOverTargetSubId === item.subTabId &&
-                    dragOverTargetSubPosition === 'after'}
-                  on:click={() => selectSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}
-                  on:dblclick={() => {
-                    const n = prompt('Renomear sub-aba:', tabTitles[item.idx])
-                    if (n) renameSubTab(item.subTabId, n)
-                  }}
-                  on:contextmenu|preventDefault={(e) =>
-                    (tabMenu = {
-                      x: e.clientX,
-                      y: e.clientY,
-                      tabId: item.subTabId,
-                      type: 'sub',
-                      leafId: lr.leafId
-                    })}
-                  draggable="true"
-                  on:dragstart={(e) => onSubTabDragStart(e, item.subTabId)}
-                  on:dragend={onTabDragEnd}
-                  on:dragover={(e) => onSubTabDragOver(e, item.subTabId)}
-                  on:drop={(e) => {
-                    if (paneActivePrim) onSubTabDrop(e, paneActivePrim, item.subTabId)
-                  }}
-                >
-                  <span class="tab-dirty" class:dirty={dirtyFlags[item.idx]}></span>
-                  <span class="tab-l2-icon" title={item.meta.kind}>
-                    {#if item.meta.kind === 'response'}⚡{:else if item.meta.kind === 'extract'}🔍{:else if item.meta.kind === 'nested'}✏️{:else if item.meta.kind === 'preview'}👁️{:else}📄{/if}
-                  </span>
-                  <span class="tab-label">{tabTitles[item.idx] || item.meta.title}</span>
-                  {#if canPromoteSubTab(item.meta)}
-                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                {#each panePrimTabs as pt (pt.id)}
+                  <button
+                    class="tab tab-l1"
+                    class:active={pt.id === paneActivePrim?.id}
+                    class:drag-over-before={dragOverTargetPrimaryId === pt.id &&
+                      dragOverTargetPrimaryPosition === 'before'}
+                    class:drag-over-after={dragOverTargetPrimaryId === pt.id &&
+                      dragOverTargetPrimaryPosition === 'after'}
+                    on:click={() => selectPrimaryTabInPane(lr.leafId, pt.id)}
+                    on:dblclick={() => {
+                      const n = prompt('Renomear aba principal:', pt.title)
+                      if (n) renamePrimaryTab(pt.id, n)
+                    }}
+                    on:contextmenu|preventDefault={(e) =>
+                      (tabMenu = {
+                        x: e.clientX,
+                        y: e.clientY,
+                        tabId: pt.id,
+                        type: 'primary',
+                        leafId: lr.leafId
+                      })}
+                    draggable="true"
+                    on:dragstart={(e) => onPrimaryTabDragStartInPane(e, lr.leafId, pt.id)}
+                    on:dragend={onTabDragEnd}
+                    on:dragover={(e) => onPrimaryTabDragOverInPane(e, lr.leafId, pt.id)}
+                    on:drop={(e) => onPrimaryTabDrop(e, lr.leafId, pt.id)}
+                  >
                     <span
-                      class="tab-promote-btn"
-                      title="Promote to new main tab (Level 1)"
-                      on:click|stopPropagation={() => promoteSubTabInPane(lr.leafId, item.subTabId)}
-                      >⇡</span
-                    >
-                  {/if}
-                  {#if canCloseSubTab(item.meta)}
+                      class="tab-dirty"
+                      class:dirty={pt.subTabIds.some((sid) => dirtyFlags[getTabIdx(sid)])}
+                    ></span>
+                    <span class="tab-l1-icon">📁</span>
+                    <span class="tab-label">{pt.title}</span>
+                    {#if pt.subTabIds.length > 1}
+                      <span class="tab-count-badge" title="{pt.subTabIds.length} sub-abas"
+                        >{pt.subTabIds.length}</span
+                      >
+                    {/if}
                     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                     <span
                       class="tab-close"
-                      title="Close sub-tab"
-                      on:click|stopPropagation={() =>
-                        closeSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}>×</span
+                      title="Close main tab (and its sub-tabs)"
+                      on:click|stopPropagation={() => closePrimaryTabInPane(lr.leafId, pt.id)}
+                      >×</span
                     >
-                  {/if}
-                </button>
-              {/each}
-              <button
-                class="tab tab-add tab-add-l2"
-                on:click={() => addSubTabInPane(lr.leafId, paneActivePrim)}
-                title="New sub-tab (Level 2)">+ Sub-tab</button
+                  </button>
+                {/each}
+
+                <!-- Indicador de Mover para este Grid (mostrado na área vazia da barra ao arrastar de outro grid!) -->
+                {#if draggedPrimaryId !== undefined && draggedPrimarySourceLeafId !== lr.leafId}
+                  <div
+                    class="tab-drop-move-pane"
+                    class:drag-hover={dragOverLeafId === lr.leafId &&
+                      dragOverTargetPrimaryId === undefined}
+                    on:dragover|preventDefault={(e) => {
+                      e.stopPropagation()
+                      dragOverLeafId = lr.leafId
+                      dragOverTargetPrimaryId = undefined
+                      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+                    }}
+                    on:drop={(e) => onPrimaryTabDrop(e, lr.leafId)}
+                  >
+                    <span class="tab-drop-icon">↳</span>
+                    <span>Mover para este grid</span>
+                  </div>
+                {/if}
+
+                <!-- Área Azul para Subir Sub-abas para Nível 1 -->
+                {#if draggedTabId !== undefined && canPromoteSubTab(subTabsMeta.get(draggedTabId))}
+                  <div
+                    class="tab-drop-promote"
+                    on:dragover|preventDefault
+                    on:drop={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (draggedTabId !== undefined) {
+                        promoteSubTabInPane(lr.leafId, draggedTabId)
+                        onTabDragEnd()
+                      }
+                    }}
+                  >
+                    <span class="tab-drop-promote-icon">⇡</span>
+                    <span>Drop here to move up to Level 1</span>
+                  </div>
+                {/if}
+
+                <button
+                  class="tab tab-add"
+                  on:click={() => addPrimaryTabInPane(lr.leafId)}
+                  title="Nova aba principal neste painel">+</button
+                >
+              </nav>
+            </div>
+
+            <!-- TAB BAR LEVEL 2 (Abas Secundárias do Editor Ativo deste Painel) -->
+            <div
+              class="tab-bar-strip tab-bar-strip-l2"
+              class:is-dragging-tab={draggedPrimaryId !== undefined || draggedTabId !== undefined}
+              use:tabScrollStrip={{ level: 2 }}
+            >
+              <nav
+                class="tab-bar tab-bar-l2"
+                aria-label="Secondary Tabs (Level 2)"
+                on:dragover={(e) => {
+                  if (draggedTabId !== undefined) {
+                    e.preventDefault()
+                    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+                  }
+                }}
+                on:drop={(e) => {
+                  if (paneActivePrim && draggedTabId !== undefined) {
+                    onSubTabDrop(e, paneActivePrim)
+                  }
+                }}
               >
-            </nav>
+                {#each paneSubTabs as item (item.subTabId)}
+                  {@const compInfo = getSubTabCompareInfo(
+                    item.subTabId,
+                    item.idx,
+                    paneSubTabs,
+                    tabCompareTargets,
+                    tabModes,
+                    tabTitles
+                  )}
+                  <button
+                    class="tab tab-l2 tab-kind-{item.meta.kind}"
+                    class:active={item.subTabId === activeSubTabId}
+                    class:tab-comparing-source={compInfo.isSource}
+                    class:tab-comparing-target={compInfo.isTarget}
+                    class:drag-over-before={dragOverTargetSubId === item.subTabId &&
+                      dragOverTargetSubPosition === 'before'}
+                    class:drag-over-after={dragOverTargetSubId === item.subTabId &&
+                      dragOverTargetSubPosition === 'after'}
+                    title={compInfo.isSource
+                      ? `Comparing with "${compInfo.targetTitle}"`
+                      : compInfo.isTarget
+                        ? `Target in comparison with "${compInfo.sourceTitle}"`
+                        : undefined}
+                    on:click={() => selectSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}
+                    on:dblclick={() => {
+                      const n = prompt('Renomear sub-aba:', tabTitles[item.idx])
+                      if (n) renameSubTab(item.subTabId, n)
+                    }}
+                    on:contextmenu|preventDefault={(e) =>
+                      (tabMenu = {
+                        x: e.clientX,
+                        y: e.clientY,
+                        tabId: item.subTabId,
+                        type: 'sub',
+                        leafId: lr.leafId
+                      })}
+                    draggable="true"
+                    on:dragstart={(e) => onSubTabDragStart(e, item.subTabId)}
+                    on:dragend={onTabDragEnd}
+                    on:dragover={(e) => onSubTabDragOver(e, item.subTabId)}
+                    on:drop={(e) => {
+                      if (paneActivePrim) onSubTabDrop(e, paneActivePrim, item.subTabId)
+                    }}
+                  >
+                    <span class="tab-dirty" class:dirty={dirtyFlags[item.idx]}></span>
+                    <span class="tab-l2-icon" title={item.meta.kind}>
+                      {#if item.meta.kind === 'response'}⚡{:else if item.meta.kind === 'extract'}🔍{:else if item.meta.kind === 'nested'}✏️{:else if item.meta.kind === 'preview'}👁️{:else}📄{/if}
+                    </span>
+                    <span class="tab-label">{tabTitles[item.idx] || item.meta.title}</span>
+                    {#if compInfo.isSource}
+                      <span
+                        class="tab-compare-badge source"
+                        title={`Comparing with "${compInfo.targetTitle}"`}
+                      >
+                        ⇄ vs {compInfo.targetTitle}
+                      </span>
+                    {:else if compInfo.isTarget}
+                      <span
+                        class="tab-compare-badge target"
+                        title={`Target in comparison with "${compInfo.sourceTitle}"`}
+                      >
+                        ⇄ paired
+                      </span>
+                    {/if}
+                    {#if canPromoteSubTab(item.meta)}
+                      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                      <span
+                        class="tab-promote-btn"
+                        title="Promote to new main tab (Level 1)"
+                        on:click|stopPropagation={() =>
+                          promoteSubTabInPane(lr.leafId, item.subTabId)}>⇡</span
+                      >
+                    {/if}
+                    {#if canCloseSubTab(item.meta)}
+                      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                      <span
+                        class="tab-close"
+                        title="Close sub-tab"
+                        on:click|stopPropagation={() =>
+                          closeSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}>×</span
+                      >
+                    {/if}
+                  </button>
+                {/each}
+                <button
+                  class="tab tab-add tab-add-l2"
+                  on:click={() => addSubTabInPane(lr.leafId, paneActivePrim)}
+                  title="New sub-tab (Level 2)">+ Sub-tab</button
+                >
+              </nav>
+            </div>
 
             <!-- Drop zones for split inside this pane (dragging Level 1 primary tabs) -->
             {#if draggedPrimaryId !== undefined && layoutLeaves.length < 4}
@@ -3885,6 +3989,7 @@
                     onChangeMode={(m: Mode) => {
                       tabModes[i] = m
                       tabModes = [...tabModes]
+                      tabsRenderVersion++
                       scheduleAutosave()
                     }}
                     {onRenderMenu}
@@ -3892,7 +3997,25 @@
                     {onChangeQueryLanguage}
                     onExtract={handleExtractToNewTab}
                     onEditWithPreview={handleEditWithPreview}
-                    onEditNestedContent={handleEditNestedContent}
+                    compareDocuments={(() => {
+                      void tabsRenderVersion
+                      const currentPrimary = primaryTabs.find((p) =>
+                        p.subTabIds.includes(tabIds[i])
+                      )
+                      const allowedIds = currentPrimary ? currentPrimary.subTabIds : tabIds
+                      return allowedIds
+                        .filter((id) => id !== tabIds[i])
+                        .map((id) => ({
+                          id,
+                          title: tabTitles[getTabIdx(id)] || `Tab ${id}`,
+                          content: tabContents[getTabIdx(id)]
+                        }))
+                    })()}
+                    compareTargetId={getCompareTargetForSubTab(tabIds[i], tabCompareTargets)}
+                    onSelectTargetDocument={(targetId) =>
+                      handleSelectTargetDocument(tabIds[i], targetId)}
+                    onUpdateTargetDocument={handleUpdateTargetDocument}
+                    draggedSubTabId={draggedTabId}
                   />
                 </form>
               {/if}
@@ -3994,8 +4117,12 @@
                     <line x1="8.5" y1="8.5" x2="15.5" y2="15.5" />
                   </svg>
                   <span>Spatial Flow</span>
-                  {#if $flowGraphStore?.nodes?.length > 0}
-                    <span class="req-badge-pill">{$flowGraphStore.nodes.length}</span>
+                  {#if flowRequestsCount > 0}
+                    <span
+                      class="req-badge-pill"
+                      title={`${flowRequestsCount} HTTP request${flowRequestsCount > 1 ? 's' : ''}`}
+                      >{flowRequestsCount}</span
+                    >
                   {/if}
                 </button>
               </div>
@@ -4739,6 +4866,23 @@
 
   <CommandPalette bind:open={paletteOpen} actions={paletteActions} />
 
+  <EditorSettingsPopover
+    bind:open={settingsPopoverOpen}
+    bind:readOnly={$readOnly}
+    bind:mainMenuBar={$mainMenuBar}
+    bind:navigationBar={$navigationBar}
+    bind:statusBar={$statusBar}
+    bind:askToFormat={$askToFormat}
+    bind:validateDoc={$validateDoc}
+    bind:customRenderer={$customRenderer}
+    bind:diffMode
+    bind:escapeCtrl={$escapeCtrl}
+    bind:escapeUni={$escapeUni}
+    bind:flatten={$flatten}
+    bind:multiQuery={$multiQuery}
+    onClose={() => (settingsPopoverOpen = false)}
+  />
+
   <CurlImportModal
     open={showCurlModal}
     onImport={(text) => applyCurlCommand(text)}
@@ -5139,22 +5283,143 @@
     position: relative;
   }
 
+  .tab-bar-strip {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+
+    &.tab-bar-strip-l1 {
+      height: 36px;
+      flex-shrink: 0;
+      --tab-bar-bg: #{$bg-chrome};
+    }
+
+    &.tab-bar-strip-l2 {
+      height: 29px;
+      flex-shrink: 0;
+      --tab-bar-bg: #{$bg-panel};
+    }
+
+    .tab-bar {
+      flex: 1 1 0%;
+      min-width: 0;
+      width: 100%;
+      max-width: 100%;
+      scroll-behavior: smooth;
+    }
+
+    &.is-dragging-tab :global(.tab-scroll-btn) {
+      pointer-events: none !important;
+      opacity: 0 !important;
+    }
+  }
+
+  :global(.tab-scroll-btn) {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.14s ease;
+    user-select: none;
+  }
+
+  :global(.tab-scroll-btn.visible) {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  :global(.tab-scroll-btn.tab-scroll-left) {
+    left: 0;
+    background: linear-gradient(to right, var(--tab-bar-bg) 75%, transparent);
+    justify-content: flex-start;
+    padding-left: 2px;
+  }
+
+  :global(.tab-scroll-btn.tab-scroll-right) {
+    right: 0;
+    background: linear-gradient(to left, var(--tab-bar-bg) 75%, transparent);
+    justify-content: flex-end;
+    padding-right: 2px;
+  }
+
+  :global(.tab-scroll-btn .tab-scroll-btn-inner) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 30px;
+    border-radius: 5px;
+    color: var(--theme-t-bright, #0f172a);
+    background: var(--theme-bg-editor, #ffffff);
+    border: 1.5px solid var(--theme-b-main, #64748b);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+    transition:
+      background 0.12s,
+      color 0.12s,
+      border-color 0.12s,
+      transform 0.1s,
+      box-shadow 0.12s;
+  }
+
+  :global(.tab-scroll-btn:hover .tab-scroll-btn-inner) {
+    color: #ffffff !important;
+    background: #2563eb !important;
+    border-color: #1d4ed8 !important;
+    box-shadow: 0 3px 10px rgba(37, 99, 235, 0.5) !important;
+    transform: scale(1.06);
+  }
+
+  :global(.tab-scroll-btn:active .tab-scroll-btn-inner) {
+    transform: scale(0.95);
+    background: #1e40af !important;
+  }
+
+  :global(.tab-scroll-btn.tab-scroll-l2) {
+    width: 28px;
+  }
+
+  :global(.tab-scroll-btn.tab-scroll-l2 .tab-scroll-btn-inner) {
+    width: 22px;
+    height: 24px;
+    border-radius: 4px;
+  }
+
   .tab-bar-l1 {
     display: flex;
     align-items: center;
     background: $bg-chrome;
     border-bottom: 1px solid $b-subtle;
     height: 36px;
-    flex-shrink: 0;
+    flex: 1 1 0%;
+    min-width: 0;
+    width: 100%;
     overflow-x: auto;
     user-select: none;
     padding: 0 4px;
     gap: 3px;
     &::-webkit-scrollbar {
-      height: 3px;
+      height: 2px;
     }
     &::-webkit-scrollbar-thumb {
-      background: $b-input;
+      background: rgba(128, 128, 128, 0.25);
+      border-radius: 2px;
+    }
+    &::-webkit-scrollbar-thumb:hover {
+      background: rgba(128, 128, 128, 0.5);
     }
   }
   .tab-l1 {
@@ -5329,7 +5594,9 @@
     background: $bg-panel;
     border-bottom: 1px solid $b-main;
     height: 29px;
-    flex-shrink: 0;
+    flex: 1 1 0%;
+    min-width: 0;
+    width: 100%;
     overflow-x: auto;
     user-select: none;
     padding: 0 6px;
@@ -5338,7 +5605,11 @@
       height: 2px;
     }
     &::-webkit-scrollbar-thumb {
-      background: $b-input;
+      background: rgba(128, 128, 128, 0.25);
+      border-radius: 2px;
+    }
+    &::-webkit-scrollbar-thumb:hover {
+      background: rgba(128, 128, 128, 0.5);
     }
   }
   .tab-l2 {
@@ -5366,6 +5637,44 @@
     &:hover:not(.active) {
       background: $bg-hover;
       color: $t-main;
+    }
+    &.tab-comparing-source {
+      background: rgba(99, 102, 241, 0.14) !important;
+      border: 1px solid rgba(99, 102, 241, 0.5) !important;
+      color: $t-bright !important;
+      box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.25);
+    }
+    &.tab-comparing-target {
+      background: rgba(99, 102, 241, 0.08) !important;
+      border: 1px dashed rgba(99, 102, 241, 0.5) !important;
+      color: $t-bright !important;
+      &:hover {
+        background: rgba(99, 102, 241, 0.18) !important;
+      }
+    }
+  }
+  .tab-compare-badge {
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 1px 5px;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    user-select: none;
+    letter-spacing: 0.2px;
+
+    &.source {
+      background: rgba(99, 102, 241, 0.22);
+      color: #818cf8;
+      border: 1px solid rgba(99, 102, 241, 0.4);
+    }
+
+    &.target {
+      background: rgba(99, 102, 241, 0.15);
+      color: #a5b4fc;
+      border: 1px dashed rgba(99, 102, 241, 0.4);
     }
   }
   .tab-l2-icon {

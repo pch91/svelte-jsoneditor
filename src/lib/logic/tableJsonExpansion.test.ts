@@ -228,4 +228,208 @@ describe('tableJsonExpansion', () => {
     expect(sortedDesc[0].id).toBe(1)
     expect(sortedDesc[1].id).toBe(2)
   })
+
+  describe('primitive arrays expansion (e.g. tags: ["tag2", "group2"])', () => {
+    const primitiveArrayData = [
+      {
+        id: 1,
+        score: 84,
+        tags: ['tag2', 'group2'],
+        city: 'Porto'
+      },
+      {
+        id: 2,
+        score: 95,
+        tags: ['tag1'],
+        city: 'Lisboa'
+      }
+    ]
+
+    test('isColumnExpandable returns true for arrays of primitives', () => {
+      expect(isColumnExpandable(primitiveArrayData, ['tags'])).toBe(true)
+      expect(isColumnExpandable(primitiveArrayData, ['score'])).toBe(false)
+    })
+
+    test('buildVisualColumns expands primitive array into visual column with unnested values', () => {
+      const originalColumns = [['id'], ['score'], ['tags'], ['city']]
+      const expandedColumns = { '/tags': true }
+
+      const vCols = buildVisualColumns(originalColumns, expandedColumns, primitiveArrayData)
+      expect(vCols.map((c) => c.displayName)).toEqual(['id', 'score', 'value', 'city'])
+      const colTags = vCols.find((c) => c.parentName === 'tags')!
+      expect(colTags).toBeDefined()
+      expect(colTags.isExpandedSubColumn).toBe(true)
+      expect(colTags.isArrayElement).toBe(true)
+      expect(colTags.isPrimitiveArray).toBe(true)
+      expect(colTags.parentName).toBe('tags')
+      expect(colTags.displayName).toBe('value')
+    })
+
+    test('buildVisualRows unnests rows according to primitive array length', () => {
+      const originalColumns = [['id'], ['score'], ['tags']]
+      const expandedColumns = { '/tags': true }
+      const vCols = buildVisualColumns(originalColumns, expandedColumns, primitiveArrayData)
+
+      const vRows = buildVisualRows(primitiveArrayData, vCols)
+      // Row 0 has 2 tags -> 2 subrows (0.0, 0.1). Row 1 has 1 tag -> 1 subrow (1.0). Total: 3 visual rows.
+      expect(vRows.length).toBe(3)
+      expect(vRows[0]).toEqual({ originalRowIndex: 0, subRowIndex: 0, isSubRow: false, subRowTotal: 2 })
+      expect(vRows[1]).toEqual({ originalRowIndex: 0, subRowIndex: 1, isSubRow: true, subRowTotal: 2 })
+      expect(vRows[2]).toEqual({ originalRowIndex: 1, subRowIndex: 0, isSubRow: false, subRowTotal: 1 })
+    })
+
+    test('getVisualCellValue returns individual primitive elements for subrows', () => {
+      const vCols = buildVisualColumns([['tags']], { '/tags': true }, primitiveArrayData)
+      const vRows = buildVisualRows(primitiveArrayData, vCols)
+      const colTags = vCols[0]
+
+      expect(getVisualCellValue(primitiveArrayData, vRows[0], colTags)).toBe('tag2')
+      expect(getVisualCellValue(primitiveArrayData, vRows[1], colTags)).toBe('group2')
+      expect(getVisualCellValue(primitiveArrayData, vRows[2], colTags)).toBe('tag1')
+    })
+
+    test('createVisualCellPatch generates exact patch for primitive array item', () => {
+      const vCols = buildVisualColumns([['tags']], { '/tags': true }, primitiveArrayData)
+      const vRows = buildVisualRows(primitiveArrayData, vCols)
+      const colTags = vCols[0]
+
+      // Edit item 1 ('group2') of row 0:
+      const patch = createVisualCellPatch(primitiveArrayData, vRows[1], colTags, 'supergroup')
+      expect(patch).toEqual({
+        op: 'replace',
+        path: '/0/tags/1',
+        value: 'supergroup'
+      })
+    })
+
+    test('collapsing primitive array restores original single column', () => {
+      const originalColumns = [['id'], ['tags']]
+      const collapsedCols = buildVisualColumns(originalColumns, { '/tags': false }, primitiveArrayData)
+      expect(collapsedCols.length).toBe(2)
+      expect(collapsedCols[1].displayName).toBe('tags')
+      expect(collapsedCols[1].isExpandedSubColumn).toBe(false)
+    })
+
+    test('sortJsonWithExpansion sorts by primitive array first element', () => {
+      // Row 1 has ['tag1'], Row 0 has ['tag2']. tag1 comes before tag2.
+      const patchAsc = sortJsonWithExpansion(primitiveArrayData, [], ['tags'], 1)
+      const sortedAsc = (patchAsc[0] as JSONPatchReplace).value as typeof primitiveArrayData
+      expect(sortedAsc[0].id).toBe(2)
+      expect(sortedAsc[1].id).toBe(1)
+    })
+  })
+
+  describe('nested array of objects sorting (e.g. orders[].amount)', () => {
+    const customersData = [
+      { id: 1003, name: 'Pedro Almeida', orders: [{ id: 'ORD-5004', amount: 45.75 }] },
+      { id: 1005, name: 'Ricardo Sousa', orders: [{ id: 'ORD-5007', amount: 99.99 }] },
+      {
+        id: 1001,
+        name: 'João Silva',
+        orders: [
+          { id: 'ORD-5001', amount: 125.5 },
+          { id: 'ORD-5002', amount: 89.9 }
+        ]
+      },
+      {
+        id: 1008,
+        name: 'Sofia Mendes',
+        orders: [
+          { id: 'ORD-5009', amount: 149.5 },
+          { id: 'ORD-5010', amount: 67.3 }
+        ]
+      },
+      { id: 1002, name: 'Maria Costa', orders: [{ id: 'ORD-5003', amount: 250 }] },
+      { id: 1007, name: 'Miguel Rocha', orders: [{ id: 'ORD-5008', amount: 315.2 }] },
+      {
+        id: 1004,
+        name: 'Ana Martins',
+        orders: [
+          { id: 'ORD-5005', amount: 700 },
+          { id: 'ORD-5006', amount: 12.99 }
+        ]
+      },
+      { id: 1006, name: 'Carla Ferreira', orders: [] }
+    ]
+
+    test('sortJsonWithExpansion sorts ascending with sub-array items sorted and nulls last', () => {
+      const patch = sortJsonWithExpansion(customersData, [], ['orders', 'amount'], 1)
+      const sorted = (patch[0] as JSONPatchReplace).value as typeof customersData
+
+      // In ascending order:
+      // Ana's orders sorted: 12.99, then 700
+      expect(sorted[0].name).toBe('Ana Martins')
+      expect(sorted[0].orders[0].amount).toBe(12.99)
+      expect(sorted[0].orders[1].amount).toBe(700)
+
+      // Pedro: 45.75
+      expect(sorted[1].name).toBe('Pedro Almeida')
+      expect(sorted[1].orders[0].amount).toBe(45.75)
+
+      // Sofia's orders sorted: 67.3, then 149.5
+      expect(sorted[2].name).toBe('Sofia Mendes')
+      expect(sorted[2].orders[0].amount).toBe(67.3)
+      expect(sorted[2].orders[1].amount).toBe(149.5)
+
+      // João's orders sorted: 89.9, then 125.5
+      expect(sorted[3].name).toBe('João Silva')
+      expect(sorted[3].orders[0].amount).toBe(89.9)
+      expect(sorted[3].orders[1].amount).toBe(125.5)
+
+      // Ricardo: 99.99
+      expect(sorted[4].name).toBe('Ricardo Sousa')
+      expect(sorted[4].orders[0].amount).toBe(99.99)
+
+      // Maria: 250
+      expect(sorted[5].name).toBe('Maria Costa')
+      expect(sorted[5].orders[0].amount).toBe(250)
+
+      // Miguel: 315.2
+      expect(sorted[6].name).toBe('Miguel Rocha')
+      expect(sorted[6].orders[0].amount).toBe(315.2)
+
+      // Carla (empty orders) is at the very end
+      expect(sorted[7].name).toBe('Carla Ferreira')
+    })
+
+    test('sortJsonWithExpansion sorts descending with sub-array items sorted and nulls last', () => {
+      const patch = sortJsonWithExpansion(customersData, [], ['orders', 'amount'], -1)
+      const sorted = (patch[0] as JSONPatchReplace).value as typeof customersData
+
+      // In descending order:
+      // Ana's orders sorted: 700, then 12.99
+      expect(sorted[0].name).toBe('Ana Martins')
+      expect(sorted[0].orders[0].amount).toBe(700)
+      expect(sorted[0].orders[1].amount).toBe(12.99)
+
+      // Miguel: 315.2
+      expect(sorted[1].name).toBe('Miguel Rocha')
+      expect(sorted[1].orders[0].amount).toBe(315.2)
+
+      // Maria: 250
+      expect(sorted[2].name).toBe('Maria Costa')
+      expect(sorted[2].orders[0].amount).toBe(250)
+
+      // Sofia's orders sorted: 149.5, then 67.3
+      expect(sorted[3].name).toBe('Sofia Mendes')
+      expect(sorted[3].orders[0].amount).toBe(149.5)
+      expect(sorted[3].orders[1].amount).toBe(67.3)
+
+      // João's orders sorted: 125.5, then 89.9
+      expect(sorted[4].name).toBe('João Silva')
+      expect(sorted[4].orders[0].amount).toBe(125.5)
+      expect(sorted[4].orders[1].amount).toBe(89.9)
+
+      // Ricardo: 99.99
+      expect(sorted[5].name).toBe('Ricardo Sousa')
+      expect(sorted[5].orders[0].amount).toBe(99.99)
+
+      // Pedro: 45.75
+      expect(sorted[6].name).toBe('Pedro Almeida')
+      expect(sorted[6].orders[0].amount).toBe(45.75)
+
+      // Carla (empty orders) remains at the end
+      expect(sorted[7].name).toBe('Carla Ferreira')
+    })
+  })
 })

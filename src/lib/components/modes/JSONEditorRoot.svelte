@@ -38,6 +38,7 @@
   import TextMode from './textmode/TextMode.svelte'
   import TableMode from './tablemode/TableMode.svelte'
   import TreeMode from './treemode/TreeMode.svelte'
+  import CompareMode from './comparemode/CompareMode.svelte'
   import type { JSONPatchDocument, JSONPath } from 'immutable-json-patch'
   import { isMenuSpace, isModeHistoryItem } from '$lib/typeguards.js'
   import { cloneDeep } from 'lodash-es'
@@ -83,10 +84,18 @@
   export let onExtract: OnExtract | undefined = undefined
   export let onEditWithPreview: OnEditWithPreview | undefined = undefined
   export let onEditNestedContent: OnEditNestedContent | undefined = undefined
+  export let compareDocuments: Array<{ id: number | string; title: string; content: Content }> = []
+  export let compareTargetId: number | string | undefined = undefined
+  export let onSelectTargetDocument: ((targetId: number | string) => void) | undefined = undefined
+  export let draggedSubTabId: number | undefined = undefined
+  export let onUpdateTargetDocument:
+    | ((targetId: number | string, newContent: Content) => void)
+    | undefined = undefined
 
   let refTreeMode: TreeMode | undefined
   let refTableMode: TableMode | undefined
   let refTextMode: TextMode | undefined
+  let refCompareMode: CompareMode | undefined
 
   const debug = createDebug('jsoneditor:JSONEditorRoot')
 
@@ -179,8 +188,15 @@
       type: 'button',
       text: 'table',
       title: `Switch to table mode (current mode: ${mode})`,
-      className: 'jse-group-button jse-last' + (mode === Mode.table ? ' jse-selected' : ''),
+      className: 'jse-group-button ' + (mode === Mode.table ? ' jse-selected' : ''),
       onClick: () => onChangeMode(Mode.table)
+    },
+    {
+      type: 'button',
+      text: 'compare',
+      title: `Switch to compare mode (current mode: ${mode})`,
+      className: 'jse-group-button jse-last' + (mode === Mode.compare ? ' jse-selected' : ''),
+      onClick: () => onChangeMode(Mode.compare)
     }
   ]
 
@@ -226,6 +242,10 @@
 
     if (refTextMode) {
       return refTextMode.patch(operations)
+    }
+
+    if (refCompareMode) {
+      return refCompareMode.patch()
     }
 
     throw new Error(`Method patch is not available in mode "${mode}"`)
@@ -337,6 +357,8 @@
       refTreeMode.focus()
     } else if (refTableMode) {
       refTableMode.focus()
+    } else if (refCompareMode) {
+      refCompareMode.focus()
     }
   }
 
@@ -409,6 +431,23 @@
     {onSortModal}
     {onTransformModal}
     {onJSONEditorModal}
+  />
+{:else if mode === Mode.compare}
+  <CompareMode
+    bind:this={refCompareMode}
+    externalContent={content}
+    {readOnly}
+    {mainMenuBar}
+    {parser}
+    {indentation}
+    {compareDocuments}
+    {compareTargetId}
+    {onSelectTargetDocument}
+    {draggedSubTabId}
+    {onChange}
+    {onChangeMode}
+    {onUpdateTargetDocument}
+    onRenderMenu={handleRenderMenu}
   />
 {:else}
   <!-- mode === Mode.tree -->

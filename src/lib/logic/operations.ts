@@ -887,7 +887,10 @@ export function createNestedValueOperations(operations: JSONPatchOperation[], js
     if (isJSONPatchReplace(operation)) {
       const path = parseJSONPointer(operation.path)
       if (path.length > 0) {
-        const extendedOperations: JSONPatchOperation[] = [operation]
+        const finalOp: JSONPatchOperation = !existsIn(json, path)
+          ? { ...operation, op: 'add' }
+          : operation
+        const extendedOperations: JSONPatchOperation[] = [finalOp]
 
         let parentPath = initial(path)
         while (parentPath.length > 0 && !existsIn(json, parentPath)) {
