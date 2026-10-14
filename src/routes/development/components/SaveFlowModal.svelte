@@ -218,7 +218,7 @@
     border-radius: 4px;
     background: rgba(239, 68, 68, 0.15);
     border: 1px solid rgba(239, 68, 68, 0.4);
-    color: #fca5a5;
+    color: var(--theme-danger-text, #b91c1c);
     font-size: 12px;
   }
 

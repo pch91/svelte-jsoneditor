@@ -5,15 +5,38 @@
     FlowNode,
     FlowConnection,
     FlowNodeType,
-    FlowNodeExecutionHistoryEntry
+    FlowNodeExecutionHistoryEntry,
+    FlowNodePort,
+    FlowNodeRouterRule,
+    FlowNodeRouterData,
+    FlowNodeTransformMapping,
+    PortSlot
   } from '../flowTypes.js'
   import {
     executeJsSandbox,
     createDefaultFlowGraph,
+    createAdvancedFlowGraph,
     serializeFlowFile,
     parseFlowFile,
-    remapFlowGraphIds
+    remapFlowGraphIds,
+    createDefaultRouterPorts,
+    createDefaultRouterRules,
+    evaluateRouterRules,
+    matchStatusPattern
   } from '../flowTypes.js'
+  import {
+    getOutputPortPoint,
+    getInputPortPoint,
+    getBezierPath as computeBezierPath,
+    getBezierMidpoint,
+    getNodeHeight,
+    getNodeWidth,
+    CARD_WIDTH,
+    CIRCLE_SIZE
+  } from '../flowGeometry.js'
+  import { FLOW_NODE_REGISTRY, variantsOf, categoryOf } from '../flowNodeRegistry.js'
+  import { applyMappings, flattenJsonPaths } from '../flowMapper.js'
+  import NodeTypeSwitcher from './NodeTypeSwitcher.svelte'
   import CapturePathsTable from './CapturePathsTable.svelte'
   import CurlImportModal from './CurlImportModal.svelte'
   import {
@@ -29,7 +52,8 @@
     parseCurlCommand,
     buildCurlCommand,
     formatBytes,
-    relativeTime
+    relativeTime,
+    type HeaderRow
   } from '../requestsUtils.js'
 
   export let flowGraph: FlowGraph = { nodes: [], connections: [] }
@@ -75,6 +99,7 @@
 
   // Connecting arrow state
   let connectingFromId: string | null = null
+  let connectingFromPortId: string | null = null
   let mouseX = 0
   let mouseY = 0
 
@@ -117,9 +142,16 @@
   let selectedNodeId: string | null = null
   let selectedConnection: FlowConnection | null = null
   let activeCircleSwitcherId: string | null = null
+  let activeCardSwitcherId: string | null = null
 
   function toggleCircleSwitcher(nodeId: string) {
+    activeCardSwitcherId = null
     activeCircleSwitcherId = activeCircleSwitcherId === nodeId ? null : nodeId
+  }
+
+  function toggleCardSwitcher(nodeId: string) {
+    activeCircleSwitcherId = null
+    activeCardSwitcherId = activeCardSwitcherId === nodeId ? null : nodeId
   }
 
   let sidePanelWidth = 520
@@ -133,7 +165,9 @@
     | 'env'
     | 'response'
     | 'script'
-    | 'config' = 'params'
+    | 'config'
+    | 'rules'
+    | 'ports' = 'params'
 
   // Header editing mode (table vs raw)
   let headersRawMode = false
@@ -159,12 +193,83 @@
       if (!selectedNode.restData.headerRows) {
         selectedNode.restData.headerRows = headersToRows(selectedNode.restData.headers || '')
       }
-      if (sidePanelTab === 'script') {
+      if (sidePanelTab === 'script' || sidePanelTab === 'rules' || sidePanelTab === 'ports') {
         sidePanelTab = 'params'
       }
     } else if (selectedNode.type === 'js' && selectedNode.jsData) {
-      if (sidePanelTab !== 'script' && sidePanelTab !== 'env' && sidePanelTab !== 'response') {
+      if (
+        sidePanelTab !== 'script' &&
+        sidePanelTab !== 'env' &&
+        sidePanelTab !== 'response' &&
+        sidePanelTab !== 'ports'
+      ) {
         sidePanelTab = 'script'
+      }
+    } else if (selectedNode.type === 'router') {
+      if (!selectedNode.routerData) {
+        selectedNode.routerData = {
+          mode: 'first-match',
+          ports: createDefaultRouterPorts(),
+          rules: createDefaultRouterRules()
+        }
+      }
+      if (
+        sidePanelTab !== 'rules' &&
+        sidePanelTab !== 'ports' &&
+        sidePanelTab !== 'response'
+      ) {
+        sidePanelTab = 'rules'
+      }
+    } else if (selectedNode.type === 'transform') {
+      if (!selectedNode.transformData) {
+        selectedNode.transformData = {
+          sampleInput: '{\n  "id": 1,\n  "name": "Sample"\n}',
+          mappings: []
+        }
+      }
+      if (sidePanelTab !== 'config' && sidePanelTab !== 'response') {
+        sidePanelTab = 'config'
+      }
+    } else if (selectedNode.type === 'loop') {
+      if (!selectedNode.loopData) {
+        selectedNode.loopData = {
+          mode: 'for-each',
+          arrayPath: 'items',
+          itemVar: 'item',
+          indexVar: 'index',
+          repeatCount: 5,
+          maxIterations: 1000
+        }
+      }
+      if (!selectedNode.loopData.mode) selectedNode.loopData.mode = 'for-each'
+      if (!selectedNode.loopData.indexVar) selectedNode.loopData.indexVar = 'index'
+      if (!selectedNode.loopData.repeatCount) selectedNode.loopData.repeatCount = 5
+      if (sidePanelTab !== 'config' && sidePanelTab !== 'response') {
+        sidePanelTab = 'config'
+      }
+    } else if (selectedNode.type === 'delay') {
+      if (!selectedNode.delayData) {
+        selectedNode.delayData = {
+          mode: 'delay',
+          delayMs: 1000,
+          ratePerSecond: 10
+        }
+      }
+      if (sidePanelTab !== 'config' && sidePanelTab !== 'response') {
+        sidePanelTab = 'config'
+      }
+    } else if (selectedNode.type === 'merge') {
+      if (!selectedNode.mergeData) {
+        selectedNode.mergeData = {
+          strategy: 'wait-all',
+          inputs: [
+            { id: 'in_1', label: 'Branch 1', slot: 'middle', color: '#8b5cf6' },
+            { id: 'in_2', label: 'Branch 2', slot: 'middle', color: '#8b5cf6' }
+          ]
+        }
+      }
+      if (sidePanelTab !== 'config' && sidePanelTab !== 'response') {
+        sidePanelTab = 'config'
       }
     }
   }
@@ -173,6 +278,433 @@
     flowGraph = { ...flowGraph }
     if (onSaveGraph) {
       onSaveGraph(flowGraph)
+    }
+  }
+
+  function switchNodeType(node: FlowNode, newType: FlowNodeType) {
+    if (node.type === newType) {
+      activeCardSwitcherId = null
+      return
+    }
+    node.type = newType
+    const def = FLOW_NODE_REGISTRY[newType]
+    if (def) {
+      const data = def.createData()
+      if (data.jsData && !node.jsData) node.jsData = data.jsData
+      if (data.transformData && !node.transformData) node.transformData = data.transformData
+      if (data.routerData && !node.routerData) node.routerData = data.routerData
+      if (data.loopData && !node.loopData) node.loopData = data.loopData
+      if (data.delayData && !node.delayData) node.delayData = data.delayData
+      if (data.mergeData && !node.mergeData) node.mergeData = data.mergeData
+      if (data.eventData && !node.eventData) node.eventData = data.eventData
+      node.title = def.defaultTitle
+    }
+    activeCardSwitcherId = null
+    flowGraph = { ...flowGraph }
+    notifyChange()
+  }
+
+  // --- MULTI-PORT & ROUTER HELPERS ---
+  function getNodePorts(node: FlowNode): FlowNodePort[] {
+    if (node.type === 'router' && node.routerData?.ports) {
+      return node.routerData.ports
+    }
+    if (node.type === 'js' && node.jsData?.ports && node.jsData.ports.length > 0) {
+      return node.jsData.ports
+    }
+    const def = FLOW_NODE_REGISTRY[node.type]
+    if (def) {
+      return def.getOutputPorts(node)
+    }
+    return []
+  }
+
+  function isMultiPortNode(node: FlowNode): boolean {
+    if (node.type === 'router' || node.type === 'loop' || node.type === 'delay' || node.type === 'merge') {
+      return true
+    }
+    return node.type === 'js' && (node.jsData?.ports?.length ?? 0) > 0
+  }
+
+  function canAddPortToSlot(ports: FlowNodePort[], slot: PortSlot): boolean {
+    if (ports.length >= 10) return false
+    const count = ports.filter((p) => p.slot === slot).length
+    if (slot === 'top') return count < 3
+    if (slot === 'middle') return count < 4
+    if (slot === 'bottom') return count < 3
+    return false
+  }
+
+  function addPortToNode(node: FlowNode, slot: PortSlot, customLabel?: string) {
+    const ports = getNodePorts(node)
+    if (!canAddPortToSlot(ports, slot)) {
+      showToast(`Limit reached for slot "${slot}" (Max: ${slot === 'middle' ? 4 : 3}, Total 10)`)
+      return
+    }
+
+    const slotCount = ports.filter((p) => p.slot === slot).length + 1
+    const defaultColor = slot === 'top' ? '#10b981' : slot === 'middle' ? '#f59e0b' : '#ef4444'
+
+    const usedSlots = new Set(
+      ports.map((p) => p.slotIndex).filter((idx): idx is number => typeof idx === 'number')
+    )
+    const slotCandidates =
+      slot === 'top' ? [2, 5, 9] : slot === 'middle' ? [1, 4, 7, 8] : [3, 6, 10]
+    const assignedSlotIndex = slotCandidates.find((s) => !usedSlots.has(s))
+
+    const newPort: FlowNodePort = {
+      id: `port_${slot}_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      slot,
+      slotIndex: assignedSlotIndex,
+      label: customLabel || `${slot.toUpperCase()} ${slotCount}`,
+      color: defaultColor
+    }
+
+    if (node.type === 'router') {
+      if (!node.routerData) {
+        node.routerData = {
+          mode: 'first-match',
+          ports: createDefaultRouterPorts(),
+          rules: createDefaultRouterRules()
+        }
+      }
+      node.routerData.ports = [...node.routerData.ports, newPort]
+    } else if (node.type === 'js') {
+      if (!node.jsData) node.jsData = { code: '' }
+      node.jsData.ports = [...(node.jsData.ports || []), newPort]
+    }
+
+    flowGraph = { ...flowGraph }
+    notifyChange()
+    showToast(`Added port to slot ${slot} (${ports.length + 1}/10)`)
+  }
+
+  function removePortFromNode(node: FlowNode, portId: string) {
+    if (node.type === 'router' && node.routerData) {
+      node.routerData.ports = node.routerData.ports.filter((p) => p.id !== portId)
+      const remainingPortId = node.routerData.ports[0]?.id || ''
+      node.routerData.rules.forEach((r) => {
+        if (r.portId === portId) {
+          r.portId = remainingPortId
+        }
+      })
+    } else if (node.type === 'js' && node.jsData?.ports) {
+      node.jsData.ports = node.jsData.ports.filter((p) => p.id !== portId)
+    }
+
+    flowGraph.connections = flowGraph.connections.filter(
+      (c) => !(c.fromId === node.id && c.fromPort === portId)
+    )
+
+    flowGraph = { ...flowGraph }
+    notifyChange()
+    showToast('Port removed')
+  }
+
+  function addRuleToRouter(node: FlowNode) {
+    if (node.type !== 'router' || !node.routerData) return
+    const defaultPort = node.routerData.ports[0]?.id || 'port_top_1'
+    const newRule: FlowNodeRouterRule = {
+      id: `rule_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      portId: defaultPort,
+      label: `Rule ${node.routerData.rules.length + 1}`,
+      type: 'status',
+      statusPattern: '200-299'
+    }
+    node.routerData.rules = [...node.routerData.rules, newRule]
+    flowGraph = { ...flowGraph }
+    notifyChange()
+  }
+
+  function removeRuleFromRouter(node: FlowNode, ruleId: string) {
+    if (node.type !== 'router' || !node.routerData) return
+    node.routerData.rules = node.routerData.rules.filter((r) => r.id !== ruleId)
+    flowGraph = { ...flowGraph }
+    notifyChange()
+  }
+
+  function addTransformMapping(node: FlowNode) {
+    if (!node.transformData) {
+      node.transformData = { mappings: [], sampleInput: '{\n  "id": 1,\n  "name": "Sample"\n}' }
+    }
+    if (!node.transformData.mappings) {
+      node.transformData.mappings = []
+    }
+    const newMapping: FlowNodeTransformMapping = {
+      id: `map_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      sourcePath: '',
+      targetPath: '',
+      modifier: 'direct',
+      defaultValue: ''
+    }
+    node.transformData.mappings = [...node.transformData.mappings, newMapping]
+    flowGraph = { ...flowGraph }
+    notifyChange()
+  }
+
+  function removeTransformMapping(node: FlowNode, mappingId: string) {
+    if (!node.transformData?.mappings) return
+    node.transformData.mappings = node.transformData.mappings.filter((m) => m.id !== mappingId)
+    flowGraph = { ...flowGraph }
+    notifyChange()
+  }
+
+  function copyUpstreamJsonToTransform(node: FlowNode) {
+    if (!node.transformData) return
+    const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+    if (upConns.length > 0) {
+      const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+      if (upNode?.lastRun?.responseText) {
+        node.transformData.sampleInput = upNode.lastRun.responseText
+        flowGraph = { ...flowGraph }
+        notifyChange()
+        showToast(`JSON copied from "${upNode.title || upNode.type}"!`)
+        return
+      }
+    }
+    showToast('No upstream node with an executed response.')
+  }
+
+  function getTransformAvailablePaths(node: FlowNode): string[] {
+    if (!node || node.type !== 'transform' || !node.transformData) return []
+    let rawJson = node.transformData.sampleInput?.trim()
+
+    if (!rawJson) {
+      const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+      if (upConns.length > 0) {
+        const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+        if (upNode?.lastRun?.responseText) {
+          rawJson = upNode.lastRun.responseText.trim()
+        }
+      }
+    }
+
+    if (!rawJson) return []
+    try {
+      const parsed = JSON.parse(rawJson)
+      const paths: string[] = []
+      if (Array.isArray(parsed)) {
+        if (parsed.length > 0 && typeof parsed[0] === 'object' && parsed[0] !== null) {
+          paths.push(...flattenJsonPaths(parsed[0]))
+        }
+        paths.push(...flattenJsonPaths(parsed))
+      } else {
+        paths.push(...flattenJsonPaths(parsed))
+      }
+      return Array.from(new Set(paths.filter(Boolean)))
+    } catch {
+      return []
+    }
+  }
+
+  function autoMapDetectedFields(node: FlowNode, paths: string[]) {
+    if (!node.transformData || paths.length === 0) return
+    const primary = paths.filter((p) => !p.includes('[0]'))
+    const toAdd = (primary.length > 0 ? primary : paths).slice(0, 30)
+    node.transformData.mappings = toAdd.map((p, idx) => ({
+      id: `map_${Date.now()}_${idx}`,
+      sourcePath: p,
+      targetPath: p.split('.').pop() || p,
+      modifier: 'direct'
+    }))
+    flowGraph = { ...flowGraph }
+    notifyChange()
+    showToast(`${toAdd.length} fields mapped automatically!`)
+  }
+
+  let activePathDropdownMappingId: string | null = null
+  let highlightedPathIndex = 0
+
+  function openPathDropdown(mappingId: string) {
+    activePathDropdownMappingId = mappingId
+    highlightedPathIndex = 0
+  }
+
+  function togglePathDropdown(mappingId: string) {
+    if (activePathDropdownMappingId === mappingId) {
+      activePathDropdownMappingId = null
+    } else {
+      activePathDropdownMappingId = mappingId
+      highlightedPathIndex = 0
+    }
+  }
+
+  function closePathDropdown() {
+    activePathDropdownMappingId = null
+    highlightedPathIndex = 0
+  }
+
+  function getFilteredTransformPaths(allPaths: string[], query: string): string[] {
+    if (!query || !query.trim()) return allPaths
+    const q = query.trim().toLowerCase()
+    return allPaths.filter((p) => p.toLowerCase().includes(q))
+  }
+
+  function selectTransformPath(mapping: FlowNodeTransformMapping, selectedPath: string) {
+    mapping.sourcePath = selectedPath
+    if (!mapping.targetPath || !mapping.targetPath.trim()) {
+      const suggestedTarget = selectedPath.split('.').pop()?.replace(/\[\d+\]/g, '') || selectedPath
+      mapping.targetPath = suggestedTarget
+    }
+    closePathDropdown()
+    flowGraph = { ...flowGraph }
+    notifyChange()
+  }
+
+  function handlePathKeydown(
+    e: KeyboardEvent,
+    mapping: FlowNodeTransformMapping,
+    allPaths: string[]
+  ) {
+    const filtered = getFilteredTransformPaths(allPaths, mapping.sourcePath)
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (activePathDropdownMappingId !== mapping.id) {
+        openPathDropdown(mapping.id)
+      } else if (filtered.length > 0) {
+        highlightedPathIndex = (highlightedPathIndex + 1) % filtered.length
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (activePathDropdownMappingId === mapping.id && filtered.length > 0) {
+        highlightedPathIndex = (highlightedPathIndex - 1 + filtered.length) % filtered.length
+      }
+    } else if (e.key === 'Enter') {
+      if (activePathDropdownMappingId === mapping.id) {
+        e.preventDefault()
+        if (filtered.length > 0) {
+          const target = filtered[highlightedPathIndex] || filtered[0]
+          if (target) {
+            selectTransformPath(mapping, target)
+          }
+        } else {
+          closePathDropdown()
+        }
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      closePathDropdown()
+    }
+  }
+
+  function getLiveTransformPreview(node: FlowNode): string {
+    if (!node.transformData) return '{}'
+    let sample: unknown = {}
+    if (node.transformData.sampleInput?.trim()) {
+      try {
+        sample = JSON.parse(node.transformData.sampleInput)
+      } catch {
+        sample = { raw: node.transformData.sampleInput }
+      }
+    }
+    const result = applyMappings(sample, node.transformData.mappings || [])
+    return JSON.stringify(result, null, 2)
+  }
+
+  interface LoopDetectedArray {
+    path: string
+    label: string
+    length: number
+    sampleItem?: unknown
+  }
+
+  interface LoopUpstreamInfo {
+    connected: boolean
+    upNode?: FlowNode
+    executed: boolean
+    rawPayload?: unknown
+    detectedArrays: LoopDetectedArray[]
+    currentEvaluation?: {
+      isValid: boolean
+      length: number
+      errorMsg?: string
+      sampleItem?: unknown
+    }
+  }
+
+  function getLoopUpstreamInfo(node: FlowNode): LoopUpstreamInfo {
+    if (!node || node.type !== 'loop') {
+      return { connected: false, executed: false, detectedArrays: [] }
+    }
+    const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+    if (upConns.length === 0) {
+      return { connected: false, executed: false, detectedArrays: [] }
+    }
+    const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+    if (!upNode) {
+      return { connected: false, executed: false, detectedArrays: [] }
+    }
+    if (!upNode.lastRun?.responseText) {
+      return { connected: true, upNode, executed: false, detectedArrays: [] }
+    }
+
+    let rawPayload: unknown = null
+    try {
+      rawPayload = JSON.parse(upNode.lastRun.responseText)
+    } catch {
+      rawPayload = upNode.lastRun.responseText
+    }
+
+    const detected: LoopDetectedArray[] = []
+    function scan(val: unknown, prefix = '', depth = 0) {
+      if (!val || depth > 4) return
+      if (Array.isArray(val)) {
+        detected.push({
+          path: prefix,
+          label: prefix ? `${prefix} (${val.length} items)` : `[ ] Root (${val.length} items)`,
+          length: val.length,
+          sampleItem: val[0]
+        })
+      } else if (typeof val === 'object') {
+        for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+          const p = prefix ? `${prefix}.${k}` : k
+          if (Array.isArray(v)) {
+            detected.push({
+              path: p,
+              label: `${p} (${v.length} items)`,
+              length: v.length,
+              sampleItem: v[0]
+            })
+          } else if (typeof v === 'object' && v !== null) {
+            scan(v, p, depth + 1)
+          }
+        }
+      }
+    }
+    scan(rawPayload)
+
+    const arrayPath = node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
+    let currentEvaluation: LoopUpstreamInfo['currentEvaluation']
+    if (rawPayload !== null && rawPayload !== undefined) {
+      const extracted = extractValueByPath(rawPayload, arrayPath)
+      if (Array.isArray(extracted)) {
+        currentEvaluation = {
+          isValid: true,
+          length: extracted.length,
+          sampleItem: extracted[0]
+        }
+      } else if (extracted !== undefined && extracted !== null) {
+        currentEvaluation = {
+          isValid: false,
+          length: 0,
+          errorMsg: `Path "${arrayPath || '[ ] Root'}" resolved to ${typeof extracted}, not an array.`
+        }
+      } else {
+        currentEvaluation = {
+          isValid: false,
+          length: 0,
+          errorMsg: `Path "${arrayPath}" not found in the payload of "${upNode.title}".`
+        }
+      }
+    }
+
+    return {
+      connected: true,
+      upNode,
+      executed: true,
+      rawPayload,
+      detectedArrays: detected,
+      currentEvaluation
     }
   }
 
@@ -185,10 +717,30 @@
     authValidationStatus = null
     showCurlImport = false
     if (node.type === 'rest') {
-      if (sidePanelTab === 'script' || sidePanelTab === 'config') sidePanelTab = 'params'
+      if (
+        sidePanelTab === 'script' ||
+        sidePanelTab === 'config' ||
+        sidePanelTab === 'rules' ||
+        sidePanelTab === 'ports'
+      ) {
+        sidePanelTab = 'params'
+      }
     } else if (node.type === 'js') {
-      if (sidePanelTab !== 'script' && sidePanelTab !== 'env' && sidePanelTab !== 'response') {
+      if (
+        sidePanelTab !== 'script' &&
+        sidePanelTab !== 'env' &&
+        sidePanelTab !== 'response' &&
+        sidePanelTab !== 'ports'
+      ) {
         sidePanelTab = 'script'
+      }
+    } else if (node.type === 'router') {
+      if (
+        sidePanelTab !== 'rules' &&
+        sidePanelTab !== 'ports' &&
+        sidePanelTab !== 'response'
+      ) {
+        sidePanelTab = 'rules'
       }
     } else {
       sidePanelTab = 'config'
@@ -271,9 +823,10 @@
   }
 
   // --- CONNECTING NODES ---
-  function startConnect(e: MouseEvent, fromId: string) {
+  function startConnect(e: MouseEvent, fromId: string, fromPortId?: string) {
     e.stopPropagation()
     connectingFromId = fromId
+    connectingFromPortId = fromPortId || null
     updateMousePos(e)
 
     const onMouseMove = (ev: MouseEvent) => {
@@ -283,6 +836,7 @@
     const onMouseUp = () => {
       setTimeout(() => {
         connectingFromId = null
+        connectingFromPortId = null
       }, 60)
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
@@ -299,26 +853,38 @@
     mouseY = (e.clientY - rect.top + canvasEl.scrollTop) / zoomLevel
   }
 
-  function endConnect(toId: string) {
+  function endConnect(toId: string, toPortId?: string) {
     if (!connectingFromId || connectingFromId === toId) {
       connectingFromId = null
+      connectingFromPortId = null
       return
     }
 
     const fromId = connectingFromId
+    const fromPort = connectingFromPortId || undefined
+    const toPort = toPortId || undefined
     connectingFromId = null
+    connectingFromPortId = null
 
     const toNode = flowGraph.nodes.find((n) => n.id === toId)
     if (toNode?.type === 'start') return
     const fromNode = flowGraph.nodes.find((n) => n.id === fromId)
     if (fromNode?.type === 'terminate') return
 
-    const exists = flowGraph.connections.find((c) => c.fromId === fromId && c.toId === toId)
+    const exists = flowGraph.connections.find(
+      (c) =>
+        c.fromId === fromId &&
+        c.toId === toId &&
+        c.fromPort === fromPort &&
+        c.toPort === toPort
+    )
     if (!exists) {
       const newConn: FlowConnection = {
         id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         fromId,
         toId,
+        fromPort,
+        toPort,
         kind: 'solid'
       }
       flowGraph.connections = [...flowGraph.connections, newConn]
@@ -355,6 +921,7 @@
     ) {
       selectedConnection = null
       activeCircleSwitcherId = null
+      activeCardSwitcherId = null
     }
   }
 
@@ -380,13 +947,8 @@
 
   // --- ADD / REMOVE NODES ---
   function addNodeAt(type: FlowNodeType, x: number, y: number) {
-    let defaultTitle = 'New Block'
-    if (type === 'rest') defaultTitle = 'New REST Request'
-    else if (type === 'js') defaultTitle = 'New JS Script'
-    else if (type === 'start') defaultTitle = 'Início'
-    else if (type === 'terminate') defaultTitle = 'Terminate'
-    else if (type === 'event-throw') defaultTitle = 'Salto Evento'
-    else if (type === 'event-catch') defaultTitle = 'Receptor Evento'
+    const def = FLOW_NODE_REGISTRY[type]
+    const defaultTitle = def?.defaultTitle || 'New Block'
 
     const newNode: FlowNode = {
       id: `node_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -413,7 +975,42 @@
       }
     } else if (type === 'js') {
       newNode.jsData = {
-        code: `// Script JavaScript com validação condicional IF\nconst charId = pm.environment.get('charId') || 1;\nif (Number(charId) > 0) {\n  pm.environment.set('isValid', 'true');\n  console.log('Validado com sucesso:', charId);\n}\n`
+        code: `// JavaScript script with dynamic multi-port routing\n// Use out('port_id', data) or route('port_id') to activate specific output ports\nconst charId = pm.environment.get('charId') || 1;\nif (Number(charId) > 0) {\n  pm.environment.set('isValid', 'true');\n  console.log('Successfully validated:', charId);\n}\n`,
+        ports: []
+      }
+    } else if (type === 'transform') {
+      newNode.transformData = {
+        sampleInput: '{\n  "id": 1,\n  "name": "Sample"\n}',
+        mappings: []
+      }
+    } else if (type === 'router') {
+      newNode.routerData = {
+        mode: 'first-match',
+        ports: createDefaultRouterPorts(),
+        rules: createDefaultRouterRules()
+      }
+    } else if (type === 'loop') {
+      newNode.loopData = {
+        mode: 'for-each',
+        arrayPath: 'items',
+        itemVar: 'item',
+        indexVar: 'index',
+        repeatCount: 5,
+        maxIterations: 1000
+      }
+    } else if (type === 'delay') {
+      newNode.delayData = {
+        mode: 'delay',
+        delayMs: 1500,
+        ratePerSecond: 10
+      }
+    } else if (type === 'merge') {
+      newNode.mergeData = {
+        strategy: 'wait-all',
+        inputs: [
+          { id: 'in_1', label: 'Branch 1', slot: 'middle', color: '#8b5cf6' },
+          { id: 'in_2', label: 'Branch 2', slot: 'middle', color: '#8b5cf6' }
+        ]
       }
     } else if (type === 'event-throw' || type === 'event-catch') {
       newNode.eventData = {
@@ -467,6 +1064,11 @@
   const VALID_NODE_TYPES: FlowNodeType[] = [
     'rest',
     'js',
+    'transform',
+    'router',
+    'loop',
+    'delay',
+    'merge',
     'start',
     'terminate',
     'event-throw',
@@ -486,7 +1088,7 @@
         const dropY = Math.round((e.clientY - rect.top + canvasEl.scrollTop) / zoomLevel)
         const isCircle = isCircleNode(rawType)
         const finalX = Math.max(20, dropX - (isCircle ? 27 : 140))
-        const finalY = Math.max(20, dropY - (isCircle ? 27 : 45))
+        const finalY = Math.max(20, dropY - (isCircle ? 27 : rawType === 'router' ? 120 : 45))
         addNodeAt(rawType, finalX, finalY)
       } else {
         addNode(rawType)
@@ -516,15 +1118,15 @@
     }
     node.type = newType
     if (newType === 'start') {
-      node.title = 'Início'
+      node.title = 'Start'
     } else if (newType === 'terminate') {
-      node.title = 'Fim do Fluxo'
+      node.title = 'End of Flow'
     } else if (newType === 'event-throw') {
       if (!node.eventData) node.eventData = { eventName: 'valida total' }
-      node.title = `Salto: ${node.eventData.eventName || 'valida total'}`
+      node.title = `Jump: ${node.eventData.eventName || 'valida total'}`
     } else if (newType === 'event-catch') {
       if (!node.eventData) node.eventData = { eventName: 'valida total' }
-      node.title = `Receptor: ${node.eventData.eventName || 'valida total'}`
+      node.title = `Receiver: ${node.eventData.eventName || 'valida total'}`
     }
     activeCircleSwitcherId = null
     flowGraph = { ...flowGraph }
@@ -541,9 +1143,6 @@
     const GAP_CIRCLE = 40
     const ROW_HEIGHT = 180
     const MAX_ROW_WIDTH = 960
-
-    const getNodeWidth = (type: FlowNodeType) => (isCircleNode(type) ? CIRCLE_SIZE : CARD_W)
-    const getNodeHeight = (type: FlowNodeType) => (isCircleNode(type) ? CIRCLE_SIZE : CARD_H)
 
     const inDegree: Record<string, number> = {}
     const adj: Record<string, string[]> = {}
@@ -632,7 +1231,7 @@
 
       const rowCenterY = startY + currentRow * ROW_HEIGHT + CARD_H / 2
       node.x = Math.round(currentX)
-      node.y = Math.round(rowCenterY - getNodeHeight(node.type) / 2)
+      node.y = Math.round(rowCenterY - getNodeHeight(node) / 2)
 
       currentX += w + gap
     })
@@ -642,25 +1241,56 @@
     showToast('Auto layout arranged successfully!')
   }
 
-  function resetToExample() {
+  function resetToExample(exampleIndex: 1 | 2 = 1) {
+    const isAdvanced = exampleIndex === 2
+    const flowTitle = isAdvanced
+      ? 'Example 2: Advanced Flow (Router + Multi-Ports + JSON Mapper)'
+      : 'Example 1: Linear Flow (REST + Script + Event Jump)'
+
+    if (flowGraph.nodes.length > 0) {
+      if (!confirm(`Replace the current canvas with ${flowTitle}?`)) {
+        return
+      }
+    }
     if (!environments['Rick & Morty']) {
-      environments['Rick & Morty'] = { baseUrl: 'https://rickandmortyapi.com/api' }
+      environments['Rick & Morty'] = {
+        baseUrl: 'https://rickandmortyapi.com/api',
+        charId: '1',
+        episodeName: 'Pilot',
+        customHeader: 'RickMorty-Verified'
+      }
       environments = { ...environments }
     }
     if (!activeEnvName) {
       activeEnvName = 'Rick & Morty'
     }
-    flowGraph = createDefaultFlowGraph()
+    flowGraph = isAdvanced ? createAdvancedFlowGraph() : createDefaultFlowGraph()
     selectedNodeId = flowGraph.nodes[0]?.id ?? null
+    selectedConnection = null
     notifyChange()
-    showToast('Rick & Morty example flow loaded!')
+    showToast(`${flowTitle} loaded successfully!`)
   }
 
   function clearAll() {
+    if (flowGraph.nodes.length > 0) {
+      if (!confirm('Clear all blocks from canvas? This cannot be undone.')) {
+        return
+      }
+    }
     flowGraph = { nodes: [], connections: [] }
     selectedNodeId = null
+    selectedConnection = null
     notifyChange()
     showToast('Flow cleared!')
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      if (onSaveFlowToWorkspace) {
+        e.preventDefault()
+        onSaveFlowToWorkspace(false)
+      }
+    }
   }
 
   // --- FLOW FILE: open / save / import / export ---
@@ -676,9 +1306,11 @@
   let flowFileInput: HTMLInputElement | undefined
   let flowFileInputMode: 'open' | 'import' = 'open'
   let fileMenuOpen = false
+  let examplesMenuOpen = false
 
   function runFileAction(action: () => void | Promise<void>) {
     fileMenuOpen = false
+    examplesMenuOpen = false
     void action()
   }
 
@@ -857,21 +1489,33 @@
       selectedNode.restData.headerRows = [...rows, { key, value, enabled: true }]
     }
     onHeaderRowsChanged()
-    showToast(`Header "${key}" adicionado`)
+    showToast(`Header "${key}" added`)
   }
 
   // --- CURL IMPORT & EXPORT (Requirement 3) ---
   function copyNodeCurl(node: FlowNode) {
     if (!node.restData) return
     const rest = node.restData
-    const headersObj = rest.headerRows
-      ? parseHeadersText(rowsToHeadersText(rest.headerRows))
-      : parseHeadersText(rest.headers)
+    const headersList: HeaderRow[] = []
+
+    if (rest.headerRows && rest.headerRows.length > 0) {
+      for (const r of rest.headerRows) {
+        if ((r.enabled ?? true) && r.key.trim()) {
+          headersList.push({ key: r.key.trim(), value: r.value, enabled: true })
+        }
+      }
+    }
+
+    if (headersList.length === 0 && rest.headers && rest.headers.trim()) {
+      for (const [k, v] of Object.entries(parseHeadersText(rest.headers))) {
+        headersList.push({ key: k, value: v, enabled: true })
+      }
+    }
 
     const curl = buildCurlCommand({
       method: rest.method,
       url: rest.url,
-      headers: headersObj,
+      headers: headersList,
       body: rest.body,
       bodyType: rest.bodyType,
       auth:
@@ -1146,44 +1790,291 @@
           }
           showToast(`Script error: ${res.error}`)
         }
+      } else if (node.type === 'router' && node.routerData) {
+        // Collect upstream response/status if available
+        const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+        let upstreamPayload: unknown = null
+        let upstreamStatus = 200
+        if (upConns.length > 0) {
+          const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+          if (upNode?.lastRun) {
+            if (typeof upNode.lastRun.status === 'number') {
+              upstreamStatus = upNode.lastRun.status
+            }
+            if (upNode.lastRun.responseText) {
+              try {
+                upstreamPayload = JSON.parse(upNode.lastRun.responseText)
+              } catch {
+                upstreamPayload = upNode.lastRun.responseText
+              }
+            }
+          }
+        }
+
+        const res = evaluateRouterRules(
+          node.routerData.rules || [],
+          node.routerData.mode || 'first-match',
+          upstreamPayload,
+          upstreamStatus
+        )
+        const durationMs = Math.round(performance.now() - started)
+        const hasMatches = res.matchedPortIds.length > 0
+        node.status = hasMatches ? 'success' : 'error'
+
+        const portSummary = res.matchedRules
+          .map((r) => {
+            const port = node.routerData?.ports.find((p) => p.id === r.portId)
+            return `${port?.label || r.portId} (${r.label})`
+          })
+          .join(', ')
+
+        node.lastRun = {
+          durationMs,
+          status: hasMatches ? 'ROUTED' : 'NO_ROUTE',
+          outputSummary: hasMatches ? `Routed: ${portSummary}` : 'No matching rule',
+          timestamp: Date.now(),
+          responseText: JSON.stringify(
+            {
+              upstreamStatus,
+              matchedPorts: res.matchedPortIds,
+              matchedRules: res.matchedRules
+            },
+            null,
+            2
+          )
+        }
+
+        const historyItem: FlowNodeExecutionHistoryEntry = {
+          id: String(Date.now()),
+          timestamp: Date.now(),
+          status: hasMatches ? 200 : 404,
+          durationMs,
+          responseText: node.lastRun.responseText
+        }
+        node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+        showToast(hasMatches ? `Router evaluated: ${portSummary}` : 'Router: no rule matched')
       } else if (node.type === 'start') {
         node.status = 'success'
         node.lastRun = {
           durationMs: 0,
           status: 'START',
-          outputSummary: 'Ponto de início pronto',
+          outputSummary: 'Start point ready',
           timestamp: Date.now()
         }
-        showToast('Ponto de início acionado!')
+        showToast('Start point triggered!')
       } else if (node.type === 'terminate') {
         node.status = 'success'
         node.lastRun = {
           durationMs: 0,
           status: 'TERMINATED',
-          outputSummary: 'Execução finalizada',
+          outputSummary: 'Execution finished',
           timestamp: Date.now()
         }
-        showToast('Bloco Terminate executado!')
+        showToast('Terminate block executed!')
       } else if (node.type === 'event-throw') {
         const ev = node.eventData?.eventName || 'valida total'
         node.status = 'success'
         node.lastRun = {
           durationMs: 0,
           status: 'EVENT_THROWN',
-          outputSummary: `Disparou: "${ev}"`,
+          outputSummary: `Triggered: "${ev}"`,
           timestamp: Date.now()
         }
-        showToast(`Evento disparado: "${ev}"`)
+        showToast(`Event triggered: "${ev}"`)
       } else if (node.type === 'event-catch') {
         const ev = node.eventData?.eventName || 'valida total'
         node.status = 'success'
         node.lastRun = {
           durationMs: 0,
           status: 'EVENT_CAUGHT',
-          outputSummary: `Recebeu: "${ev}"`,
+          outputSummary: `Received: "${ev}"`,
           timestamp: Date.now()
         }
-        showToast(`Evento recebido: "${ev}"`)
+        showToast(`Event received: "${ev}"`)
+      } else if (node.type === 'transform') {
+        const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+        let inputPayload: unknown = null
+        if (upConns.length > 0) {
+          const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+          if (upNode?.lastRun?.responseText) {
+            try {
+              inputPayload = JSON.parse(upNode.lastRun.responseText)
+            } catch {
+              inputPayload = upNode.lastRun.responseText
+            }
+          }
+        }
+        if (!inputPayload && node.transformData?.sampleInput) {
+          try {
+            inputPayload = JSON.parse(node.transformData.sampleInput)
+          } catch {
+            inputPayload = node.transformData.sampleInput
+          }
+        }
+        const mapped = applyMappings(inputPayload || {}, node.transformData?.mappings || [])
+        const responseText = JSON.stringify(mapped, null, 2)
+        if (node.transformData?.saveToEnvVar && activeEnvName) {
+          currentEnv[node.transformData.saveToEnvVar] = responseText
+          environments[activeEnvName] = { ...currentEnv }
+          environments = { ...environments }
+        }
+        const durationMs = Math.round(performance.now() - started)
+        node.status = 'success'
+        node.lastRun = {
+          durationMs,
+          status: 200,
+          outputSummary: `${(node.transformData?.mappings || []).length} fields mapped`,
+          timestamp: Date.now(),
+          responseText
+        }
+        const historyItem: FlowNodeExecutionHistoryEntry = {
+          id: String(Date.now()),
+          timestamp: Date.now(),
+          status: 200,
+          durationMs,
+          responseText
+        }
+        node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+        showToast(`Mapping completed (${(node.transformData?.mappings || []).length} fields)`)
+      } else if (node.type === 'loop') {
+        const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+        let inputPayload: unknown = null
+        if (upConns.length > 0) {
+          const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+          if (upNode?.lastRun?.responseText) {
+            try {
+              inputPayload = JSON.parse(upNode.lastRun.responseText)
+            } catch {
+              inputPayload = upNode.lastRun.responseText
+            }
+          }
+        }
+        const mode = node.loopData?.mode || 'for-each'
+        let items: unknown[] = []
+        let arrayPath = node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
+
+        if (mode === 'count') {
+          const count = Math.min(Math.max(1, Number(node.loopData?.repeatCount) || 5), node.loopData?.maxIterations || 1000)
+          items = Array.from({ length: count }, (_, i) => ({ index: i, count: i + 1 }))
+          arrayPath = `[Counter 0..${count - 1}]`
+        } else {
+          const arr = extractValueByPath(inputPayload || {}, arrayPath)
+          items = Array.isArray(arr) ? arr : (arr !== undefined ? [arr] : [inputPayload])
+        }
+
+        const max = node.loopData?.maxIterations || 1000
+        const processed = items.slice(0, max)
+
+        const itemVar = node.loopData?.itemVar || 'item'
+        const indexVar = node.loopData?.indexVar || 'index'
+        if (processed.length > 0 && activeEnvName) {
+          currentEnv[itemVar] =
+            typeof processed[0] === 'object' ? JSON.stringify(processed[0]) : String(processed[0])
+          currentEnv[indexVar] = '0'
+          currentEnv['loop_total'] = String(processed.length)
+          environments[activeEnvName] = { ...currentEnv }
+          environments = { ...environments }
+        }
+
+        const loopResult = {
+          mode,
+          arrayPath,
+          totalItems: items.length,
+          processedCount: processed.length,
+          items: processed
+        }
+        const responseText = JSON.stringify(loopResult, null, 2)
+        const durationMs = Math.round(performance.now() - started)
+        node.status = 'success'
+        node.lastRun = {
+          durationMs,
+          status: 'LOOP_DONE',
+          outputSummary: mode === 'count' ? `Repeated ${processed.length} times` : `Iterated ${processed.length} items of "${arrayPath || '[ ] Root'}"`,
+          timestamp: Date.now(),
+          responseText
+        }
+        const historyItem: FlowNodeExecutionHistoryEntry = {
+          id: String(Date.now()),
+          timestamp: Date.now(),
+          status: 'LOOP_DONE',
+          durationMs,
+          responseText
+        }
+        node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+        showToast(`Loop: ${processed.length} items iterated`)
+      } else if (node.type === 'delay') {
+        const delayMs = Math.min(node.delayData?.delayMs || 1000, 3000)
+        await new Promise((r) => setTimeout(r, delayMs))
+
+        const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+        let upstreamText = ''
+        if (upConns.length > 0) {
+          const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+          if (upNode?.lastRun?.responseText) {
+            upstreamText = upNode.lastRun.responseText
+          }
+        }
+        const durationMs = Math.round(performance.now() - started)
+        node.status = 'success'
+        node.lastRun = {
+          durationMs,
+          status: 'DELAY_DONE',
+          outputSummary: `Paused for ${delayMs}ms`,
+          timestamp: Date.now(),
+          responseText: upstreamText || JSON.stringify({ delayedMs: delayMs }, null, 2)
+        }
+        const historyItem: FlowNodeExecutionHistoryEntry = {
+          id: String(Date.now()),
+          timestamp: Date.now(),
+          status: 'DELAY_DONE',
+          durationMs,
+          responseText: node.lastRun.responseText
+        }
+        node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+        showToast(`Delay of ${delayMs}ms finished`)
+      } else if (node.type === 'merge') {
+        const incomingConns = flowGraph.connections.filter((c) => c.toId === node.id)
+        const branchResults: Record<string, unknown> = {}
+        for (let idx = 0; idx < incomingConns.length; idx++) {
+          const conn = incomingConns[idx]
+          const fromNode = flowGraph.nodes.find((n) => n.id === conn.fromId)
+          const branchKey = conn.toPort || fromNode?.title || `branch_${idx + 1}`
+          if (fromNode?.lastRun?.responseText) {
+            try {
+              branchResults[branchKey] = JSON.parse(fromNode.lastRun.responseText)
+            } catch {
+              branchResults[branchKey] = fromNode.lastRun.responseText
+            }
+          } else {
+            branchResults[branchKey] = null
+          }
+        }
+
+        const mergedPayload = {
+          mergedAt: Date.now(),
+          strategy: node.mergeData?.strategy || 'wait-all',
+          branchesCount: incomingConns.length,
+          results: branchResults
+        }
+        const responseText = JSON.stringify(mergedPayload, null, 2)
+        const durationMs = Math.round(performance.now() - started)
+        node.status = 'success'
+        node.lastRun = {
+          durationMs,
+          status: 'MERGED',
+          outputSummary: `${incomingConns.length} branches merged`,
+          timestamp: Date.now(),
+          responseText
+        }
+        const historyItem: FlowNodeExecutionHistoryEntry = {
+          id: String(Date.now()),
+          timestamp: Date.now(),
+          status: 'MERGED',
+          durationMs,
+          responseText
+        }
+        node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+        showToast(`${incomingConns.length} branches synchronized and merged`)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1218,18 +2109,33 @@
     const completedNodes = new Set<string>()
     const failedNodes = new Set<string>()
     const activeEvents = new Set<string>()
+    const activeNodePorts = new Map<string, Set<string>>()
     let flowTerminated = false
     const hasStartNodes = flowGraph.nodes.some((n) => n.type === 'start')
+
+    const isConnActive = (c: FlowConnection): boolean => {
+      const fromNode = flowGraph.nodes.find((n) => n.id === c.fromId)
+      if (!fromNode) return false
+      if (isMultiPortNode(fromNode) && c.fromPort) {
+        if (completedNodes.has(c.fromId)) {
+          const ports = activeNodePorts.get(c.fromId)
+          return !!ports && ports.has(c.fromPort)
+        }
+      }
+      return true
+    }
 
     const getSolidPrereqs = (nodeId: string): string[] => {
       return flowGraph.connections
         .filter((c) => c.toId === nodeId && c.kind === 'solid')
+        .filter(isConnActive)
         .map((c) => c.fromId)
     }
 
     const getDottedPrereqs = (nodeId: string): string[] => {
       return flowGraph.connections
         .filter((c) => c.toId === nodeId && c.kind === 'dotted')
+        .filter(isConnActive)
         .map((c) => c.fromId)
     }
 
@@ -1241,6 +2147,25 @@
       if (node.type === 'event-catch') {
         const evName = (node.eventData?.eventName || '').trim().toLowerCase()
         if (!evName || !activeEvents.has(evName)) {
+          return false
+        }
+      }
+
+      // Check if all incoming connections originate from un-routed / inactive ports
+      const incomingConns = flowGraph.connections.filter((c) => c.toId === node.id)
+      if (incomingConns.length > 0) {
+        const allParentsFinished = incomingConns.every(
+          (c) => completedNodes.has(c.fromId) || failedNodes.has(c.fromId)
+        )
+        const allConnsInactive = incomingConns.every((c) => {
+          const fn = flowGraph.nodes.find((n) => n.id === c.fromId)
+          if (fn && isMultiPortNode(fn) && c.fromPort) {
+            const ports = activeNodePorts.get(c.fromId)
+            return !ports || !ports.has(c.fromPort)
+          }
+          return false
+        })
+        if (allParentsFinished && allConnsInactive) {
           return false
         }
       }
@@ -1284,7 +2209,7 @@
                 node.lastRun = {
                   durationMs: 0,
                   status: 'START',
-                  outputSummary: 'Início executado',
+                  outputSummary: 'Start executed',
                   timestamp: Date.now()
                 }
                 completedNodes.add(node.id)
@@ -1293,12 +2218,12 @@
                 node.lastRun = {
                   durationMs: 0,
                   status: 'TERMINATED',
-                  outputSummary: 'Execução interrompida aqui',
+                  outputSummary: 'Execution stopped here',
                   timestamp: Date.now()
                 }
                 completedNodes.add(node.id)
                 flowTerminated = true
-                showToast('Fluxo finalizado pelo bloco Terminate!')
+                showToast('Flow terminated by Terminate block!')
               } else if (node.type === 'event-throw') {
                 const evName = (node.eventData?.eventName || '').trim().toLowerCase()
                 if (evName) activeEvents.add(evName)
@@ -1309,12 +2234,12 @@
                   const targetName = targetInfo?.name || node.eventData.targetFlowName || 'Sub-Flow'
 
                   showToast(
-                    `⚡ [Sub-Flow Beta] Executando "${targetName}"... (Pode consumir mais CPU)`
+                    `⚡ [Sub-Flow Beta] Executing "${targetName}"...`
                   )
 
                   const subStart = Date.now()
                   let subSuccess = true
-                  let subLogs: string[] = [`Início do sub-flow: ${targetName}`]
+                  let subLogs: string[] = [`Sub-flow started: ${targetName}`]
                   let subLastResp = ''
 
                   if (targetInfo?.graph && targetInfo.graph.nodes?.length) {
@@ -1329,7 +2254,7 @@
                       let nodesToExecute = targetInfo.graph.nodes
                       if (matchingReceptors.length > 0) {
                         subLogs.push(
-                          `Encontrado(s) ${matchingReceptors.length} receptor(es) (Catch) para o evento "${evName}" em "${targetName}".`
+                          `Found ${matchingReceptors.length} receiver(s) (Catch) for event "${evName}" in "${targetName}".`
                         )
                         // Find all nodes reachable from these matching receptors
                         const reachable = new Set<string>()
@@ -1351,7 +2276,7 @@
                         }
                       } else if (evName) {
                         subLogs.push(
-                          `Nenhum receptor com evento "${evName}" em "${targetName}". Executando fluxo padrão.`
+                          `No receiver with event "${evName}" in "${targetName}". Executing default flow.`
                         )
                       }
 
@@ -1403,7 +2328,7 @@
                                 `REST ${subNode.restData.method} ${resUrl}: HTTP ${res.status}`
                               )
                             } catch (e) {
-                              subLogs.push(`Erro REST: ${(e as Error).message}`)
+                              subLogs.push(`REST error: ${(e as Error).message}`)
                             }
                           }
                         } else if (subNode.type === 'js' && subNode.jsData) {
@@ -1417,7 +2342,7 @@
                       }
                     } catch (err) {
                       subSuccess = false
-                      subLogs.push(`Erro na execução do sub-flow: ${(err as Error).message}`)
+                      subLogs.push(`Error executing sub-flow: ${(err as Error).message}`)
                     }
                   }
 
@@ -1426,7 +2351,7 @@
                   node.lastRun = {
                     durationMs: subDuration,
                     status: subSuccess ? 'SUBFLOW_OK' : 'SUBFLOW_ERROR',
-                    outputSummary: `Sub-flow "${targetName}" executado em ${subDuration}ms. Descarregado da memória.`,
+                    outputSummary: `Sub-flow "${targetName}" executed in ${subDuration}ms. Unloaded from memory.`,
                     responseText:
                       subLastResp ||
                       JSON.stringify({ subFlow: targetName, durationMs: subDuration }, null, 2),
@@ -1446,16 +2371,16 @@
                     ...node.history
                   ].slice(0, 5)
 
-                  showToast(`Sub-flow "${targetName}" concluído e liberado da memória!`)
+                  showToast(`Sub-flow "${targetName}" finished and released from memory!`)
                 } else {
                   node.status = 'success'
                   node.lastRun = {
                     durationMs: 0,
                     status: 'EVENT_THROWN',
-                    outputSummary: `Disparou: "${node.eventData?.eventName || ''}"`,
+                    outputSummary: `Triggered: "${node.eventData?.eventName || ''}"`,
                     timestamp: Date.now()
                   }
-                  showToast(`Evento disparado: "${node.eventData?.eventName || ''}"`)
+                  showToast(`Event triggered: "${node.eventData?.eventName || ''}"`)
                 }
                 completedNodes.add(node.id)
               } else if (node.type === 'event-catch') {
@@ -1463,11 +2388,11 @@
                 node.lastRun = {
                   durationMs: 0,
                   status: 'EVENT_CAUGHT',
-                  outputSummary: `Recebeu: "${node.eventData?.eventName || ''}"`,
+                  outputSummary: `Received: "${node.eventData?.eventName || ''}"`,
                   timestamp: Date.now()
                 }
                 completedNodes.add(node.id)
-                showToast(`Evento recebido: "${node.eventData?.eventName || ''}"`)
+                showToast(`Event received: "${node.eventData?.eventName || ''}"`)
               } else if (node.type === 'rest' && node.restData) {
                 const rest = node.restData
                 const resolvedUrl = resolveVariables(
@@ -1573,11 +2498,18 @@
                   currentEnv = { ...currentEnv, ...res.updatedEnv }
                   globalEnvironment = { ...globalEnvironment, ...res.updatedGlobalEnv }
                   node.status = 'success'
+                  if (res.activePorts?.length > 0) {
+                    activeNodePorts.set(node.id, new Set(res.activePorts))
+                  }
                   node.lastRun = {
                     durationMs,
                     status: 'OK',
                     outputSummary:
-                      res.logs.length > 0 ? res.logs[res.logs.length - 1] : 'Script finished',
+                      res.logs.length > 0
+                        ? res.logs[res.logs.length - 1]
+                        : res.activePorts?.length > 0
+                          ? `Script finished (Active ports: ${res.activePorts.join(', ')})`
+                          : 'Script finished',
                     timestamp: Date.now(),
                     logs: res.logs,
                     responseText: JSON.stringify(res.updatedEnv, null, 2)
@@ -1599,19 +2531,274 @@
                     durationMs,
                     status: 'ERRO',
                     error: res.error,
-                    outputSummary: res.error ?? 'Falha no script',
+                    outputSummary: res.error ?? 'Script failure',
                     timestamp: Date.now(),
                     logs: res.logs
                   }
                   failedNodes.add(node.id)
                 }
+              } else if (node.type === 'router' && node.routerData) {
+                const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+                let upstreamPayload: unknown = null
+                let upstreamStatus = 200
+                if (upConns.length > 0) {
+                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+                  if (upNode?.lastRun) {
+                    if (typeof upNode.lastRun.status === 'number') {
+                      upstreamStatus = upNode.lastRun.status
+                    }
+                    if (upNode.lastRun.responseText) {
+                      try {
+                        upstreamPayload = JSON.parse(upNode.lastRun.responseText)
+                      } catch {
+                        upstreamPayload = upNode.lastRun.responseText
+                      }
+                    }
+                  }
+                }
+
+                const res = evaluateRouterRules(
+                  node.routerData.rules || [],
+                  node.routerData.mode || 'first-match',
+                  upstreamPayload,
+                  upstreamStatus
+                )
+                const durationMs = Math.round(performance.now() - started)
+                const hasMatches = res.matchedPortIds.length > 0
+                node.status = hasMatches ? 'success' : 'error'
+
+                activeNodePorts.set(node.id, new Set(res.matchedPortIds))
+
+                const portSummary = res.matchedRules
+                  .map((r) => {
+                    const port = node.routerData?.ports.find((p) => p.id === r.portId)
+                    return `${port?.label || r.portId} (${r.label})`
+                  })
+                  .join(', ')
+
+                node.lastRun = {
+                  durationMs,
+                  status: hasMatches ? 'ROUTED' : 'NO_ROUTE',
+                  outputSummary: hasMatches ? `Routed: ${portSummary}` : 'No matching rule',
+                  timestamp: Date.now(),
+                  responseText: JSON.stringify(
+                    {
+                      upstreamStatus,
+                      matchedPorts: res.matchedPortIds,
+                      matchedRules: res.matchedRules
+                    },
+                    null,
+                    2
+                  )
+                }
+
+                const historyItem: FlowNodeExecutionHistoryEntry = {
+                  id: String(Date.now()),
+                  timestamp: Date.now(),
+                  status: hasMatches ? 200 : 404,
+                  durationMs,
+                  responseText: node.lastRun.responseText
+                }
+                node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+                if (hasMatches) {
+                  completedNodes.add(node.id)
+                } else {
+                  failedNodes.add(node.id)
+                }
+              } else if (node.type === 'transform') {
+                const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+                let inputPayload: unknown = null
+                if (upConns.length > 0) {
+                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+                  if (upNode?.lastRun?.responseText) {
+                    try {
+                      inputPayload = JSON.parse(upNode.lastRun.responseText)
+                    } catch {
+                      inputPayload = upNode.lastRun.responseText
+                    }
+                  }
+                }
+                if (!inputPayload && node.transformData?.sampleInput) {
+                  try {
+                    inputPayload = JSON.parse(node.transformData.sampleInput)
+                  } catch {
+                    inputPayload = node.transformData.sampleInput
+                  }
+                }
+                const mapped = applyMappings(inputPayload || {}, node.transformData?.mappings || [])
+                const responseText = JSON.stringify(mapped, null, 2)
+                if (node.transformData?.saveToEnvVar && activeEnvName) {
+                  currentEnv[node.transformData.saveToEnvVar] = responseText
+                  environments[activeEnvName] = { ...currentEnv }
+                  environments = { ...environments }
+                }
+                const durationMs = Math.round(performance.now() - started)
+                node.status = 'success'
+                node.lastRun = {
+                  durationMs,
+                  status: 200,
+                  outputSummary: `${(node.transformData?.mappings || []).length} fields mapped`,
+                  timestamp: Date.now(),
+                  responseText
+                }
+                const historyItem: FlowNodeExecutionHistoryEntry = {
+                  id: String(Date.now()),
+                  timestamp: Date.now(),
+                  status: 200,
+                  durationMs,
+                  responseText
+                }
+                node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+                completedNodes.add(node.id)
+              } else if (node.type === 'loop') {
+                const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+                let inputPayload: unknown = null
+                if (upConns.length > 0) {
+                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+                  if (upNode?.lastRun?.responseText) {
+                    try {
+                      inputPayload = JSON.parse(upNode.lastRun.responseText)
+                    } catch {
+                      inputPayload = upNode.lastRun.responseText
+                    }
+                  }
+                }
+                const mode = node.loopData?.mode || 'for-each'
+                let items: unknown[] = []
+                let arrayPath = node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
+
+                if (mode === 'count') {
+                  const count = Math.min(Math.max(1, Number(node.loopData?.repeatCount) || 5), node.loopData?.maxIterations || 1000)
+                  items = Array.from({ length: count }, (_, i) => ({ index: i, count: i + 1 }))
+                  arrayPath = `[Counter 0..${count - 1}]`
+                } else {
+                  const arr = extractValueByPath(inputPayload || {}, arrayPath)
+                  items = Array.isArray(arr) ? arr : (arr !== undefined ? [arr] : [inputPayload])
+                }
+
+                const max = node.loopData?.maxIterations || 1000
+                const processed = items.slice(0, max)
+
+                const itemVar = node.loopData?.itemVar || 'item'
+                const indexVar = node.loopData?.indexVar || 'index'
+                if (processed.length > 0 && activeEnvName) {
+                  currentEnv[itemVar] =
+                    typeof processed[0] === 'object' ? JSON.stringify(processed[0]) : String(processed[0])
+                  currentEnv[indexVar] = '0'
+                  currentEnv['loop_total'] = String(processed.length)
+                  environments[activeEnvName] = { ...currentEnv }
+                  environments = { ...environments }
+                }
+
+                const loopResult = {
+                  mode,
+                  arrayPath,
+                  totalItems: items.length,
+                  processedCount: processed.length,
+                  items: processed
+                }
+                const responseText = JSON.stringify(loopResult, null, 2)
+                const durationMs = Math.round(performance.now() - started)
+                node.status = 'success'
+                activeNodePorts.set(node.id, new Set(['item', 'done']))
+                node.lastRun = {
+                  durationMs,
+                  status: 'LOOP_DONE',
+                  outputSummary: mode === 'count' ? `Repeated ${processed.length} times` : `Iterated ${processed.length} items of "${arrayPath || '[ ] Root'}"`,
+                  timestamp: Date.now(),
+                  responseText
+                }
+                const historyItem: FlowNodeExecutionHistoryEntry = {
+                  id: String(Date.now()),
+                  timestamp: Date.now(),
+                  status: 'LOOP_DONE',
+                  durationMs,
+                  responseText
+                }
+                node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+                completedNodes.add(node.id)
+              } else if (node.type === 'delay') {
+                const delayMs = Math.min(node.delayData?.delayMs || 1000, 4000)
+                await new Promise((r) => setTimeout(r, delayMs))
+
+                const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+                let upstreamText = ''
+                if (upConns.length > 0) {
+                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+                  if (upNode?.lastRun?.responseText) {
+                    upstreamText = upNode.lastRun.responseText
+                  }
+                }
+                const durationMs = Math.round(performance.now() - started)
+                node.status = 'success'
+                activeNodePorts.set(node.id, new Set(['out']))
+                node.lastRun = {
+                  durationMs,
+                  status: 'DELAY_DONE',
+                  outputSummary: `Paused for ${delayMs}ms`,
+                  timestamp: Date.now(),
+                  responseText: upstreamText || JSON.stringify({ delayedMs: delayMs }, null, 2)
+                }
+                const historyItem: FlowNodeExecutionHistoryEntry = {
+                  id: String(Date.now()),
+                  timestamp: Date.now(),
+                  status: 'DELAY_DONE',
+                  durationMs,
+                  responseText: node.lastRun.responseText
+                }
+                node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+                completedNodes.add(node.id)
+              } else if (node.type === 'merge') {
+                const incomingConns = flowGraph.connections.filter((c) => c.toId === node.id)
+                const branchResults: Record<string, unknown> = {}
+                for (let idx = 0; idx < incomingConns.length; idx++) {
+                  const conn = incomingConns[idx]
+                  const fromNode = flowGraph.nodes.find((n) => n.id === conn.fromId)
+                  const branchKey = conn.toPort || fromNode?.title || `branch_${idx + 1}`
+                  if (fromNode?.lastRun?.responseText) {
+                    try {
+                      branchResults[branchKey] = JSON.parse(fromNode.lastRun.responseText)
+                    } catch {
+                      branchResults[branchKey] = fromNode.lastRun.responseText
+                    }
+                  } else {
+                    branchResults[branchKey] = null
+                  }
+                }
+
+                const mergedPayload = {
+                  mergedAt: Date.now(),
+                  strategy: node.mergeData?.strategy || 'wait-all',
+                  branchesCount: incomingConns.length,
+                  results: branchResults
+                }
+                const responseText = JSON.stringify(mergedPayload, null, 2)
+                const durationMs = Math.round(performance.now() - started)
+                node.status = 'success'
+                activeNodePorts.set(node.id, new Set(['joined']))
+                node.lastRun = {
+                  durationMs,
+                  status: 'MERGED',
+                  outputSummary: `${incomingConns.length} branches merged`,
+                  timestamp: Date.now(),
+                  responseText
+                }
+                const historyItem: FlowNodeExecutionHistoryEntry = {
+                  id: String(Date.now()),
+                  timestamp: Date.now(),
+                  status: 'MERGED',
+                  durationMs,
+                  responseText
+                }
+                node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+                completedNodes.add(node.id)
               }
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err)
               node.status = 'error'
               node.lastRun = {
                 durationMs: Math.round(performance.now() - started),
-                status: 'Falha',
+                status: 'Failed',
                 error: msg,
                 outputSummary: msg,
                 timestamp: Date.now()
@@ -1638,7 +2825,7 @@
       })
 
       if (flowTerminated) {
-        flowStatusMessage = `Fluxo finalizado: interrompido no bloco Terminate.`
+        flowStatusMessage = `Flow finished: stopped at Terminate block.`
         showToast(flowStatusMessage)
       } else {
         flowStatusMessage = `Flow completed: ${completedNodes.size} passed, ${failedNodes.size} failed.`
@@ -1661,55 +2848,52 @@
     )
   }
 
-  function getNodeOutputPort(node: FlowNode): { x: number; y: number } {
-    if (isCircleNode(node.type)) {
-      return {
-        x: node.x + CIRCLE_NODE_SIZE,
-        y: node.y + CIRCLE_NODE_SIZE / 2
-      }
-    }
-    return {
-      x: node.x + NODE_WIDTH,
-      y: node.y + 45
-    }
+
+
+  function getNodeOutputPort(
+    node: FlowNode,
+    portId?: string
+  ): { x: number; y: number; direction?: 'top' | 'right' | 'bottom' | 'left' } {
+    return getOutputPortPoint(node, portId)
   }
 
-  function getNodeInputPort(node: FlowNode): { x: number; y: number } {
-    if (isCircleNode(node.type)) {
-      return {
-        x: node.x,
-        y: node.y + CIRCLE_NODE_SIZE / 2
-      }
-    }
-    return {
-      x: node.x,
-      y: node.y + 45
-    }
+  function getNodeInputPort(
+    node: FlowNode,
+    portId?: string
+  ): { x: number; y: number; direction?: 'top' | 'right' | 'bottom' | 'left' } {
+    return getInputPortPoint(node, portId)
   }
 
-  function getBezierPath(x1: number, y1: number, x2: number, y2: number): string {
-    const dx = Math.abs(x2 - x1) * 0.5
-    const cx1 = x1 + Math.max(40, dx)
-    const cy1 = y1
-    const cx2 = x2 - Math.max(40, dx)
-    const cy2 = y2
-    return `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`
+  function getBezierPath(
+    x1OrP1: number | { x: number; y: number; direction?: 'top' | 'right' | 'bottom' | 'left' },
+    y1OrP2: number | { x: number; y: number; direction?: 'top' | 'right' | 'bottom' | 'left' },
+    x2?: number,
+    y2?: number
+  ): string {
+    if (typeof x1OrP1 === 'object' && typeof y1OrP2 === 'object') {
+      return computeBezierPath(x1OrP1, x1OrP1.direction, y1OrP2, y1OrP2.direction)
+    }
+    const p1 = { x: Number(x1OrP1), y: Number(y1OrP2), direction: 'right' as const }
+    const p2 = { x: Number(x2), y: Number(y2), direction: 'left' as const }
+    return computeBezierPath(p1, 'right', p2, 'left')
   }
 
   function getPathMidpoint(
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number
+    x1OrP1: number | { x: number; y: number; direction?: 'top' | 'right' | 'bottom' | 'left' },
+    y1OrP2: number | { x: number; y: number; direction?: 'top' | 'right' | 'bottom' | 'left' },
+    x2?: number,
+    y2?: number
   ): { x: number; y: number } {
-    return {
-      x: (x1 + x2) / 2,
-      y: (y1 + y2) / 2
+    if (typeof x1OrP1 === 'object' && typeof y1OrP2 === 'object') {
+      return getBezierMidpoint(x1OrP1, x1OrP1.direction, y1OrP2, y1OrP2.direction)
     }
+    const p1 = { x: Number(x1OrP1), y: Number(y1OrP2), direction: 'right' as const }
+    const p2 = { x: Number(x2), y: Number(y2), direction: 'left' as const }
+    return getBezierMidpoint(p1, 'right', p2, 'left')
   }
 </script>
 
-<svelte:window on:click={() => (fileMenuOpen = false)} />
+<svelte:window on:click={() => { fileMenuOpen = false; examplesMenuOpen = false; }} on:keydown={handleKeydown} />
 
 <div class="flow-container">
   <!-- Top Canvas Toolbar -->
@@ -1729,7 +2913,7 @@
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
             <polygon points="5 3 19 12 5 21 5 3" />
           </svg>
-          <span>▶ Run Flow</span>
+          <span>Run Flow</span>
         {/if}
       </button>
       {#if flowStatusMessage}
@@ -1737,51 +2921,63 @@
       {/if}
     </div>
 
-    <div class="flow-toolbar-divider"></div>
-
-    <!-- Group 2: Palette / Adicionar Blocos -->
+    <!-- Group 2: Palette / Add Blocks -->
     <div class="flow-toolbar-group flow-toolbar-palette">
-      <span class="toolbar-group-label">Blocos:</span>
+      <span class="toolbar-group-label">Blocks:</span>
       <button
         type="button"
         class="flow-btn flow-btn-draggable"
         draggable="true"
-        title="Bloco REST: Requisição HTTP (GET, POST, etc.)"
+        title="REST Block: HTTP Request (GET, POST, etc.)"
         on:click={() => addNode('rest')}
         on:dragstart={(e) => onNewBlockDragStart(e, 'rest')}
         on:dragend={onNewBlockDragEnd}
       >
         <span class="btn-icon">🌐</span>
         <span>＋ REST Block</span>
-        <span class="btn-drag-handle" title="Arraste para soltar no fluxo">⋮⋮</span>
+        <span class="btn-drag-handle" title="Drag to drop into flow">⋮⋮</span>
       </button>
 
       <button
         type="button"
-        class="flow-btn flow-btn-draggable"
+        class="flow-btn flow-btn-draggable flow-btn-js"
         draggable="true"
-        title="Bloco JavaScript: Script com variáveis e condicionais IF"
+        title="Logic & Code Block: JavaScript or JSON Schema Mapper (switch type directly on the node via ↻)"
         on:click={() => addNode('js')}
         on:dragstart={(e) => onNewBlockDragStart(e, 'js')}
         on:dragend={onNewBlockDragEnd}
       >
         <span class="btn-icon">⚡</span>
-        <span>＋ JS Block</span>
-        <span class="btn-drag-handle" title="Arraste para soltar no fluxo">⋮⋮</span>
+        <span>＋ Logic & Code</span>
+        <span class="btn-drag-handle" title="Drag to drop into flow">⋮⋮</span>
+      </button>
+
+      <button
+        type="button"
+        class="flow-btn flow-btn-draggable flow-btn-router"
+        draggable="true"
+        title="Flow Control Block: Gateway Router, Loop, Delay or Merge (switch type directly on the node via ↻)"
+        on:click={() => addNode('router')}
+        on:dragstart={(e) => onNewBlockDragStart(e, 'router')}
+        on:dragend={onNewBlockDragEnd}
+      >
+        <span class="btn-icon">🔀</span>
+        <span>＋ Flow Control</span>
+        <span class="btn-drag-handle" title="Drag to drop into flow">⋮⋮</span>
       </button>
 
       <button
         type="button"
         class="flow-btn flow-btn-draggable flow-btn-event"
         draggable="true"
-        title="Bloco de Evento / BPMN: Início, Terminate, Salto ou Receptor (altere o tipo direto na bola)"
+        title="Event / BPMN Block: Start, Terminate, Jump or Receiver (change type directly on the node via ↻)"
         on:click={() => addNode('event-throw')}
         on:dragstart={(e) => onNewBlockDragStart(e, 'event-throw')}
         on:dragend={onNewBlockDragEnd}
       >
         <span class="btn-icon">⭕</span>
-        <span>＋ Evento</span>
-        <span class="btn-drag-handle" title="Arraste para soltar no fluxo">⋮⋮</span>
+        <span>＋ Event</span>
+        <span class="btn-drag-handle" title="Drag to drop into flow">⋮⋮</span>
       </button>
     </div>
 
@@ -1792,7 +2988,7 @@
       <button
         type="button"
         class="flow-btn flow-btn-layout"
-        title="Organizar blocos automaticamente em layout diagramático inteligente"
+        title="Automatically organize blocks in smart diagram layout"
         on:click={autoLayout}
       >
         <span class="btn-icon">🪄</span>
@@ -1800,11 +2996,68 @@
       </button>
     </div>
 
+    <!-- Group 3b: Preset Examples Menu -->
+    <div class="flow-toolbar-group flow-examples-menu">
+      <div class="flow-examples-wrap">
+        <button
+          type="button"
+          class="flow-btn"
+          class:is-open={examplesMenuOpen}
+          title="Load ready-made example flows using the Rick & Morty API"
+          aria-haspopup="menu"
+          aria-expanded={examplesMenuOpen}
+          on:click|stopPropagation={() => {
+            examplesMenuOpen = !examplesMenuOpen
+            fileMenuOpen = false
+          }}
+        >
+          <span class="btn-icon">🧬</span>
+          <span class="btn-text">Examples</span>
+          <span class="btn-caret">▾</span>
+        </button>
+        {#if examplesMenuOpen}
+          <div class="flow-menu flow-examples-dropdown" role="menu">
+            <div class="flow-menu-header">RICK & MORTY EXAMPLES</div>
+            <button
+              type="button"
+              role="menuitem"
+              class="menu-item-rich"
+              on:click={() => {
+                examplesMenuOpen = false
+                resetToExample(1)
+              }}
+            >
+              <span class="menu-item-icon">🧬</span>
+              <div class="menu-item-desc">
+                <strong>Example 1: Linear (Basic)</strong>
+                <small>REST + Script JS + Event Jump/Receiver</small>
+              </div>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="menu-item-rich"
+              on:click={() => {
+                examplesMenuOpen = false
+                resetToExample(2)
+              }}
+            >
+              <span class="menu-item-icon">🔀</span>
+              <div class="menu-item-desc">
+                <strong>Example 2: Advanced (Router & Connectors)</strong>
+                <small>Conditional Router + Multi-Ports + JSON Mapper</small>
+              </div>
+            </button>
+          </div>
+        {/if}
+      </div>
+    </div>
+
     <!-- Spacer pushes File & Actions to the right -->
     <div class="flow-toolbar-spacer"></div>
 
     {#if activeFlowName}
-      <div class="flow-active-badge" title="Spatial Flow ativo neste Workspace">
+      <div class="flow-active-badge" title="Active Spatial Flow in this Workspace">
         <span class="active-group-label">{activeGroupName ? `📁 ${activeGroupName} /` : ''}</span>
         <span class="active-flow-label">🔀 {activeFlowName}</span>
       </div>
@@ -1814,36 +3067,29 @@
       <button
         type="button"
         class="flow-btn flow-btn-primary"
-        title="Salvar alterações no Spatial Flow deste workspace"
+        title="Save changes to Spatial Flow in this workspace (Ctrl+S)"
         on:click={() => onSaveFlowToWorkspace && onSaveFlowToWorkspace(false)}
       >
         <span class="btn-icon">💾</span>
-        <span>Salvar</span>
-      </button>
-
-      <button
-        type="button"
-        class="flow-btn"
-        title="Salvar como um novo Spatial Flow ou em outro Grupo"
-        on:click={() => onSaveFlowToWorkspace && onSaveFlowToWorkspace(true)}
-      >
-        <span class="btn-icon">📝</span>
-        <span>Salvar Como…</span>
+        <span>Save</span>
       </button>
     {/if}
 
-    <!-- Group 4: File & Flow Actions (Distinctly on the right) -->
+    <!-- Group 4: File & Flow Actions (Unified dropdown) -->
     <div class="flow-toolbar-group flow-toolbar-actions">
-      <!-- File menu (Open / Save / Save As / Import / Export) -->
+      <!-- File menu (Workspace / Files / Templates / Canvas) -->
       <div class="flow-file-menu">
         <button
           type="button"
           class="flow-btn"
           class:is-open={fileMenuOpen}
-          title={flowFileName ? `Flow file: ${flowFileName}` : 'Flow file actions'}
+          title={flowFileName ? `Flow file: ${flowFileName}` : 'Flow actions, files and options'}
           aria-haspopup="menu"
           aria-expanded={fileMenuOpen}
-          on:click|stopPropagation={() => (fileMenuOpen = !fileMenuOpen)}
+          on:click|stopPropagation={() => {
+            fileMenuOpen = !fileMenuOpen
+            examplesMenuOpen = false
+          }}
         >
           <span class="btn-icon">📁</span>
           <span class="btn-text file-name">{flowFileName || 'File'}</span>
@@ -1857,7 +3103,12 @@
             <button
               type="button"
               role="menuitem"
-              on:click={() => runFileAction(() => saveFlowFile(false))}
+              on:click={() =>
+                runFileAction(() =>
+                  onSaveFlowToWorkspace
+                    ? onSaveFlowToWorkspace(false)
+                    : saveFlowFile(false)
+                )}
             >
               <span>💾 Save</span>
               {#if flowFileName}<small>{flowFileName}</small>{/if}
@@ -1865,7 +3116,12 @@
             <button
               type="button"
               role="menuitem"
-              on:click={() => runFileAction(() => saveFlowFile(true))}
+              on:click={() =>
+                runFileAction(() =>
+                  onSaveFlowToWorkspace
+                    ? onSaveFlowToWorkspace(true)
+                    : saveFlowFile(true)
+                )}
             >
               <span>📝 Save As…</span>
             </button>
@@ -1876,29 +3132,34 @@
             <button type="button" role="menuitem" on:click={() => runFileAction(exportFlowFile)}>
               <span>📤 Export (download)</span>
             </button>
+            <div class="flow-menu-sep"></div>
+            <div class="flow-menu-header">RICK & MORTY EXAMPLES</div>
+            <button
+              type="button"
+              role="menuitem"
+              on:click={() => runFileAction(() => resetToExample(1))}
+            >
+              <span>🧬 Example 1: Linear (Basic)</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              on:click={() => runFileAction(() => resetToExample(2))}
+            >
+              <span>🔀 Example 2: Advanced (Router & Connectors)</span>
+            </button>
+            <div class="flow-menu-sep"></div>
+            <button
+              type="button"
+              role="menuitem"
+              class="flow-menu-item-danger"
+              on:click={() => runFileAction(clearAll)}
+            >
+              <span>🧹 Clear</span>
+            </button>
           </div>
         {/if}
       </div>
-
-      <button
-        type="button"
-        class="flow-btn flow-btn-secondary"
-        title="Carregar fluxo de exemplo completo Rick & Morty"
-        on:click={resetToExample}
-      >
-        <span class="btn-icon">🧬</span>
-        <span>Example</span>
-      </button>
-
-      <button
-        type="button"
-        class="flow-btn flow-btn-secondary flow-btn-clear"
-        title="Limpar todos os blocos do canvas"
-        on:click={clearAll}
-      >
-        <span class="btn-icon">🧹</span>
-        <span>Clear</span>
-      </button>
     </div>
 
     <input
@@ -1973,9 +3234,9 @@
               {@const fromNode = flowGraph.nodes.find((n) => n.id === conn.fromId)}
               {@const toNode = flowGraph.nodes.find((n) => n.id === conn.toId)}
               {#if fromNode && toNode}
-                {@const p1 = getNodeOutputPort(fromNode)}
-                {@const p2 = getNodeInputPort(toNode)}
-                {@const pathD = getBezierPath(p1.x, p1.y, p2.x, p2.y)}
+                {@const p1 = getNodeOutputPort(fromNode, conn.fromPort)}
+                {@const p2 = getNodeInputPort(toNode, conn.toPort)}
+                {@const pathD = computeBezierPath(p1, p1.direction, p2, p2.direction)}
                 {@const isRunning = fromNode.status === 'running' || toNode.status === 'running'}
                 {@const isSelected = selectedConnection?.id === conn.id}
 
@@ -2008,9 +3269,9 @@
             {#if connectingFromId}
               {@const sourceNode = flowGraph.nodes.find((n) => n.id === connectingFromId)}
               {#if sourceNode}
-                {@const sp = getNodeOutputPort(sourceNode)}
+                {@const sp = getNodeOutputPort(sourceNode, connectingFromPortId || undefined)}
                 <path
-                  d={getBezierPath(sp.x, sp.y, mouseX, mouseY)}
+                  d={computeBezierPath(sp, sp.direction, { x: mouseX, y: mouseY, direction: 'left' }, 'left')}
                   class="conn-line-draft"
                   marker-end="url(#arrow-solid)"
                 />
@@ -2092,8 +3353,8 @@
                   type="button"
                   class="circle-switch-btn"
                   class:active={activeCircleSwitcherId === node.id}
-                  title="Alterar tipo de evento (Início, Terminate, Salto, Receptor)"
-                  aria-label="Alterar tipo de evento"
+                  title="Change event type (Start, Terminate, Jump, Receiver)"
+                  aria-label="Change event type"
                   on:click|stopPropagation={() => toggleCircleSwitcher(node.id)}
                 >
                   <svg
@@ -2148,17 +3409,17 @@
                       type="button"
                       class="circle-type-btn green"
                       class:active={node.type === 'start'}
-                      title="Início: Ponto de partida do fluxo"
+                      title="Start: Flow starting point"
                       on:click|stopPropagation={() => setCircleNodeType(node, 'start')}
                     >
                       <span class="type-disc green"></span>
-                      <span class="type-name">Início</span>
+                      <span class="type-name">Start</span>
                     </button>
                     <button
                       type="button"
                       class="circle-type-btn red"
                       class:active={node.type === 'terminate'}
-                      title="Terminate: Encerra o fluxo imediatamente"
+                      title="Terminate: Stop flow immediately"
                       on:click|stopPropagation={() => setCircleNodeType(node, 'terminate')}
                     >
                       <span class="type-disc red"></span>
@@ -2168,21 +3429,21 @@
                       type="button"
                       class="circle-type-btn blue"
                       class:active={node.type === 'event-throw'}
-                      title="Salto: Transmite evento sem fio"
+                      title="Jump: Transmit event wirelessly"
                       on:click|stopPropagation={() => setCircleNodeType(node, 'event-throw')}
                     >
                       <span class="type-disc blue"></span>
-                      <span class="type-name">Salto</span>
+                      <span class="type-name">Jump</span>
                     </button>
                     <button
                       type="button"
                       class="circle-type-btn blue-dashed"
                       class:active={node.type === 'event-catch'}
-                      title="Receptor: Aguarda evento sem fio"
+                      title="Receiver: Wait for wireless event"
                       on:click|stopPropagation={() => setCircleNodeType(node, 'event-catch')}
                     >
                       <span class="type-disc blue-dashed"></span>
-                      <span class="type-name">Receptor</span>
+                      <span class="type-name">Receiver</span>
                     </button>
                   </div>
                 {/if}
@@ -2194,6 +3455,7 @@
                 class="flow-node flow-node-{node.type}"
                 class:is-selected={node.id === selectedNodeId}
                 class:is-dragging={node.id === draggingNodeId}
+                class:has-switcher-open={activeCardSwitcherId === node.id}
                 class:status-idle={node.status === 'idle'}
                 class:status-waiting={node.status === 'waiting'}
                 class:status-running={node.status === 'running'}
@@ -2209,17 +3471,69 @@
                   }
                 }}
               >
-                <!-- Input Port -->
-                <div
-                  class="node-port port-input"
-                  title="Drop connection here to connect"
-                  on:mouseup|stopPropagation={() => endConnect(node.id)}
-                ></div>
+                <!-- Switch Type Button for Cards (top-left ↻) -->
+                {#if node.type !== 'rest'}
+                  <button
+                    type="button"
+                    class="card-switch-btn"
+                    class:active={activeCardSwitcherId === node.id}
+                    title="Change block type"
+                    aria-label="Change block type"
+                    on:click|stopPropagation={() => toggleCardSwitcher(node.id)}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="11"
+                      height="11"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
+                      <path d="M21 3v5h-5" />
+                    </svg>
+                  </button>
+
+                  {#if activeCardSwitcherId === node.id}
+                    <NodeTypeSwitcher
+                      {node}
+                      alignLeft={node.x < 150}
+                      alignBottom={node.y < 60}
+                      on:select={(e) => switchNodeType(node, e.detail)}
+                    />
+                  {/if}
+                {/if}
+
+                <!-- Input Port(s) -->
+                {#if node.type === 'merge' && node.mergeData?.inputs && node.mergeData.inputs.length > 0}
+                  <div class="node-inputs-rack">
+                    {#each node.mergeData.inputs as inp (inp.id)}
+                      {@const inpPt = getInputPortPoint(node, inp.id)}
+                      {@const relY = inpPt.y - node.y}
+                      <div
+                        class="node-port port-input port-multi-input"
+                        style="top: {relY}px; left: 0;"
+                        title="{inp.label} (Input)"
+                        on:mouseup|stopPropagation={() => endConnect(node.id, inp.id)}
+                      >
+                        <span class="port-tooltip input-tip">{inp.label}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <div
+                    class="node-port port-input"
+                    title="Drop connection here to connect"
+                    on:mouseup|stopPropagation={() => endConnect(node.id)}
+                  ></div>
+                {/if}
 
                 <!-- Node Header -->
                 <div class="node-header">
                   <div class="node-title-wrap">
-                    <span class="node-type-icon">{node.type === 'rest' ? '🌐' : '⚡'}</span>
+                    <span class="node-type-icon">{FLOW_NODE_REGISTRY[node.type]?.icon || '📦'}</span>
                     <input
                       class="node-title-input"
                       type="text"
@@ -2243,7 +3557,7 @@
                   </div>
                 </div>
 
-                <!-- Node Body / Summary Preview -->
+                <!-- Node Body / Summary Preview (Slim 1-2 lines matching JS block) -->
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
@@ -2269,9 +3583,75 @@
                         🎯 {node.restData.captures.filter((c) => c.enabled).length} variable(s) captured
                       </div>
                     {/if}
+                  {:else if node.type === 'router' && node.routerData}
+                    <div class="node-router-preview-compact">
+                      <div class="node-compact-summary" title={node.routerData.rules.map((r) => r.label).join(', ')}>
+                        <span class="summary-label">routes:</span>
+                        <span class="summary-val">
+                          {node.routerData.rules.map((r) => r.statusPattern || r.path || 'otherwise').slice(0, 3).join(', ')}{node.routerData.rules.length > 3 ? '...' : ''}
+                        </span>
+                      </div>
+                      <div class="node-sub-meta">
+                        <span class="compact-chip">{node.routerData.mode === 'first-match' ? 'First Match' : 'All Matches'}</span>
+                        <span>· {node.routerData.rules.length} rules</span>
+                      </div>
+                    </div>
                   {:else if node.type === 'js' && node.jsData}
                     <div class="node-js-preview">
                       <code>{node.jsData.code.split('\n').filter(Boolean)[0] || '// JS Code'}</code>
+                    </div>
+                    {#if node.jsData.ports && node.jsData.ports.length > 0}
+                      <div class="node-sub-meta">
+                        🔀 {node.jsData.ports.length} dynamic output port(s)
+                      </div>
+                    {/if}
+                  {:else if node.type === 'transform'}
+                    <div class="node-transform-preview-compact">
+                      <div class="node-compact-summary">
+                        <span class="summary-label">map:</span>
+                        <span class="summary-val">{node.transformData?.mappings?.length ? `${node.transformData.mappings.length} fields mapped` : 'payload ➔ output'}</span>
+                      </div>
+                      <div class="node-sub-meta">
+                        <span class="compact-chip">JSON Mapper</span>
+                        <span>· Visual 2-Tree</span>
+                      </div>
+                    </div>
+                  {:else if node.type === 'loop'}
+                    <div class="node-loop-preview-compact">
+                      <div class="node-compact-summary">
+                        <span class="summary-label">{node.loopData?.mode === 'count' ? 'repeat:' : 'array:'}</span>
+                        <span class="summary-val">
+                          {node.loopData?.mode === 'count'
+                            ? `${node.loopData?.repeatCount || 5}x [ ${node.loopData?.indexVar || 'index'} ]`
+                            : `${node.loopData?.arrayPath || 'items'} [ ${node.loopData?.itemVar || 'item'} ]`}
+                        </span>
+                      </div>
+                      <div class="node-sub-meta">
+                        <span class="compact-chip">Max {node.loopData?.maxIterations || 1000}</span>
+                        <span>· {node.loopData?.mode === 'count' ? 'contador' : 'for-each'}</span>
+                      </div>
+                    </div>
+                  {:else if node.type === 'delay'}
+                    <div class="node-delay-preview-compact">
+                      <div class="node-compact-summary">
+                        <span class="summary-label">pause:</span>
+                        <span class="summary-val">{node.delayData?.delayMs || 1000}ms {node.delayData?.mode === 'throttle' ? '(rate limit)' : 'delay'}</span>
+                      </div>
+                      <div class="node-sub-meta">
+                        <span class="compact-chip">{node.delayData?.mode === 'throttle' ? 'Throttle' : 'Fixed Delay'}</span>
+                        <span>· Queue buffer</span>
+                      </div>
+                    </div>
+                  {:else if node.type === 'merge'}
+                    <div class="node-merge-preview-compact">
+                      <div class="node-compact-summary">
+                        <span class="summary-label">sync:</span>
+                        <span class="summary-val">{node.mergeData?.strategy === 'wait-all' ? 'Wait All Branches' : 'First Complete'}</span>
+                      </div>
+                      <div class="node-sub-meta">
+                        <span class="compact-chip">{node.mergeData?.inputs?.length || 2} entradas</span>
+                        <span>· Barreira join</span>
+                      </div>
                     </div>
                   {/if}
                 </div>
@@ -2312,12 +3692,31 @@
                   {/if}
                 </div>
 
-                <!-- Output Port -->
-                <div
-                  class="node-port port-output"
-                  title="Click and drag to connect to another block"
-                  on:mousedown={(e) => startConnect(e, node.id)}
-                ></div>
+                <!-- Output Ports: Multi-port Rack or Standard Single Output -->
+                {#if isMultiPortNode(node)}
+                  <div class="node-ports-rack">
+                    {#each getNodePorts(node) as port (port.id)}
+                      {@const pt = getOutputPortPoint(node, port.id)}
+                      {@const relX = pt.x - node.x}
+                      {@const relY = pt.y - node.y}
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <div
+                        class="node-port port-output port-multi slot-{port.slot}"
+                        style="left: {relX}px; top: {relY}px; {port.color ? `border-color: ${port.color};` : ''}"
+                        title="{port.label} ({port.slot.toUpperCase()})"
+                        on:mousedown={(e) => startConnect(e, node.id, port.id)}
+                      >
+                        <span class="port-tooltip slot-tip-{port.slot}">{port.label}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <div
+                    class="node-port port-output"
+                    title="Click and drag to connect to another block"
+                    on:mousedown={(e) => startConnect(e, node.id)}
+                  ></div>
+                {/if}
               </div>
             {/if}
           {/each}
@@ -2328,9 +3727,9 @@
             {@const sFrom = flowGraph.nodes.find((n) => n.id === selConn.fromId)}
             {@const sTo = flowGraph.nodes.find((n) => n.id === selConn.toId)}
             {#if sFrom && sTo}
-              {@const p1 = getNodeOutputPort(sFrom)}
-              {@const p2 = getNodeInputPort(sTo)}
-              {@const mid = getPathMidpoint(p1.x, p1.y, p2.x, p2.y)}
+              {@const p1 = getNodeOutputPort(sFrom, selConn.fromPort)}
+              {@const p2 = getNodeInputPort(sTo, selConn.toPort)}
+              {@const mid = getBezierMidpoint(p1, p1.direction, p2, p2.direction)}
               <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
               <div
                 class="conn-ball-overlay-wrap"
@@ -2387,25 +3786,25 @@
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="flow-floating-legend" on:click|stopPropagation>
-        <span class="legend-badge">Legenda</span>
+        <span class="legend-badge">Legend</span>
         <div class="legend-items">
-          <span class="legend-item" title="Linha sólida: aguarda conclusão do nó anterior"
-            ><span class="legend-line solid"></span> Espera</span
+          <span class="legend-item" title="Solid line: waits for previous node completion"
+            ><span class="legend-line solid"></span> Wait</span
           >
-          <span class="legend-item" title="Linha pontilhada: execução assíncrona sem travar"
+          <span class="legend-item" title="Dotted line: asynchronous execution without blocking"
             ><span class="legend-line dotted"></span> Async</span
           >
-          <span class="legend-item" title="Nó de Início: ponto de partida do fluxo"
-            ><span class="legend-dot green"></span> Início</span
+          <span class="legend-item" title="Start Node: flow starting point"
+            ><span class="legend-dot green"></span> Start</span
           >
-          <span class="legend-item" title="Nó de Término: encerra e interrompe o fluxo"
+          <span class="legend-item" title="End Node: terminates and stops the flow"
             ><span class="legend-dot red"></span> Terminate</span
           >
-          <span class="legend-item" title="Salto sem fio: emite o evento para receptores"
-            ><span class="legend-dot blue"></span> Salto</span
+          <span class="legend-item" title="Wireless jump: emits event to receivers"
+            ><span class="legend-dot blue"></span> Jump</span
           >
-          <span class="legend-item" title="Receptor sem fio: aguarda o evento para continuar"
-            ><span class="legend-dot blue-dashed"></span> Receptor</span
+          <span class="legend-item" title="Wireless receiver: waits for event to continue"
+            ><span class="legend-dot blue-dashed"></span> Receiver</span
           >
         </div>
       </div>
@@ -2667,6 +4066,14 @@
             <button
               type="button"
               class="side-tab-btn"
+              class:active={sidePanelTab === 'ports'}
+              on:click={() => (sidePanelTab = 'ports')}
+            >
+              Ports ({(selectedNode.jsData?.ports || []).length}/10)
+            </button>
+            <button
+              type="button"
+              class="side-tab-btn"
               class:active={sidePanelTab === 'response'}
               on:click={() => (sidePanelTab = 'response')}
             >
@@ -2683,14 +4090,25 @@
             >
               Env
             </button>
-          {:else if selectedNode.type === 'event-throw' || selectedNode.type === 'event-catch'}
+          {:else if selectedNode.type === 'router'}
             <button
               type="button"
               class="side-tab-btn"
-              class:active={sidePanelTab === 'config'}
-              on:click={() => (sidePanelTab = 'config')}
+              class:active={sidePanelTab === 'rules'}
+              on:click={() => (sidePanelTab = 'rules')}
             >
-              Evento
+              Routing Rules
+              {#if selectedNode.routerData?.rules && selectedNode.routerData.rules.length > 0}
+                <span class="side-tab-badge">{selectedNode.routerData.rules.length}</span>
+              {/if}
+            </button>
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'ports'}
+              on:click={() => (sidePanelTab = 'ports')}
+            >
+              Output Ports ({(selectedNode.routerData?.ports || []).length}/10)
             </button>
             <button
               type="button"
@@ -2698,7 +4116,95 @@
               class:active={sidePanelTab === 'response'}
               on:click={() => (sidePanelTab = 'response')}
             >
-              Execução
+              History & Routing
+              {#if selectedNode.history && selectedNode.history.length > 0}
+                <span class="side-tab-badge">{selectedNode.history.length}/5</span>
+              {/if}
+            </button>
+          {:else if selectedNode.type === 'transform'}
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'config'}
+              on:click={() => (sidePanelTab = 'config')}
+            >
+              Schema Mapping
+            </button>
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'response'}
+              on:click={() => (sidePanelTab = 'response')}
+            >
+              Preview & Output
+            </button>
+          {:else if selectedNode.type === 'loop'}
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'config'}
+              on:click={() => (sidePanelTab = 'config')}
+            >
+              Iterator Settings
+            </button>
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'response'}
+              on:click={() => (sidePanelTab = 'response')}
+            >
+              Execution
+            </button>
+          {:else if selectedNode.type === 'delay'}
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'config'}
+              on:click={() => (sidePanelTab = 'config')}
+            >
+              Delay & Throttle
+            </button>
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'response'}
+              on:click={() => (sidePanelTab = 'response')}
+            >
+              Execution
+            </button>
+          {:else if selectedNode.type === 'merge'}
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'config'}
+              on:click={() => (sidePanelTab = 'config')}
+            >
+              Synchronization Barrier
+            </button>
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'response'}
+              on:click={() => (sidePanelTab = 'response')}
+            >
+              Execution
+            </button>
+          {:else if selectedNode.type === 'event-throw' || selectedNode.type === 'event-catch'}
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'config'}
+              on:click={() => (sidePanelTab = 'config')}
+            >
+              Event
+            </button>
+            <button
+              type="button"
+              class="side-tab-btn"
+              class:active={sidePanelTab === 'response'}
+              on:click={() => (sidePanelTab = 'response')}
+            >
+              Execution
             </button>
           {:else if selectedNode.type === 'start' || selectedNode.type === 'terminate'}
             <button
@@ -2707,7 +4213,7 @@
               class:active={sidePanelTab === 'config'}
               on:click={() => (sidePanelTab = 'config')}
             >
-              Propriedades
+              Properties
             </button>
             <button
               type="button"
@@ -2715,7 +4221,7 @@
               class:active={sidePanelTab === 'response'}
               on:click={() => (sidePanelTab = 'response')}
             >
-              Execução
+              Execution
             </button>
           {/if}
         </div>
@@ -2771,10 +4277,17 @@
                         <div class="kv-col-del">
                           <button
                             type="button"
-                            class="kv-del-btn"
+                            class="req-delete-btn"
                             title="Remove parameter"
-                            on:click={() => removeParam(pIdx)}>×</button
+                            aria-label="Remove parameter"
+                            on:click={() => removeParam(pIdx)}
                           >
+                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M3 6h18" />
+                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          </button>
                         </div>
                       </div>
                     {/each}
@@ -2875,10 +4388,17 @@
                           <div class="kv-col-del">
                             <button
                               type="button"
-                              class="kv-del-btn"
+                              class="req-delete-btn"
                               title="Remove header"
-                              on:click={() => removeHeaderRow(hIdx)}>×</button
+                              aria-label="Remove header"
+                              on:click={() => removeHeaderRow(hIdx)}
                             >
+                              <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M3 6h18" />
+                                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                              </svg>
+                            </button>
                           </div>
                         </div>
                       {/each}
@@ -3115,13 +4635,13 @@
                             <button
                               type="button"
                               class="env-copy-chip"
-                              title="Copiar marcador"
+                              title="Copy placeholder"
                               on:click={() => {
                                 navigator.clipboard.writeText(`{{${k}}}`)
                                 showToast(`Variable {{${k}}} copied!`)
                               }}
                             >
-                              Copiar
+                              Copy
                             </button>
                           </div>
                           <div class="env-var-value" title={v}>{v}</div>
@@ -3134,7 +4654,7 @@
                 <!-- Global Variables -->
                 <div class="env-section-box">
                   <span class="env-section-title"
-                    >🌐 Env Geral / Globais ({Object.keys(globalEnvironment).length})</span
+                    >🌐 General / Global Env ({Object.keys(globalEnvironment).length})</span
                   >
                   <div class="env-vars-grid">
                     {#if Object.keys(globalEnvironment).length === 0}
@@ -3147,13 +4667,13 @@
                             <button
                               type="button"
                               class="env-copy-chip"
-                              title="Copiar marcador"
+                              title="Copy placeholder"
                               on:click={() => {
                                 navigator.clipboard.writeText(`{{${k}}}`)
                                 showToast(`Global variable {{${k}}} copied!`)
                               }}
                             >
-                              Copiar
+                              Copy
                             </button>
                           </div>
                           <div class="env-var-value" title={v}>{v}</div>
@@ -3237,11 +4757,11 @@
                             <button
                               type="button"
                               class="hist-open-btn"
-                              title="Abrir esta resposta no editor JSON"
+                              title="Open this response in JSON editor"
                               on:click={() =>
                                 selectedNode && openResponseInEditor(selectedNode, entry)}
                             >
-                              ↗ Abrir no Editor
+                              ↗ Open in Editor
                             </button>
                           {/if}
                         </div>
@@ -3279,6 +4799,22 @@
                   >
                     + console.log
                   </button>
+                  <button
+                    type="button"
+                    class="preset-chip chip-port"
+                    title="Route to a specific output port"
+                    on:click={() => insertJsSnippet("// Route flow to specific output port\nroute('port_top_1');")}
+                  >
+                    + route('port')
+                  </button>
+                  <button
+                    type="button"
+                    class="preset-chip chip-port"
+                    title="Emit data to a specific output port"
+                    on:click={() => insertJsSnippet("// Output payload to port\nout('port_top_1', { status: 'approved' });")}
+                  >
+                    + out('port', data)
+                  </button>
                 </div>
 
                 <div class="js-editor-wrap">
@@ -3289,10 +4825,202 @@
                   ></textarea>
                 </div>
               </div>
+            {:else if sidePanelTab === 'ports'}
+              <!-- JS Dynamic Multi-Port Output Rack -->
+              {@const jsPorts = selectedNode.jsData.ports || []}
+              {@const topPorts = jsPorts.filter((p) => p.slot === 'top')}
+              {@const midPorts = jsPorts.filter((p) => p.slot === 'middle')}
+              {@const botPorts = jsPorts.filter((p) => p.slot === 'bottom')}
+              <div class="tab-pane-ports">
+                <div class="ports-header-card">
+                  <div class="ports-header-info">
+                    <span class="ports-total-title">JS Dynamic Output Ports</span>
+                    <span class="ports-total-count">{jsPorts.length}/10 configured</span>
+                  </div>
+                  <p class="ports-help-note">
+                    Distribute up to <strong>10 ports</strong> on the right edge (max 3 Top, max 4 Middle, max 3 Bottom).
+                    In your script, call <code>route('port_id')</code> or <code>out('port_id', data)</code> to activate specific pins!
+                  </p>
+                </div>
+
+                <!-- Top Slot (Max 3) -->
+                <div class="slot-section slot-section-top">
+                  <div class="slot-section-header">
+                    <div class="slot-badge-wrap">
+                      <span class="slot-dot dot-top"></span>
+                      <span class="slot-name">TOP Slot (Max 3)</span>
+                      <span class="slot-count">{topPorts.length}/3</span>
+                    </div>
+                    <button
+                      type="button"
+                      class="slot-add-btn"
+                      disabled={topPorts.length >= 3 || jsPorts.length >= 10}
+                      on:click={() => addPortToNode(selectedNode, 'top')}
+                    >
+                      ＋ Add Top Port
+                    </button>
+                  </div>
+                  <div class="slot-ports-list">
+                    {#if topPorts.length === 0}
+                      <div class="slot-empty-notice">No ports in Top slot.</div>
+                    {:else}
+                      {#each topPorts as port (port.id)}
+                        <div class="port-item-card">
+                          <span class="port-pin-preview dot-top"></span>
+                          <input
+                            type="text"
+                            class="port-label-input"
+                            placeholder="e.g. Success / High Priority"
+                            bind:value={port.label}
+                            on:input={notifyChange}
+                          />
+                          <span class="port-id-pill" title="Use in route('{port.id}')">{port.id}</span>
+                          <input
+                            type="color"
+                            class="port-color-picker"
+                            bind:value={port.color}
+                            on:input={notifyChange}
+                            title="Port Color"
+                          />
+                          <button
+                            type="button"
+                            class="req-delete-btn"
+                            title="Remove port"
+                            aria-label="Remove port"
+                            on:click={() => removePortFromNode(selectedNode, port.id)}
+                          >
+                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M3 6h18" />
+                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+
+                <!-- Middle Slot (Max 4) -->
+                <div class="slot-section slot-section-mid">
+                  <div class="slot-section-header">
+                    <div class="slot-badge-wrap">
+                      <span class="slot-dot dot-mid"></span>
+                      <span class="slot-name">MIDDLE Slot (Max 4)</span>
+                      <span class="slot-count">{midPorts.length}/4</span>
+                    </div>
+                    <button
+                      type="button"
+                      class="slot-add-btn"
+                      disabled={midPorts.length >= 4 || jsPorts.length >= 10}
+                      on:click={() => addPortToNode(selectedNode, 'middle')}
+                    >
+                      ＋ Add Middle Port
+                    </button>
+                  </div>
+                  <div class="slot-ports-list">
+                    {#if midPorts.length === 0}
+                      <div class="slot-empty-notice">No ports in Middle slot.</div>
+                    {:else}
+                      {#each midPorts as port (port.id)}
+                        <div class="port-item-card">
+                          <span class="port-pin-preview dot-mid"></span>
+                          <input
+                            type="text"
+                            class="port-label-input"
+                            placeholder="e.g. Processing / Next Step"
+                            bind:value={port.label}
+                            on:input={notifyChange}
+                          />
+                          <span class="port-id-pill" title="Use in route('{port.id}')">{port.id}</span>
+                          <input
+                            type="color"
+                            class="port-color-picker"
+                            bind:value={port.color}
+                            on:input={notifyChange}
+                            title="Port Color"
+                          />
+                          <button
+                            type="button"
+                            class="req-delete-btn"
+                            title="Remove port"
+                            aria-label="Remove port"
+                            on:click={() => removePortFromNode(selectedNode, port.id)}
+                          >
+                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M3 6h18" />
+                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+
+                <!-- Bottom Slot (Max 3) -->
+                <div class="slot-section slot-section-bot">
+                  <div class="slot-section-header">
+                    <div class="slot-badge-wrap">
+                      <span class="slot-dot dot-bot"></span>
+                      <span class="slot-name">BOTTOM Slot (Max 3)</span>
+                      <span class="slot-count">{botPorts.length}/3</span>
+                    </div>
+                    <button
+                      type="button"
+                      class="slot-add-btn"
+                      disabled={botPorts.length >= 3 || jsPorts.length >= 10}
+                      on:click={() => addPortToNode(selectedNode, 'bottom')}
+                    >
+                      ＋ Add Bottom Port
+                    </button>
+                  </div>
+                  <div class="slot-ports-list">
+                    {#if botPorts.length === 0}
+                      <div class="slot-empty-notice">No ports in Bottom slot.</div>
+                    {:else}
+                      {#each botPorts as port (port.id)}
+                        <div class="port-item-card">
+                          <span class="port-pin-preview dot-bot"></span>
+                          <input
+                            type="text"
+                            class="port-label-input"
+                            placeholder="e.g. Error / Rejected"
+                            bind:value={port.label}
+                            on:input={notifyChange}
+                          />
+                          <span class="port-id-pill" title="Use in route('{port.id}')">{port.id}</span>
+                          <input
+                            type="color"
+                            class="port-color-picker"
+                            bind:value={port.color}
+                            on:input={notifyChange}
+                            title="Port Color"
+                          />
+                          <button
+                            type="button"
+                            class="req-delete-btn"
+                            title="Remove port"
+                            aria-label="Remove port"
+                            on:click={() => removePortFromNode(selectedNode, port.id)}
+                          >
+                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M3 6h18" />
+                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+              </div>
             {:else if sidePanelTab === 'response'}
               <div class="tab-pane-response">
                 <div class="js-console-box">
-                  <div class="console-head">Logs do Console (console.log):</div>
+                  <div class="console-head">Console Logs (console.log):</div>
                   {#if selectedNode.lastRun?.logs && selectedNode.lastRun.logs.length > 0}
                     <pre class="console-logs">{selectedNode.lastRun.logs.join('\n')}</pre>
                   {:else}
@@ -3317,33 +5045,459 @@
                 </div>
               </div>
             {/if}
+
+            <!-- GATEWAY ROUTER BLOCK CONFIGURATION -->
+          {:else if selectedNode.type === 'router' && selectedNode.routerData}
+            {#if sidePanelTab === 'rules'}
+              <!-- 1. Rules Tab -->
+              <div class="tab-pane-router-rules">
+                <div class="rules-toolbar-card">
+                  <div class="mode-select-group">
+                    <label class="field-label" for="router-mode-select">Evaluation Mode:</label>
+                    <select
+                      id="router-mode-select"
+                      class="side-method-select router-mode-select"
+                      bind:value={selectedNode.routerData.mode}
+                      on:change={notifyChange}
+                    >
+                      <option value="first-match">First Match (Stop at 1st match - Switch)</option>
+                      <option value="all-matches">All Matches (Branch to all matching ports)</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    class="flow-btn-primary add-rule-btn"
+                    on:click={() => addRuleToRouter(selectedNode)}
+                  >
+                    ＋ Add Rule
+                  </button>
+                </div>
+
+                <div class="rules-list">
+                  {#if selectedNode.routerData.rules.length === 0}
+                    <div class="rules-empty">No routing rules configured. Click "＋ Add Rule" to create one.</div>
+                  {:else}
+                    {#each selectedNode.routerData.rules as rule, rIndex (rule.id)}
+                      {@const matchedPort = selectedNode.routerData.ports.find((p) => p.id === rule.portId)}
+                      <div class="rule-edit-card">
+                        <div class="rule-card-header">
+                          <div class="rule-num-wrap">
+                            <span class="rule-index">#{rIndex + 1}</span>
+                            <input
+                              type="text"
+                              class="rule-label-input"
+                              placeholder="Rule label (e.g. Success 2xx)"
+                              bind:value={rule.label}
+                              on:input={notifyChange}
+                            />
+                          </div>
+                          <div class="rule-target-wrap">
+                            <span class="rule-dest-label">Route to:</span>
+                            <select
+                              class="rule-port-select"
+                              bind:value={rule.portId}
+                              on:change={notifyChange}
+                            >
+                              {#each selectedNode.routerData.ports as p}
+                                <option value={p.id}>[{p.slot.toUpperCase()}] {p.label}</option>
+                              {/each}
+                            </select>
+                            <button
+                              type="button"
+                              class="req-delete-btn"
+                              title="Delete rule"
+                              aria-label="Delete rule"
+                              on:click={() => removeRuleFromRouter(selectedNode, rule.id)}
+                            >
+                              <svg
+                                class="req-del-icon"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M3 6h18" />
+                                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+
+                        <!-- Rule condition controls -->
+                        <div class="rule-condition-body">
+                          <div class="rule-type-tabs">
+                            <button
+                              type="button"
+                              class="rule-type-btn"
+                              class:active={rule.type === 'status'}
+                              on:click={() => {
+                                rule.type = 'status'
+                                if (!rule.statusPattern) rule.statusPattern = '200-299'
+                                notifyChange()
+                              }}
+                            >
+                              HTTP Status
+                            </button>
+                            <button
+                              type="button"
+                              class="rule-type-btn"
+                              class:active={rule.type === 'jsonpath'}
+                              on:click={() => {
+                                rule.type = 'jsonpath'
+                                if (!rule.path) rule.path = 'data.status'
+                                if (!rule.operator) rule.operator = '=='
+                                notifyChange()
+                              }}
+                            >
+                              JSON Path
+                            </button>
+                            <button
+                              type="button"
+                              class="rule-type-btn"
+                              class:active={rule.type === 'otherwise'}
+                              on:click={() => {
+                                rule.type = 'otherwise'
+                                notifyChange()
+                              }}
+                            >
+                              Otherwise (Fallback)
+                            </button>
+                          </div>
+
+                          {#if rule.type === 'status'}
+                            <div class="condition-fields status-fields">
+                              <div class="field-row">
+                                <span class="field-sublabel">Status Pattern (Ranges & Lists):</span>
+                                <input
+                                  type="text"
+                                  class="side-text-input pattern-input"
+                                  placeholder="e.g. 200-299 or 200, 201, 204 or 404"
+                                  bind:value={rule.statusPattern}
+                                  on:input={notifyChange}
+                                />
+                              </div>
+                              <div class="status-preset-chips">
+                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '200-299'; notifyChange(); }}>2xx (200-299)</button>
+                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '200, 201, 204'; notifyChange(); }}>200, 201, 204</button>
+                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '300-399'; notifyChange(); }}>3xx (Redirect)</button>
+                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '400-499'; notifyChange(); }}>4xx (Client Err)</button>
+                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '500-599'; notifyChange(); }}>5xx (Server Err)</button>
+                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '404'; notifyChange(); }}>404 Not Found</button>
+                              </div>
+                            </div>
+                          {:else if rule.type === 'jsonpath'}
+                            <div class="condition-fields jsonpath-fields">
+                              <div class="jsonpath-grid" class:has-val={rule.operator !== 'exists' && rule.operator !== 'is_empty'}>
+                                <div class="path-col">
+                                  <span class="field-sublabel">JSON Path:</span>
+                                  <input
+                                    type="text"
+                                    class="side-text-input"
+                                    placeholder="e.g. data.total or user.role"
+                                    bind:value={rule.path}
+                                    on:input={notifyChange}
+                                  />
+                                </div>
+                                <div class="op-col">
+                                  <span class="field-sublabel">Operator:</span>
+                                  <select
+                                    class="side-method-select"
+                                    bind:value={rule.operator}
+                                    on:change={notifyChange}
+                                  >
+                                    <option value="==">== (Equal)</option>
+                                    <option value="!=">!= (Not Equal)</option>
+                                    <option value=">">&gt; (Greater)</option>
+                                    <option value="<">&lt; (Less)</option>
+                                    <option value=">=">&gt;= (Greater or Equal)</option>
+                                    <option value="<=">&lt;= (Less or Equal)</option>
+                                    <option value="contains">contains (Substring/Item)</option>
+                                    <option value="exists">exists (Key exists)</option>
+                                    <option value="is_empty">is_empty (Empty string/null)</option>
+                                    <option value="in">in (In comma list)</option>
+                                    <option value="between">between (min-max)</option>
+                                  </select>
+                                </div>
+                                {#if rule.operator !== 'exists' && rule.operator !== 'is_empty'}
+                                  <div class="val-col">
+                                    <span class="field-sublabel">Value:</span>
+                                    <input
+                                      type="text"
+                                      class="side-text-input"
+                                      placeholder="e.g. 100 or true or admin"
+                                      bind:value={rule.value}
+                                      on:input={notifyChange}
+                                    />
+                                  </div>
+                                {/if}
+                              </div>
+                            </div>
+                          {:else if rule.type === 'otherwise'}
+                            <div class="condition-fields otherwise-fields">
+                              <div class="otherwise-callout">
+                                <span>⚓ Fallback Route: Matches whenever no preceding condition was satisfied.</span>
+                              </div>
+                            </div>
+                          {/if}
+                        </div>
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+              </div>
+            {:else if sidePanelTab === 'ports'}
+              <!-- 2. Router Output Ports Tab -->
+              {@const rPorts = selectedNode.routerData.ports || []}
+              {@const topPorts = rPorts.filter((p) => p.slot === 'top')}
+              {@const midPorts = rPorts.filter((p) => p.slot === 'middle')}
+              {@const botPorts = rPorts.filter((p) => p.slot === 'bottom')}
+              <div class="tab-pane-ports">
+                <div class="ports-header-card">
+                  <div class="ports-header-info">
+                    <span class="ports-total-title">Output Ports Rack (Limit: 10)</span>
+                    <span class="ports-total-count">{rPorts.length}/10 configured</span>
+                  </div>
+                  <p class="ports-help-note">
+                    Ports are physically distributed on the right edge: <strong>3 Top</strong>, <strong>4 Middle</strong>, and <strong>3 Bottom</strong>.
+                    Connect downstream nodes by dragging from any port pin on the canvas.
+                  </p>
+                </div>
+
+                <!-- Top Slot Section (Max 3) -->
+                <div class="slot-section slot-section-top">
+                  <div class="slot-section-header">
+                    <div class="slot-badge-wrap">
+                      <span class="slot-dot dot-top"></span>
+                      <span class="slot-name">TOP Slot (Max 3)</span>
+                      <span class="slot-count">{topPorts.length}/3</span>
+                    </div>
+                    <button
+                      type="button"
+                      class="slot-add-btn"
+                      disabled={topPorts.length >= 3 || rPorts.length >= 10}
+                      on:click={() => addPortToNode(selectedNode, 'top')}
+                    >
+                      ＋ Add Top Port
+                    </button>
+                  </div>
+                  <div class="slot-ports-list">
+                    {#if topPorts.length === 0}
+                      <div class="slot-empty-notice">No ports in Top slot. Click "+ Add Top Port" above.</div>
+                    {:else}
+                      {#each topPorts as port (port.id)}
+                        <div class="port-item-card">
+                          <span class="port-pin-preview dot-top"></span>
+                          <input
+                            type="text"
+                            class="port-label-input"
+                            placeholder="e.g. 2xx Success"
+                            bind:value={port.label}
+                            on:input={notifyChange}
+                          />
+                          <input
+                            type="color"
+                            class="port-color-picker"
+                            bind:value={port.color}
+                            on:input={notifyChange}
+                            title="Port Color"
+                          />
+                          <button
+                            type="button"
+                            class="req-delete-btn"
+                            title="Remove port"
+                            aria-label="Remove port"
+                            on:click={() => removePortFromNode(selectedNode, port.id)}
+                          >
+                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M3 6h18" />
+                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+
+                <!-- Middle Slot Section (Max 4) -->
+                <div class="slot-section slot-section-mid">
+                  <div class="slot-section-header">
+                    <div class="slot-badge-wrap">
+                      <span class="slot-dot dot-mid"></span>
+                      <span class="slot-name">MIDDLE Slot (Max 4)</span>
+                      <span class="slot-count">{midPorts.length}/4</span>
+                    </div>
+                    <button
+                      type="button"
+                      class="slot-add-btn"
+                      disabled={midPorts.length >= 4 || rPorts.length >= 10}
+                      on:click={() => addPortToNode(selectedNode, 'middle')}
+                    >
+                      ＋ Add Middle Port
+                    </button>
+                  </div>
+                  <div class="slot-ports-list">
+                    {#if midPorts.length === 0}
+                      <div class="slot-empty-notice">No ports in Middle slot. Click "+ Add Middle Port" above.</div>
+                    {:else}
+                      {#each midPorts as port (port.id)}
+                        <div class="port-item-card">
+                          <span class="port-pin-preview dot-mid"></span>
+                          <input
+                            type="text"
+                            class="port-label-input"
+                            placeholder="e.g. 4xx Client Err"
+                            bind:value={port.label}
+                            on:input={notifyChange}
+                          />
+                          <input
+                            type="color"
+                            class="port-color-picker"
+                            bind:value={port.color}
+                            on:input={notifyChange}
+                            title="Port Color"
+                          />
+                          <button
+                            type="button"
+                            class="req-delete-btn"
+                            title="Remove port"
+                            aria-label="Remove port"
+                            on:click={() => removePortFromNode(selectedNode, port.id)}
+                          >
+                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M3 6h18" />
+                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+
+                <!-- Bottom Slot Section (Max 3) -->
+                <div class="slot-section slot-section-bot">
+                  <div class="slot-section-header">
+                    <div class="slot-badge-wrap">
+                      <span class="slot-dot dot-bot"></span>
+                      <span class="slot-name">BOTTOM Slot (Max 3)</span>
+                      <span class="slot-count">{botPorts.length}/3</span>
+                    </div>
+                    <button
+                      type="button"
+                      class="slot-add-btn"
+                      disabled={botPorts.length >= 3 || rPorts.length >= 10}
+                      on:click={() => addPortToNode(selectedNode, 'bottom')}
+                    >
+                      ＋ Add Bottom Port
+                    </button>
+                  </div>
+                  <div class="slot-ports-list">
+                    {#if botPorts.length === 0}
+                      <div class="slot-empty-notice">No ports in Bottom slot. Click "+ Add Bottom Port" above.</div>
+                    {:else}
+                      {#each botPorts as port (port.id)}
+                        <div class="port-item-card">
+                          <span class="port-pin-preview dot-bot"></span>
+                          <input
+                            type="text"
+                            class="port-label-input"
+                            placeholder="e.g. Otherwise / 5xx"
+                            bind:value={port.label}
+                            on:input={notifyChange}
+                          />
+                          <input
+                            type="color"
+                            class="port-color-picker"
+                            bind:value={port.color}
+                            on:input={notifyChange}
+                            title="Port Color"
+                          />
+                          <button
+                            type="button"
+                            class="req-delete-btn"
+                            title="Remove port"
+                            aria-label="Remove port"
+                            on:click={() => removePortFromNode(selectedNode, port.id)}
+                          >
+                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M3 6h18" />
+                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+              </div>
+            {:else if sidePanelTab === 'response'}
+              <!-- 3. Router History & Routing Output Tab -->
+              <div class="tab-pane-response">
+                <div class="router-eval-card">
+                  <div class="eval-header">Last Evaluation Summary:</div>
+                  {#if selectedNode.lastRun}
+                    <div class="eval-meta-grid">
+                      <div class="meta-item">
+                        <span class="meta-label">Status:</span>
+                        <span class="meta-val badge-{selectedNode.status}">{selectedNode.lastRun.status}</span>
+                      </div>
+                      <div class="meta-item">
+                        <span class="meta-label">Routing:</span>
+                        <span class="meta-val">{selectedNode.lastRun.outputSummary}</span>
+                      </div>
+                      <div class="meta-item">
+                        <span class="meta-label">Time:</span>
+                        <span class="meta-val">{relativeTime(selectedNode.lastRun.timestamp)}</span>
+                      </div>
+                    </div>
+                    {#if selectedNode.lastRun.responseText}
+                      <div class="eval-json-preview">
+                        <span class="eval-preview-title">Evaluation Details:</span>
+                        <pre class="console-logs">{selectedNode.lastRun.responseText}</pre>
+                      </div>
+                    {/if}
+                  {:else}
+                    <div class="console-empty">No runs yet. Execute the flow to evaluate routing rules.</div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
           {:else if selectedNode.type === 'event-throw' || selectedNode.type === 'event-catch'}
             {#if sidePanelTab === 'config'}
               <div class="tab-pane-event">
                 <div class="event-config-card">
                   <div class="event-type-badge {selectedNode.type}">
                     {selectedNode.type === 'event-throw'
-                      ? '🔵 Salto de Fluxo (Broadcast Event)'
-                      : '◌ Receptor de Fluxo (Catch Event)'}
+                      ? '🔵 Flow Jump (Broadcast Event)'
+                      : '◌ Flow Receiver (Catch Event)'}
                   </div>
                   <p class="event-help-text">
                     {#if selectedNode.type === 'event-throw'}
-                      Ao ser executado, este nó de salto transmite o sinal com o nome do evento.
-                      Todos os blocos receptores (bolas pontilhadas) com o mesmo nome serão
-                      acionados sem fio!
+                      When executed, this jump node transmits the signal with the event name.
+                      All receiver blocks (dotted circles) with the same name will be triggered wirelessly!
                     {:else}
-                      Este nó receptor aguarda a transmissão do evento correspondente para continuar
-                      a execução do fluxo através de suas saídas.
+                      This receiver node waits for the corresponding event transmission to continue
+                      flow execution through its outputs.
                     {/if}
                   </p>
                   <div class="event-input-group">
-                    <label class="event-field-label" for="event-name-input">Nome do Evento:</label>
+                    <label class="event-field-label" for="event-name-input">Event Name:</label>
                     <div class="event-input-row">
                       <input
                         id="event-name-input"
                         type="text"
                         class="side-text-input event-input"
-                        placeholder="ex: valida total"
+                        placeholder="e.g. validate total"
                         value={selectedNode.eventData?.eventName ?? ''}
                         on:input={(e) => {
                           if (selectedNode) {
@@ -3355,7 +5509,7 @@
                       <button
                         type="button"
                         class="preset-chip"
-                        title="Usar evento de exemplo 'valida total'"
+                        title="Use example event 'valida total'"
                         on:click={() => {
                           if (selectedNode) {
                             selectedNode.eventData = { eventName: 'valida total' }
@@ -3368,30 +5522,29 @@
                     </div>
                     <span class="event-tip">
                       {selectedNode.type === 'event-throw'
-                        ? 'Os nós receptores com este nome exato serão disparados.'
-                        : 'Deve coincidir com o nome disparado no nó de salto (bola cheia).'}
+                        ? 'Receiver nodes with this exact name will be triggered.'
+                        : 'Must match the name triggered on the jump node (solid circle).'}
                     </span>
                   </div>
 
-                  <!-- Cross-Flow Jump Configuration (Beta) - apenas para nó emissor (Throw) -->
+                  <!-- Cross-Flow Jump Configuration (Beta) - only for Throw emitter node -->
                   {#if selectedNode.type === 'event-throw'}
                     <div class="event-input-group cross-flow-config-card">
                       <div class="cross-flow-header">
-                        <span class="cross-flow-title">🔀 Salto de Spatial Flow</span>
+                        <span class="cross-flow-title">🔀 Spatial Flow Jump</span>
                         <span class="beta-badge">BETA</span>
                       </div>
                       <p class="cross-flow-help">
-                        Dispara este evento em outro Spatial Flow do seu workspace, ativando os nós
-                        receptores (◌ Catch) que correspondem a este nome de evento no fluxo de
-                        destino.
+                        Triggers this event in another Spatial Flow of your workspace, activating receiver
+                        nodes (◌ Catch) that match this event name in the target flow.
                         <span class="cross-flow-warn">
-                          ⚠️ A execução de sub-fluxos pode ser custosa para a máquina. Ao concluir,
-                          o sub-fluxo é descarregado da memória mantendo o histórico de respostas
-                          neste bloco.
+                          ⚠️ Sub-flow execution can be resource intensive. Upon completion,
+                          the sub-flow is unloaded from memory while keeping response history
+                          in this block.
                         </span>
                       </p>
                       <label class="event-field-label" for="target-flow-select"
-                        >Spatial Flow Alvo:</label
+                        >Target Spatial Flow:</label
                       >
                       <select
                         id="target-flow-select"
@@ -3410,7 +5563,7 @@
                           }
                         }}
                       >
-                        <option value="">(Nenhum — Salto padrão no mesmo fluxo)</option>
+                        <option value="">(None — Default jump in same flow)</option>
                         {#each availableFlows as af}
                           <option value={af.id}>📁 {af.groupName} / 🔀 {af.name}</option>
                         {/each}
@@ -3422,16 +5575,16 @@
             {:else if sidePanelTab === 'response'}
               <div class="tab-pane-response">
                 <div class="js-console-box">
-                  <div class="console-head">Status de Execução:</div>
+                  <div class="console-head">Execution Status:</div>
                   {#if selectedNode.lastRun}
                     <div class="event-run-info">
                       <div>Status: <strong>{selectedNode.lastRun.status}</strong></div>
-                      <div>Detalhes: {selectedNode.lastRun.outputSummary}</div>
-                      <div>Horário: {relativeTime(selectedNode.lastRun.timestamp)}</div>
+                      <div>Details: {selectedNode.lastRun.outputSummary}</div>
+                      <div>Time: {relativeTime(selectedNode.lastRun.timestamp)}</div>
                     </div>
                   {:else}
                     <div class="console-empty">
-                      Ainda não foi executado. Execute o fluxo para ver o resultado.
+                      Not executed yet. Run the flow to see the result.
                     </div>
                   {/if}
                 </div>
@@ -3443,16 +5596,16 @@
                 <div class="event-config-card">
                   <div class="event-type-badge {selectedNode.type}">
                     {selectedNode.type === 'start'
-                      ? '🟢 Ponto de Início (Start Node)'
-                      : '🛑 Bloco Terminate (Parada do Fluxo)'}
+                      ? '🟢 Start Point (Start Node)'
+                      : '🛑 Terminate Block (Stop Flow)'}
                   </div>
                   <p class="event-help-text">
                     {#if selectedNode.type === 'start'}
-                      Ponto de partida do fluxo. Toda execução geral começa neste nó e se propaga
-                      para as conexões de saída.
+                      Flow starting point. All general execution begins at this node and propagates
+                      to outgoing connections.
                     {:else}
-                      Bloco finalizador: quando a execução do fluxo atinge este nó, o fluxo é
-                      encerrado imediatamente e qualquer ramificação subsequente é interrompida.
+                      Terminating block: when flow execution reaches this node, the flow is
+                      terminated immediately and any subsequent branch is stopped.
                     {/if}
                   </p>
                 </div>
@@ -3460,15 +5613,699 @@
             {:else if sidePanelTab === 'response'}
               <div class="tab-pane-response">
                 <div class="js-console-box">
-                  <div class="console-head">Status de Execução:</div>
+                  <div class="console-head">Execution Status:</div>
                   {#if selectedNode.lastRun}
                     <div class="event-run-info">
                       <div>Status: <strong>{selectedNode.lastRun.status}</strong></div>
-                      <div>Detalhes: {selectedNode.lastRun.outputSummary}</div>
-                      <div>Horário: {relativeTime(selectedNode.lastRun.timestamp)}</div>
+                      <div>Details: {selectedNode.lastRun.outputSummary}</div>
+                      <div>Time: {relativeTime(selectedNode.lastRun.timestamp)}</div>
                     </div>
                   {:else}
-                    <div class="console-empty">Ainda não foi executado.</div>
+                    <div class="console-empty">Not executed yet.</div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          {:else if selectedNode.type === 'transform' && selectedNode.transformData}
+            {@const transformPaths = getTransformAvailablePaths(selectedNode)}
+            {#if sidePanelTab === 'config'}
+              <div class="tab-pane-transform">
+                <div class="transform-card">
+                  <div class="transform-card-header">
+                    <span class="transform-badge">🔄 JSON Schema Mapper</span>
+                    <span class="fields-count">{(selectedNode.transformData?.mappings || []).length} fields mapped</span>
+                  </div>
+                  <p class="transform-help-text">
+                    Map fields from the JSON payload into a new output structure to test integrations.
+                  </p>
+
+                  <div class="transform-sample-section">
+                    <div class="sample-label-row">
+                      <label class="field-label" for="transform-sample">Input Payload (JSON):</label>
+                      <button
+                        type="button"
+                        class="btn-copy-sample"
+                        title="Pull the previous node response as a sample"
+                        on:click={() => selectedNode && copyUpstreamJsonToTransform(selectedNode)}
+                      >
+                        📥 Use previous node JSON
+                      </button>
+                    </div>
+                    <textarea
+                      id="transform-sample"
+                      class="side-code-textarea"
+                      rows="5"
+                      bind:value={selectedNode.transformData.sampleInput}
+                      on:input={notifyChange}
+                    ></textarea>
+                  </div>
+
+                  <!-- Mappings List -->
+                  <div class="transform-mappings-section">
+                    <div class="mappings-header-row">
+                      <div class="mappings-title-wrap">
+                        <span class="section-title">Mapping Rules:</span>
+                        {#if transformPaths.length > 0}
+                          <span class="detected-badge-count" title="Fields available in the Source autocomplete">
+                            ⚡ {transformPaths.length} fields detected
+                          </span>
+                        {/if}
+                      </div>
+                      <div class="mappings-header-actions">
+                        {#if transformPaths.length > 0 && (selectedNode.transformData.mappings || []).length === 0}
+                          <button
+                            type="button"
+                            class="btn-auto-map"
+                            title="Automatically create rules for the detected fields"
+                            on:click={() => selectedNode && autoMapDetectedFields(selectedNode, transformPaths)}
+                          >
+                            ✨ Map All
+                          </button>
+                        {/if}
+                        <button
+                          type="button"
+                          class="btn-add-mapping"
+                          on:click={() => selectedNode && addTransformMapping(selectedNode)}
+                        >
+                          ＋ Add Field
+                        </button>
+                      </div>
+                    </div>
+
+                    {#if (selectedNode.transformData.mappings || []).length === 0}
+                      <div class="mappings-empty-hint">
+                        No fields mapped. Click <strong>＋ Add Field</strong> to select source and target keys.
+                      </div>
+                    {:else}
+                      <div class="mappings-list">
+                        {#each selectedNode.transformData.mappings as mapping (mapping.id)}
+                          <div
+                            class="mapping-item-card"
+                            class:has-active-dropdown={activePathDropdownMappingId === mapping.id}
+                          >
+                            <div class="mapping-paths-row">
+                              <div class="mapping-col path-autocomplete-col">
+                                <label class="mini-label" for={`src-${mapping.id}`}>Source (Path):</label>
+                                <div class="path-combo-wrapper">
+                                  <input
+                                    id={`src-${mapping.id}`}
+                                    type="text"
+                                    class="side-text-input mini-input path-combo-input"
+                                    placeholder={transformPaths.length > 0 ? `e.g. ${transformPaths[0]} (or free value)` : 'e.g. user.id or email'}
+                                    bind:value={mapping.sourcePath}
+                                    on:focus={() => {
+                                      if (transformPaths.length > 0) openPathDropdown(mapping.id)
+                                    }}
+                                    on:input={() => {
+                                      if (transformPaths.length > 0) openPathDropdown(mapping.id)
+                                      notifyChange()
+                                    }}
+                                    on:keydown={(e) => handlePathKeydown(e, mapping, transformPaths)}
+                                    on:blur={() => {
+                                      setTimeout(() => {
+                                        if (activePathDropdownMappingId === mapping.id) {
+                                          closePathDropdown()
+                                        }
+                                      }, 180)
+                                    }}
+                                    autocomplete="off"
+                                    spellcheck="false"
+                                  />
+                                  {#if transformPaths.length > 0}
+                                    <button
+                                      type="button"
+                                      class="path-combo-trigger"
+                                      class:is-active={activePathDropdownMappingId === mapping.id}
+                                      title={`Fields detected in JSON (${transformPaths.length})`}
+                                      tabindex="-1"
+                                      on:mousedown|preventDefault
+                                      on:click|stopPropagation={() => togglePathDropdown(mapping.id)}
+                                    >
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                      </svg>
+                                    </button>
+                                  {/if}
+
+                                  {#if activePathDropdownMappingId === mapping.id && transformPaths.length > 0}
+                                    {@const matchingPaths = getFilteredTransformPaths(transformPaths, mapping.sourcePath)}
+                                    <div
+                                      class="path-dropdown-menu"
+                                      role="listbox"
+                                      tabindex="-1"
+                                      on:mousedown|preventDefault
+                                    >
+                                      <div class="path-dropdown-header">
+                                        <span class="path-dropdown-header-title">Detected Fields ({matchingPaths.length})</span>
+                                        <span class="path-dropdown-badge">JSON</span>
+                                      </div>
+
+                                      {#if matchingPaths.length === 0}
+                                        <div class="path-dropdown-empty">
+                                          <span class="empty-title">No field matching "{mapping.sourcePath}"</span>
+                                          <span class="empty-subtitle">Press Enter or keep typing your custom value.</span>
+                                        </div>
+                                      {:else}
+                                        <div class="path-dropdown-scroll">
+                                          {#each matchingPaths as path, pIdx (path)}
+                                            <button
+                                              type="button"
+                                              class="path-dropdown-option"
+                                              class:is-highlighted={highlightedPathIndex === pIdx}
+                                              class:is-exact={mapping.sourcePath === path}
+                                              role="option"
+                                              aria-selected={mapping.sourcePath === path}
+                                              on:click={() => selectTransformPath(mapping, path)}
+                                              on:mouseenter={() => (highlightedPathIndex = pIdx)}
+                                            >
+                                              <span class="path-option-key">
+                                                <span class="path-icon-bracket">&#123;&#125;</span>
+                                                <span class="path-text">{path}</span>
+                                              </span>
+                                              {#if mapping.sourcePath === path}
+                                                <span class="path-selected-check">✓</span>
+                                              {/if}
+                                            </button>
+                                          {/each}
+                                        </div>
+                                      {/if}
+
+                                      <div class="path-dropdown-footer">
+                                        <span>💡 Pick from the list or type any custom path</span>
+                                      </div>
+                                    </div>
+                                  {/if}
+                                </div>
+                              </div>
+                              <span class="mapping-arrow">➔</span>
+                              <div class="mapping-col">
+                                <label class="mini-label" for={`tgt-${mapping.id}`}>Target (Path):</label>
+                                <input
+                                  id={`tgt-${mapping.id}`}
+                                  type="text"
+                                  class="side-text-input mini-input"
+                                  placeholder="e.g. customerId or profile.email"
+                                  bind:value={mapping.targetPath}
+                                  on:input={notifyChange}
+                                  spellcheck="false"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                class="req-delete-btn"
+                                title="Remove rule"
+                                aria-label="Remove rule"
+                                on:click={() => selectedNode && removeTransformMapping(selectedNode, mapping.id)}
+                              >
+                                <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                  <path d="M3 6h18" />
+                                  <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                  <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                </svg>
+                              </button>
+                            </div>
+
+                            <div class="mapping-options-row">
+                              <div class="option-col">
+                                <label class="mini-label" for={`mod-${mapping.id}`}>Modifier:</label>
+                                <select
+                                  id={`mod-${mapping.id}`}
+                                  class="side-method-select mini-select"
+                                  bind:value={mapping.modifier}
+                                  on:change={notifyChange}
+                                >
+                                  <option value="direct">Direct (original)</option>
+                                  <option value="uppercase">UPPERCASE</option>
+                                  <option value="lowercase">lowercase</option>
+                                  <option value="trim">trim (remove whitespace)</option>
+                                  <option value="number">number</option>
+                                  <option value="string">string (text)</option>
+                                  <option value="boolean">boolean</option>
+                                </select>
+                              </div>
+                              <div class="option-col">
+                                <label class="mini-label" for={`def-${mapping.id}`}>Default Value (Fallback):</label>
+                                <input
+                                  id={`def-${mapping.id}`}
+                                  type="text"
+                                  class="side-text-input mini-input"
+                                  placeholder="optional if null"
+                                  bind:value={mapping.defaultValue}
+                                  on:input={notifyChange}
+                                  spellcheck="false"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+
+                  <!-- Live Transformation Preview -->
+                  <div class="transform-live-preview-section">
+                    <div class="preview-header-row">
+                      <span class="section-title">Live Preview:</span>
+                      <button
+                        type="button"
+                        class="btn-run-mapping"
+                        on:click={() => selectedNode && executeSingleNode(selectedNode)}
+                      >
+                        ▶ Test Mapping
+                      </button>
+                    </div>
+                    <pre class="console-logs preview-box">{getLiveTransformPreview(selectedNode)}</pre>
+                  </div>
+
+                  <!-- Variable Saving -->
+                  <div class="field-row">
+                    <label class="field-label" for="save-env-var">Save Resulting JSON to Environment Variable:</label>
+                    <input
+                      id="save-env-var"
+                      type="text"
+                      class="side-text-input"
+                      placeholder="e.g. mappedCustomer (optional)"
+                      bind:value={selectedNode.transformData.saveToEnvVar}
+                      on:input={notifyChange}
+                    />
+                  </div>
+                </div>
+              </div>
+            {:else if sidePanelTab === 'response'}
+              <div class="tab-pane-response">
+                <div class="js-console-box">
+                  <div class="console-head-row">
+                    <span class="console-head">Transformation Output:</span>
+                    {#if selectedNode.lastRun?.responseText && onOpenInEditor}
+                      <button
+                        type="button"
+                        class="node-quick-btn"
+                        on:click={() => selectedNode && openResponseInEditor(selectedNode)}
+                      >
+                        ↗ Open in Editor
+                      </button>
+                    {/if}
+                  </div>
+                  {#if selectedNode.lastRun}
+                    <pre class="console-logs">{selectedNode.lastRun.responseText || selectedNode.lastRun.outputSummary}</pre>
+                  {:else}
+                    <div class="console-empty">Not executed yet. Run flow or click ▶ to test.</div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          {:else if selectedNode.type === 'loop' && selectedNode.loopData}
+            {@const loopInfo = getLoopUpstreamInfo(selectedNode)}
+            {#if sidePanelTab === 'config'}
+              <div class="tab-pane-loop">
+                <div class="loop-card">
+                  <!-- Header with Mode Selector -->
+                  <div class="loop-card-header">
+                    <div class="loop-badge">🔁 Iterator Loop</div>
+                    <div class="loop-mode-toggle">
+                      <button
+                        type="button"
+                        class="loop-mode-btn"
+                        class:active={!selectedNode.loopData.mode || selectedNode.loopData.mode === 'for-each'}
+                        on:click={() => {
+                          if (selectedNode.loopData) selectedNode.loopData.mode = 'for-each'
+                          notifyChange()
+                        }}
+                      >
+                        Collection (Array)
+                      </button>
+                      <button
+                        type="button"
+                        class="loop-mode-btn"
+                        class:active={selectedNode.loopData.mode === 'count'}
+                        on:click={() => {
+                          if (selectedNode.loopData) {
+                            selectedNode.loopData.mode = 'count'
+                            if (!selectedNode.loopData.repeatCount) selectedNode.loopData.repeatCount = 5
+                            if (!selectedNode.loopData.indexVar) selectedNode.loopData.indexVar = 'index'
+                          }
+                          notifyChange()
+                        }}
+                      >
+                        Counter (N Times)
+                      </button>
+                    </div>
+                  </div>
+
+                  {#if !selectedNode.loopData.mode || selectedNode.loopData.mode === 'for-each'}
+                    <!-- Smart Upstream Array Detection Banner -->
+                    {#if loopInfo.connected}
+                      <div class="loop-upstream-bar">
+                        <div class="upstream-meta">
+                          <span class="upstream-icon">⚡</span>
+                          <span class="upstream-label">Connected input: <strong>{loopInfo.upNode?.title || 'Previous Node'}</strong></span>
+                        </div>
+                        {#if loopInfo.executed}
+                          {#if loopInfo.detectedArrays.length > 0}
+                            <div class="detected-section">
+                              <span class="detected-title">✨ Arrays detected in the payload:</span>
+                              <div class="detected-chips">
+                                {#each loopInfo.detectedArrays as arr}
+                                  <button
+                                    type="button"
+                                    class="preset-chip chip-detected"
+                                    class:active={selectedNode.loopData.arrayPath === arr.path}
+                                    title={`Select ${arr.path || 'Root array'} with ${arr.length} items`}
+                                    on:click={() => {
+                                      if (selectedNode.loopData) selectedNode.loopData.arrayPath = arr.path
+                                      notifyChange()
+                                    }}
+                                  >
+                                    <span class="chip-path">{arr.path || '[ ] Root'}</span>
+                                    <span class="chip-count">{arr.length} {arr.length === 1 ? 'item' : 'items'}</span>
+                                  </button>
+                                {/each}
+                              </div>
+                            </div>
+                          {:else}
+                            <div class="upstream-hint">
+                              ℹ️ The previous node ran, but no array was automatically detected in its output.
+                            </div>
+                          {/if}
+                        {:else}
+                          <div class="upstream-hint">
+                            ⏳ The previous node has not run yet. Click <strong>▶ Run Block</strong> on it to detect arrays in real time.
+                          </div>
+                        {/if}
+                      </div>
+                    {:else}
+                      <div class="loop-upstream-bar is-unconnected">
+                        <span class="upstream-icon">🔗</span>
+                        <span class="upstream-hint">
+                          Connect a previous node (REST, JS or Mapper) to the Iterator Loop to detect collections automatically.
+                        </span>
+                      </div>
+                    {/if}
+
+                    <!-- Collection Path Field -->
+                    <div class="field-row">
+                      <div class="field-label-row">
+                        <label class="field-label" for="loop-array-path">Collection Path (Array):</label>
+                        <span class="field-subnote">Dot-notation path in the JSON</span>
+                      </div>
+                      <input
+                        id="loop-array-path"
+                        type="text"
+                        class="side-text-input"
+                        placeholder="e.g. items or data.users, or leave empty for a root array"
+                        bind:value={selectedNode.loopData.arrayPath}
+                        on:input={notifyChange}
+                      />
+                      <!-- Common quick suggestion chips -->
+                      <div class="quick-chips-row">
+                        <span class="chips-label">Suggestions:</span>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'items'; notifyChange(); }}>items</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'data.items'; notifyChange(); }}>data.items</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'results'; notifyChange(); }}>results</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'data'; notifyChange(); }}>data</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = ''; notifyChange(); }}>[ ] Root</button>
+                      </div>
+                    </div>
+
+                    <!-- Live Array Evaluation Preview Box -->
+                    {#if loopInfo.currentEvaluation}
+                      <div class="array-eval-box" class:is-valid={loopInfo.currentEvaluation.isValid}>
+                        {#if loopInfo.currentEvaluation.isValid}
+                          <div class="eval-status-row">
+                            <span class="eval-badge-success">✓ Valid Array</span>
+                            <span class="eval-count-tag">{loopInfo.currentEvaluation.length} items found</span>
+                            {#if loopInfo.currentEvaluation.length > (selectedNode.loopData.maxIterations || 1000)}
+                              <span class="eval-limit-warning">⚠️ Limited to {selectedNode.loopData.maxIterations || 1000}</span>
+                            {/if}
+                          </div>
+                          {#if loopInfo.currentEvaluation.sampleItem !== undefined}
+                            <div class="sample-preview-card">
+                              <span class="sample-tag">Item [0] (Preview):</span>
+                              <pre class="sample-preview-code">{JSON.stringify(loopInfo.currentEvaluation.sampleItem, null, 2)}</pre>
+                            </div>
+                          {/if}
+                        {:else}
+                          <div class="eval-status-row is-error">
+                            <span class="eval-badge-error">Warning</span>
+                            <span class="eval-msg">{loopInfo.currentEvaluation.errorMsg}</span>
+                          </div>
+                        {/if}
+                      </div>
+                    {/if}
+
+                    <!-- Item Variable Name -->
+                    <div class="field-row">
+                      <div class="field-label-row">
+                        <label class="field-label" for="loop-item-var">Item Variable Name:</label>
+                        <span class="field-subnote">Injected as <code>{"{{" + (selectedNode.loopData.itemVar || 'item') + "}}"}</code></span>
+                      </div>
+                      <input
+                        id="loop-item-var"
+                        type="text"
+                        class="side-text-input"
+                        placeholder="e.g. item"
+                        bind:value={selectedNode.loopData.itemVar}
+                        on:input={notifyChange}
+                      />
+                      <div class="quick-chips-row">
+                        <span class="chips-label">Presets:</span>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.itemVar = 'item'; notifyChange(); }}>item</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.itemVar = 'row'; notifyChange(); }}>row</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.itemVar = 'user'; notifyChange(); }}>user</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.itemVar = 'record'; notifyChange(); }}>record</button>
+                      </div>
+                    </div>
+                  {:else}
+                    <!-- Counter / Repeat Mode -->
+                    <div class="field-row">
+                      <div class="field-label-row">
+                        <label class="field-label" for="loop-repeat-count">Repeat How Many Times (Iterations):</label>
+                        <span class="field-subnote">Total loop iterations</span>
+                      </div>
+                      <input
+                        id="loop-repeat-count"
+                        type="number"
+                        min="1"
+                        max="5000"
+                        class="side-text-input"
+                        placeholder="5"
+                        bind:value={selectedNode.loopData.repeatCount}
+                        on:input={notifyChange}
+                      />
+                      <div class="quick-chips-row">
+                        <span class="chips-label">Shortcuts:</span>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 3; notifyChange(); }}>3x</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 5; notifyChange(); }}>5x</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 10; notifyChange(); }}>10x</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 20; notifyChange(); }}>20x</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 50; notifyChange(); }}>50x</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 100; notifyChange(); }}>100x</button>
+                      </div>
+                    </div>
+
+                    <div class="field-row">
+                      <div class="field-label-row">
+                        <label class="field-label" for="loop-index-var">Counter Variable Name:</label>
+                        <span class="field-subnote">Injected as <code>{"{{" + (selectedNode.loopData.indexVar || 'index') + "}}"}</code> (0, 1, 2...)</span>
+                      </div>
+                      <input
+                        id="loop-index-var"
+                        type="text"
+                        class="side-text-input"
+                        placeholder="e.g. index or i"
+                        bind:value={selectedNode.loopData.indexVar}
+                        on:input={notifyChange}
+                      />
+                      <div class="quick-chips-row">
+                        <span class="chips-label">Presets:</span>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.indexVar = 'index'; notifyChange(); }}>index</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.indexVar = 'i'; notifyChange(); }}>i</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.indexVar = 'step'; notifyChange(); }}>step</button>
+                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.indexVar = 'count'; notifyChange(); }}>count</button>
+                      </div>
+                    </div>
+                  {/if}
+
+                  <!-- Max Iterations Limit -->
+                  <div class="field-row">
+                    <div class="field-label-row">
+                      <label class="field-label" for="loop-max-iter">Maximum Safety Limit:</label>
+                      <span class="field-subnote">Prevents infinite loops</span>
+                    </div>
+                    <input
+                      id="loop-max-iter"
+                      type="number"
+                      class="side-text-input"
+                      placeholder="1000"
+                      bind:value={selectedNode.loopData.maxIterations}
+                      on:input={notifyChange}
+                    />
+                    <div class="quick-chips-row">
+                      <span class="chips-label">Quick limits:</span>
+                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 10; notifyChange(); }}>10</button>
+                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 50; notifyChange(); }}>50</button>
+                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 100; notifyChange(); }}>100</button>
+                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 500; notifyChange(); }}>500</button>
+                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 1000; notifyChange(); }}>1000</button>
+                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 5000; notifyChange(); }}>5000</button>
+                    </div>
+                  </div>
+
+                  <!-- Available Variables Reference Callout -->
+                  <div class="loop-vars-callout">
+                    <span class="vars-callout-title">📦 Variables Available Inside the Loop:</span>
+                    <div class="vars-callout-grid">
+                      <div class="var-item">
+                        <code>{"{{" + (selectedNode.loopData.mode === 'count' ? (selectedNode.loopData.indexVar || 'index') : (selectedNode.loopData.itemVar || 'item')) + "}}"}</code>
+                        <span>{selectedNode.loopData.mode === 'count' ? 'Current iteration number (0, 1, 2...)' : 'Current element content'}</span>
+                      </div>
+                      <div class="var-item">
+                        <code>{"{{index}}"}</code>
+                        <span>Numeric iteration index (0-indexed)</span>
+                      </div>
+                      <div class="var-item">
+                        <code>{"{{loop_total}}"}</code>
+                        <span>Total items iterated in this run</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {:else if sidePanelTab === 'response'}
+              <div class="tab-pane-response">
+                <div class="js-console-box">
+                  <div class="console-head-row">
+                    <span class="console-head">Loop Summary:</span>
+                    {#if selectedNode.lastRun?.responseText && onOpenInEditor}
+                      <button
+                        type="button"
+                        class="node-quick-btn"
+                        on:click={() => selectedNode && openResponseInEditor(selectedNode)}
+                      >
+                        ↗ Open in Editor
+                      </button>
+                    {/if}
+                  </div>
+                  {#if selectedNode.lastRun}
+                    <div class="event-run-info">
+                      <div>Status: <strong>{selectedNode.lastRun.status}</strong></div>
+                      <div>Details: {selectedNode.lastRun.outputSummary}</div>
+                      <div>Time: {relativeTime(selectedNode.lastRun.timestamp)}</div>
+                    </div>
+                    {#if selectedNode.lastRun.responseText}
+                      <pre class="console-logs">{selectedNode.lastRun.responseText}</pre>
+                    {/if}
+                  {:else}
+                    <div class="console-empty">Not executed yet.</div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          {:else if selectedNode.type === 'delay' && selectedNode.delayData}
+            {#if sidePanelTab === 'config'}
+              <div class="tab-pane-delay">
+                <div class="delay-card">
+                  <div class="delay-badge">⏳ Delay & Throttle</div>
+                  <div class="field-row">
+                    <label class="field-label" for="delay-mode">Mode:</label>
+                    <select
+                      id="delay-mode"
+                      class="side-method-select"
+                      bind:value={selectedNode.delayData.mode}
+                      on:change={notifyChange}
+                    >
+                      <option value="delay">Fixed Delay (Pause flow)</option>
+                      <option value="throttle">Rate Limit / Throttle</option>
+                    </select>
+                  </div>
+                  <div class="field-row">
+                    <label class="field-label" for="delay-ms">Delay Duration (ms):</label>
+                    <input
+                      id="delay-ms"
+                      type="number"
+                      class="side-text-input"
+                      placeholder="1000"
+                      bind:value={selectedNode.delayData.delayMs}
+                      on:input={notifyChange}
+                    />
+                  </div>
+                </div>
+              </div>
+            {:else if sidePanelTab === 'response'}
+              <div class="tab-pane-response">
+                <div class="js-console-box">
+                  <div class="console-head-row">
+                    <span class="console-head">Delay Status:</span>
+                    {#if selectedNode.lastRun?.responseText && onOpenInEditor}
+                      <button
+                        type="button"
+                        class="node-quick-btn"
+                        on:click={() => selectedNode && openResponseInEditor(selectedNode)}
+                      >
+                        ↗ Open in Editor
+                      </button>
+                    {/if}
+                  </div>
+                  {#if selectedNode.lastRun}
+                    <div class="event-run-info">
+                      <div>Status: <strong>{selectedNode.lastRun.status}</strong></div>
+                      <div>Details: {selectedNode.lastRun.outputSummary}</div>
+                      <div>Time: {relativeTime(selectedNode.lastRun.timestamp)}</div>
+                    </div>
+                    {#if selectedNode.lastRun.responseText}
+                      <pre class="console-logs">{selectedNode.lastRun.responseText}</pre>
+                    {/if}
+                  {:else}
+                    <div class="console-empty">Not executed yet.</div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          {:else if selectedNode.type === 'merge' && selectedNode.mergeData}
+            {#if sidePanelTab === 'config'}
+              <div class="tab-pane-merge">
+                <div class="merge-card">
+                  <div class="merge-badge">🔗 Branch Synchronization Barrier</div>
+                  <div class="field-row">
+                    <label class="field-label" for="merge-strategy">Join Strategy:</label>
+                    <select
+                      id="merge-strategy"
+                      class="side-method-select"
+                      bind:value={selectedNode.mergeData.strategy}
+                      on:change={notifyChange}
+                    >
+                      <option value="wait-all">Wait for All Branches (Solid Join)</option>
+                      <option value="first-complete">First Complete (Race)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            {:else if sidePanelTab === 'response'}
+              <div class="tab-pane-response">
+                <div class="js-console-box">
+                  <div class="console-head-row">
+                    <span class="console-head">Merge Status:</span>
+                    {#if selectedNode.lastRun?.responseText && onOpenInEditor}
+                      <button
+                        type="button"
+                        class="node-quick-btn"
+                        on:click={() => selectedNode && openResponseInEditor(selectedNode)}
+                      >
+                        ↗ Open in Editor
+                      </button>
+                    {/if}
+                  </div>
+                  {#if selectedNode.lastRun}
+                    <div class="event-run-info">
+                      <div>Status: <strong>{selectedNode.lastRun.status}</strong></div>
+                      <div>Details: {selectedNode.lastRun.outputSummary}</div>
+                      <div>Time: {relativeTime(selectedNode.lastRun.timestamp)}</div>
+                    </div>
+                    {#if selectedNode.lastRun.responseText}
+                      <pre class="console-logs">{selectedNode.lastRun.responseText}</pre>
+                    {/if}
+                  {:else}
+                    <div class="console-empty">Not executed yet.</div>
                   {/if}
                 </div>
               </div>
@@ -3577,7 +6414,8 @@
       background: rgba(56, 189, 248, 0.1);
     }
   }
-  .flow-file-menu {
+  .flow-file-menu,
+  .flow-examples-wrap {
     position: relative;
     z-index: 210;
   }
@@ -3598,7 +6436,8 @@
   .flow-menu {
     position: absolute;
     top: calc(100% + 4px);
-    left: 0;
+    right: 0;
+    left: auto;
     min-width: 190px;
     background: var(--theme-bg-card, #2d2d30);
     border: 1px solid var(--theme-b-main, #3e3e42);
@@ -3612,8 +6451,8 @@
   .flow-menu button {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    justify-content: flex-start;
+    gap: 8px;
     height: 28px;
     padding: 0 10px;
     background: transparent;
@@ -3622,6 +6461,7 @@
     color: var(--theme-t-bright, #cbd5e1);
     font-size: 12px;
     text-align: left;
+    white-space: nowrap;
     cursor: pointer;
   }
   .flow-menu button:hover {
@@ -3634,6 +6474,57 @@
     max-width: 90px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .flow-menu-header {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--theme-t-sub, #94a3b8);
+    padding: 6px 10px 2px;
+    user-select: none;
+  }
+  .flow-examples-dropdown {
+    min-width: 290px;
+  }
+  .flow-menu button.menu-item-rich {
+    height: auto;
+    padding: 8px 10px;
+    align-items: flex-start;
+    gap: 10px;
+    line-height: 1.3;
+    white-space: normal;
+  }
+  .menu-item-icon {
+    font-size: 15px;
+    margin-top: 1px;
+    flex-shrink: 0;
+  }
+  .menu-item-desc {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    text-align: left;
+    white-space: normal;
+
+    strong {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--theme-t-bright, #cbd5e1);
+    }
+    small {
+      font-size: 10px;
+      color: var(--theme-t-muted, #94a3b8);
+      max-width: none;
+      white-space: normal;
+    }
+  }
+  .flow-menu-item-danger {
+    color: #f87171 !important;
+  }
+  .flow-menu-item-danger:hover {
+    background: rgba(239, 68, 68, 0.15) !important;
+    color: #fca5a5 !important;
   }
   .flow-menu-sep {
     height: 1px;
@@ -4191,6 +7082,11 @@
   .flow-node {
     position: absolute;
     width: 280px;
+    height: 140px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
     border-radius: 9px;
     background: var(--theme-bg-card, #252526);
     border: 1px solid var(--theme-b-main, #3e3e42);
@@ -4227,8 +7123,57 @@
   .flow-node-js {
     border-left: 3px solid #a855f7;
   }
+  .flow-node-transform {
+    border-left: 3px solid #06b6d4;
+  }
   .flow-node-rest {
     border-left: 3px solid var(--theme-ac, #3883fa);
+  }
+  .flow-node-router {
+    border-left: 3px solid #f59e0b;
+  }
+  .flow-node-loop {
+    border-left: 3px solid #6366f1;
+  }
+  .flow-node-delay {
+    border-left: 3px solid #10b981;
+  }
+  .flow-node-merge {
+    border-left: 3px solid #8b5cf6;
+  }
+
+  /* Floating switch type button on cards (top-left ↻) */
+  .card-switch-btn {
+    position: absolute;
+    top: -6px;
+    left: -6px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--theme-bg-panel, #1e1e1e);
+    border: 1px solid var(--theme-b-main, #444);
+    color: var(--theme-t-sub, #aaa);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 15;
+    padding: 0;
+    transition: all 0.15s ease;
+
+    &:hover,
+    &.active {
+      background: var(--theme-ac, #3883fa);
+      color: #fff;
+      border-color: var(--theme-ac, #3883fa);
+      box-shadow: 0 0 8px rgba(56, 131, 250, 0.4);
+    }
+  }
+
+  .flow-node:hover .card-switch-btn,
+  .flow-node.is-selected .card-switch-btn,
+  .flow-node.has-switcher-open .card-switch-btn {
+    display: flex;
   }
   .flow-node.status-running {
     border-color: #facc15;
@@ -4351,7 +7296,7 @@
         rgba(2, 132, 199, 0.08)
       );
       backdrop-filter: blur(4px);
-      border: 2.5px dashed #38bdf8;
+      border: 2.5px dashed var(--theme-accent-text, #0066cc);
       box-shadow: 0 4px 14px rgba(56, 189, 248, 0.25);
 
       &:hover {
@@ -4474,7 +7419,7 @@
       padding: 2px 8px;
       font-size: 11px;
       font-weight: 600;
-      color: var(--theme-t-main, #e2e8f0);
+      color: var(--theme-t-bright, #0f172a);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
       pointer-events: none;
       max-width: 140px;
@@ -4482,7 +7427,7 @@
       text-overflow: ellipsis;
 
       .circle-badge-text.event {
-        color: #38bdf8;
+        color: var(--theme-accent-text, #0066cc);
       }
     }
 
@@ -4630,22 +7575,22 @@
 
     &.event-throw {
       background: rgba(2, 132, 199, 0.15);
-      color: #38bdf8;
+      color: var(--theme-accent-text, #0066cc);
       border: 1px solid rgba(56, 189, 248, 0.4);
     }
     &.event-catch {
       background: rgba(14, 165, 233, 0.1);
-      color: #38bdf8;
+      color: var(--theme-accent-text, #0066cc);
       border: 1px dashed rgba(56, 189, 248, 0.5);
     }
     &.start {
       background: rgba(34, 197, 94, 0.15);
-      color: #4ade80;
+      color: var(--theme-console-log, #047857);
       border: 1px solid rgba(74, 222, 128, 0.4);
     }
     &.terminate {
       background: rgba(239, 68, 68, 0.15);
-      color: #f87171;
+      color: var(--theme-danger-text, #b91c1c);
       border: 1px solid rgba(248, 113, 113, 0.4);
     }
   }
@@ -4692,34 +7637,1614 @@
   /* Ports */
   .node-port {
     position: absolute;
-    top: 40px;
     width: 14px;
     height: 14px;
+    box-sizing: border-box;
     border-radius: 50%;
     background: var(--theme-bg-panel, #2d2d30);
     border: 2px solid var(--theme-ac, #38bdf8);
     cursor: crosshair;
-    z-index: 3;
-    transition: transform 0.1s;
+    z-index: 6;
+    transition: transform 0.15s, box-shadow 0.15s;
   }
   .node-port:hover {
-    transform: scale(1.3);
+    transform: translate(-50%, -50%) scale(1.3);
   }
   .port-input {
-    left: -8px;
+    left: -3px;
+    top: 50%;
+    transform: translate(-50%, -50%);
     border-color: var(--theme-t-muted, #94a3b8);
   }
+  .port-input:hover {
+    transform: translate(-50%, -50%) scale(1.3);
+  }
   .port-output {
-    right: -8px;
+    right: -1px;
+    top: 50%;
+    transform: translate(50%, -50%);
     border-color: var(--theme-ac, #3883fa);
+  }
+  .port-output:hover {
+    transform: translate(50%, -50%) scale(1.3);
+  }
+
+  /* Multi-Port Rack on Node (physical slots: Top, Right, Bottom) */
+  .node-ports-rack {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    right: -1px;
+    left: -3px;
+    pointer-events: none;
+    z-index: 6;
+  }
+  .port-multi {
+    pointer-events: auto;
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: var(--theme-bg-panel, #2d2d30);
+    border: 2px solid var(--theme-ac, #38bdf8);
+    cursor: crosshair;
+    z-index: 6;
+    right: auto;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .port-multi:hover {
+    transform: translate(-50%, -50%) scale(1.35);
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+  }
+  .port-multi.slot-top {
+    border-color: #10b981;
+  }
+  .port-multi.slot-middle {
+    border-color: #f59e0b;
+  }
+  .port-multi.slot-bottom {
+    border-color: #ef4444;
+  }
+  .port-tooltip {
+    display: none;
+    position: absolute;
+    background: #18181b;
+    color: #f1f5f9;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+    z-index: 20;
+  }
+  .port-multi:hover .port-tooltip {
+    display: block;
+  }
+  .port-tooltip.slot-tip-top {
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .port-tooltip.slot-tip-middle {
+    right: 22px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .port-tooltip.slot-tip-bottom {
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* Multi-Input Rack for Merge */
+  .node-inputs-rack {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    right: -1px;
+    left: -3px;
+    pointer-events: none;
+    z-index: 6;
+  }
+  .port-multi-input {
+    pointer-events: auto;
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: var(--theme-bg-panel, #2d2d30);
+    border: 2px solid var(--theme-t-muted, #94a3b8);
+    cursor: pointer;
+    z-index: 6;
+    right: auto;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    transition: transform 0.15s, box-shadow 0.15s;
+
+    &:hover {
+      transform: translate(-50%, -50%) scale(1.35);
+      border-color: var(--theme-ac, #3883fa);
+      box-shadow: 0 0 10px rgba(56, 131, 250, 0.6);
+
+      .input-tip {
+        display: block;
+      }
+    }
+
+    .input-tip {
+      display: none;
+      position: absolute;
+      left: 22px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: #18181b;
+      color: #f1f5f9;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+      pointer-events: none;
+      z-index: 20;
+    }
+  }
+
+  /* Compact slim previews for Router, Transform, Loop, Delay, Merge */
+  .node-router-preview-compact,
+  .node-transform-preview-compact,
+  .node-loop-preview-compact,
+  .node-delay-preview-compact,
+  .node-merge-preview-compact {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 2px 0;
+  }
+
+  .node-compact-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    .summary-label {
+      color: var(--theme-t-sub, #475569);
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+
+    .summary-val {
+      color: var(--theme-t-bright, #0f172a);
+      font-weight: 600;
+      font-family: monospace;
+      font-size: 10.5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .compact-chip {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9.5px;
+    font-weight: 600;
+    background: var(--theme-chip-bg, #f1f5f9);
+    color: var(--theme-chip-text, #1e293b);
+    border: 1px solid var(--theme-chip-border, #cbd5e1);
+    letter-spacing: 0.2px;
+  }
+
+  /* Node Router Preview in Card Body */
+  .node-router-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 8px;
+    background: var(--theme-bg-panel, #f1f5f9);
+    border-radius: 6px;
+    border: 1px solid var(--theme-b-subtle, #cbd5e1);
+  }
+  .router-mode-chip {
+    align-self: flex-start;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+  .router-rules-mini {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .rule-mini-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--theme-t-bright, #f1f5f9);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rule-slot-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .rule-slot-dot.slot-top {
+    background: #10b981;
+  }
+  .rule-slot-dot.slot-middle {
+    background: #f59e0b;
+  }
+  .rule-slot-dot.slot-bottom {
+    background: #ef4444;
+  }
+  .rule-mini-text {
+    font-family: monospace;
+    font-size: 10px;
+    color: #cbd5e1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rule-mini-arrow {
+    color: #64748b;
+    font-size: 9px;
+    flex-shrink: 0;
+  }
+  .rule-mini-port {
+    font-size: 10px;
+    font-weight: 600;
+    color: #f59e0b;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rules-more-count {
+    font-size: 10px;
+    color: #64748b;
+    font-style: italic;
+  }
+
+  /* Toolbar Button for Router */
+  .flow-btn-router {
+    border-color: rgba(245, 158, 11, 0.35);
+  }
+  .flow-btn-router:hover {
+    border-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+  }
+
+  /* Chip for port snippets in JS editor */
+  .chip-port {
+    border-color: rgba(168, 85, 247, 0.4);
+    color: #c084fc;
+  }
+  .chip-port:hover {
+    background: rgba(168, 85, 247, 0.18);
+    border-color: #a855f7;
+  }
+
+  /* Side Panel Tab Panes: Rules, Ports, Transform, Loop, Delay, Merge */
+  .tab-pane-router-rules,
+  .tab-pane-ports,
+  .tab-pane-transform,
+  .tab-pane-loop,
+  .tab-pane-delay,
+  .tab-pane-merge {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 12px 14px;
+  }
+
+  .transform-card,
+  .loop-card,
+  .delay-card,
+  .merge-card {
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-subtle, #3e3e42);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* Intelligent Iterator Loop Styles */
+  .loop-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    border-bottom: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
+    padding-bottom: 8px;
+  }
+  .loop-mode-toggle {
+    display: inline-flex;
+    background: var(--theme-bg-panel, rgba(0, 0, 0, 0.06));
+    border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.1));
+    border-radius: 6px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .loop-mode-btn {
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    color: var(--theme-t-muted, #94a3b8);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .loop-mode-btn:hover {
+    color: var(--theme-t-bright, #0f172a);
+  }
+  .loop-mode-btn.active {
+    background: var(--theme-ac, #0284c7);
+    color: #ffffff;
+    box-shadow: 0 1px 4px rgba(2, 132, 199, 0.3);
+  }
+  .loop-upstream-bar {
+    background: var(--theme-bg-panel, rgba(0, 0, 0, 0.04));
+    border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .loop-upstream-bar.is-unconnected {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--theme-t-muted, #64748b);
+    font-style: italic;
+  }
+  .upstream-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--theme-t-bright, #0f172a);
+  }
+  .upstream-icon {
+    font-size: 12px;
+  }
+  .upstream-hint {
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--theme-t-muted, #64748b);
+  }
+  .detected-section {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 2px;
+  }
+  .detected-title {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--theme-ac, #0284c7);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .detected-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip-detected {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(2, 132, 199, 0.08);
+    border: 1px solid rgba(2, 132, 199, 0.25);
+    color: var(--theme-t-bright, #0f172a);
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .chip-detected:hover {
+    background: rgba(2, 132, 199, 0.18);
+    border-color: var(--theme-ac, #0284c7);
+    transform: translateY(-1px);
+  }
+  .chip-detected.active {
+    background: var(--theme-ac, #0284c7);
+    border-color: var(--theme-ac, #0284c7);
+    color: #ffffff;
+    box-shadow: 0 2px 6px rgba(2, 132, 199, 0.35);
+  }
+  .chip-detected .chip-count {
+    font-size: 10px;
+    opacity: 0.85;
+    background: rgba(0, 0, 0, 0.15);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  .field-label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+    width: 100%;
+  }
+  .field-subnote {
+    font-size: 10px;
+    color: var(--theme-t-muted, #64748b);
+  }
+  .field-subnote code {
+    background: var(--theme-bg-input, rgba(0, 0, 0, 0.06));
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+    color: var(--theme-ac, #0284c7);
+  }
+  .quick-chips-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .chips-label {
+    font-size: 10px;
+    color: var(--theme-t-muted, #64748b);
+    font-weight: 500;
+  }
+  .array-eval-box {
+    background: var(--theme-bg-panel, rgba(0, 0, 0, 0.04));
+    border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .array-eval-box.is-valid {
+    border-color: rgba(16, 185, 129, 0.35);
+    background: rgba(16, 185, 129, 0.04);
+  }
+  .eval-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+  .eval-badge-success {
+    font-size: 10px;
+    font-weight: 700;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.12);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .eval-badge-error {
+    font-size: 10px;
+    font-weight: 700;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .eval-count-tag {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--theme-t-bright, #0f172a);
+  }
+  .eval-limit-warning {
+    font-size: 10.5px;
+    color: #f59e0b;
+    font-weight: 500;
+  }
+  .sample-preview-card {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 2px;
+  }
+  .sample-tag {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--theme-t-muted, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .sample-preview-code {
+    max-height: 90px;
+    overflow-y: auto;
+    font-family: monospace;
+    font-size: 10.5px;
+    background: var(--theme-bg-input, #1e1e1e);
+    border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.1));
+    border-radius: 4px;
+    padding: 6px 8px;
+    color: var(--theme-t-bright, #e2e8f0);
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .loop-vars-callout {
+    background: var(--theme-bg-panel, rgba(0, 0, 0, 0.05));
+    border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .vars-callout-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--theme-t-bright, #0f172a);
+  }
+  .vars-callout-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .var-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--theme-t-muted, #64748b);
+  }
+  .var-item code {
+    background: rgba(2, 132, 199, 0.12);
+    color: var(--theme-ac, #0284c7);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-weight: 600;
+    font-size: 10.5px;
+    flex-shrink: 0;
+  }
+
+  .transform-badge,
+  .loop-badge,
+  .delay-badge,
+  .merge-badge {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--theme-t-bright, #ffffff);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .transform-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .fields-count {
+    font-size: 11px;
+    color: var(--theme-t-sub, #94a3b8);
+  }
+
+  .transform-help-text {
+    font-size: 11.5px;
+    color: var(--theme-t-sub, #94a3b8);
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .transform-sample-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .side-code-textarea {
+    width: 100%;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 8px;
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
+    border-radius: 6px;
+    color: var(--theme-t-bright, #0f172a);
+    resize: vertical;
+    outline: none;
+
+    &:focus {
+      border-color: var(--theme-ac, #3883fa);
+    }
+  }
+
+  .sample-label-row,
+  .mappings-header-row,
+  .preview-header-row,
+  .console-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .btn-copy-sample,
+  .btn-add-mapping,
+  .btn-run-mapping {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--theme-b-input, #cbd5e1);
+    background: var(--theme-bg-card, #ffffff);
+    color: var(--theme-t-bright, #0f172a);
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.12s ease;
+
+    &:hover {
+      background: var(--theme-ac, #3883fa);
+      color: #ffffff;
+      border-color: var(--theme-ac, #3883fa);
+    }
+  }
+
+  .transform-mappings-section,
+  .transform-live-preview-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .mappings-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mapping-item-card {
+    background: var(--theme-bg-panel, #f8fafc);
+    border: 1px solid var(--theme-b-subtle, #e2e8f0);
+    border-radius: 6px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+
+    &.has-active-dropdown {
+      z-index: 100;
+    }
+  }
+
+  .mapping-paths-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .mapping-options-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .mapping-col,
+  .option-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .path-autocomplete-col {
+    position: relative;
+  }
+
+  .path-combo-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+
+  .path-combo-input {
+    width: 100%;
+    padding-right: 22px;
+  }
+
+  .path-combo-input::-webkit-calendar-picker-indicator {
+    display: none !important;
+  }
+
+  .path-combo-trigger {
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--theme-t-muted, #64748b);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    padding: 0;
+
+    &:hover {
+      background: var(--theme-bg-hover, rgba(0, 0, 0, 0.06));
+      color: var(--theme-ac, #0078d4);
+    }
+
+    &.is-active {
+      color: var(--theme-ac, #0078d4);
+      transform: translateY(-50%) rotate(180deg);
+    }
+  }
+
+  .path-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    min-width: 230px;
+    background: var(--theme-bg-card, #ffffff);
+    border: 1px solid var(--theme-b-main, #cbd5e1);
+    border-radius: 6px;
+    box-shadow: var(--theme-shadow-lg, 0 10px 26px rgba(0, 0, 0, 0.15));
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: comboFadeIn 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes comboFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .path-dropdown-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--theme-t-sub, #64748b);
+    background: var(--theme-bg-panel, #f8fafc);
+    border-bottom: 1px solid var(--theme-b-subtle, #e2e8f0);
+    user-select: none;
+  }
+
+  .path-dropdown-header-title {
+    font-size: 10px;
+  }
+
+  .path-dropdown-badge {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--theme-ac-subtle, rgba(0, 120, 212, 0.12));
+    color: var(--theme-ac, #0078d4);
+  }
+
+  .path-dropdown-scroll {
+    max-height: 160px;
+    overflow-y: auto;
+    padding: 3px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .path-dropdown-scroll::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .path-dropdown-scroll::-webkit-scrollbar-thumb {
+    background: var(--theme-b-main, #cbd5e1);
+    border-radius: 4px;
+  }
+
+  .path-dropdown-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: var(--theme-t-bright, #0f172a);
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+    transition: background 0.1s ease, color 0.1s ease;
+
+    &:hover,
+    &.is-highlighted {
+      background: var(--theme-bg-hover, rgba(0, 120, 212, 0.08));
+      color: var(--theme-ac, #0078d4);
+    }
+
+    &.is-exact {
+      font-weight: 600;
+    }
+  }
+
+  .path-option-key {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .path-icon-bracket {
+    font-size: 10px;
+    font-weight: bold;
+    color: var(--theme-ac, #0078d4);
+    opacity: 0.85;
+    flex-shrink: 0;
+  }
+
+  .path-text {
+    font-family: var(--jse-font-family-mono, monospace);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .path-selected-check {
+    color: var(--theme-ac, #0078d4);
+    font-weight: bold;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .path-dropdown-empty {
+    padding: 10px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    text-align: center;
+    color: var(--theme-t-muted, #64748b);
+  }
+
+  .path-dropdown-empty .empty-title {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--theme-t-sub, #475569);
+  }
+
+  .path-dropdown-empty .empty-subtitle {
+    font-size: 10px;
+    color: var(--theme-t-muted, #94a3b8);
+  }
+
+  .path-dropdown-footer {
+    padding: 5px 8px;
+    font-size: 9.5px;
+    color: var(--theme-t-muted, #94a3b8);
+    background: var(--theme-bg-panel, #f8fafc);
+    border-top: 1px solid var(--theme-b-subtle, #e2e8f0);
+    user-select: none;
+  }
+
+  .mini-label {
+    font-size: 10px;
+    color: var(--theme-t-sub, #94a3b8);
+    font-weight: 500;
+  }
+
+  .mappings-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .detected-badge-count {
+    font-size: 9.5px;
+    font-weight: 600;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.12);
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.2px;
+  }
+
+  .mappings-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .btn-auto-map {
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.12s ease;
+
+    &:hover {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: #10b981;
+      transform: translateY(-1px);
+    }
+  }
+
+  .mini-input,
+  .mini-select {
+    font-size: 11px;
+    padding: 4px 6px;
+    height: 26px;
+  }
+
+  .mapping-arrow {
+    color: var(--theme-ac, #06b6d4);
+    font-weight: bold;
+    font-size: 12px;
+    margin-bottom: 5px;
+  }
+
+  .btn-remove-mapping {
+    background: transparent;
+    border: none;
+    color: var(--theme-t-sub, #94a3b8);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 4px;
+    margin-bottom: 3px;
+    border-radius: 3px;
+
+    &:hover {
+      color: #ef4444;
+      background: rgba(239, 68, 68, 0.15);
+    }
+  }
+
+  .mappings-empty-hint {
+    font-size: 11px;
+    color: var(--theme-t-muted, #64748b);
+    padding: 10px;
+    background: var(--theme-bg-hover, rgba(0, 0, 0, 0.04));
+    border: 1px dashed var(--theme-b-subtle, #cbd5e1);
+    border-radius: 6px;
+    text-align: center;
+  }
+
+  .preview-box {
+    max-height: 140px;
+    overflow-y: auto;
+    font-size: 10.5px;
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
+    border-radius: 6px;
+    padding: 6px 8px;
+    color: var(--theme-console-log, #047857);
+  }
+
+  .rules-toolbar-card,
+  .ports-header-card {
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-subtle, #3e3e42);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .mode-select-group {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .router-mode-select {
+    flex: 1;
+  }
+  .add-rule-btn {
+    align-self: flex-start;
+  }
+  .rules-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .rules-empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--theme-t-muted, #64748b);
+    font-size: 12px;
+    background: var(--theme-bg-hover, rgba(0, 0, 0, 0.04));
+    border-radius: 8px;
+    border: 1px dashed var(--theme-b-subtle, #cbd5e1);
+  }
+  .rule-edit-card {
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-subtle, #3e3e42);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+  }
+  .rule-card-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .rule-num-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 140px;
+    min-width: 0;
+  }
+  .rule-index {
+    font-size: 11px;
+    font-weight: 700;
+    color: #f59e0b;
+    padding: 2px 6px;
+    background: rgba(245, 158, 11, 0.15);
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .rule-label-input {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--theme-bg-input, #2d2d30);
+    border: 1px solid var(--theme-b-input, #3e3e42);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: var(--theme-t-bright, #f1f5f9);
+    font-size: 12px;
+  }
+  .rule-label-input:focus {
+    outline: none;
+    border-color: var(--theme-ac, #3883fa);
+  }
+  .rule-target-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 1 auto;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .rule-dest-label {
+    font-size: 11px;
+    color: var(--theme-t-muted, #64748b);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .rule-port-select {
+    background: var(--theme-bg-input, #2d2d30);
+    border: 1px solid var(--theme-b-input, #3e3e42);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #d97706;
+    font-weight: 600;
+    font-size: 11px;
+    max-width: 170px;
+    min-width: 0;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+  }
+  .rule-port-select:focus {
+    outline: none;
+    border-color: var(--theme-ac, #3883fa);
+  }
+  .rule-del-btn {
+    background: transparent;
+    border: none;
+    color: #ef4444;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .rule-del-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+  }
+  .rule-condition-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .rule-type-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .rule-type-btn {
+    flex: 1 1 auto;
+    padding: 4px 8px;
+    font-size: 11px;
+    text-align: center;
+    white-space: nowrap;
+    border-radius: 4px;
+    background: var(--theme-sb-btn-bg, rgba(255, 255, 255, 0.05));
+    border: 1px solid var(--theme-sb-btn-border, rgba(255, 255, 255, 0.1));
+    color: var(--theme-t-main, #334155);
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .rule-type-btn:hover {
+    background: var(--theme-bg-hover, rgba(0, 0, 0, 0.08));
+  }
+  .rule-type-btn.active {
+    background: rgba(245, 158, 11, 0.18);
+    border-color: #f59e0b;
+    color: #d97706;
+    font-weight: 700;
+  }
+  .condition-fields {
+    background: var(--theme-bg-panel, rgba(0, 0, 0, 0.05));
+    border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  .field-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .field-sublabel {
+    font-size: 11px;
+    color: var(--theme-t-main, #334155);
+    font-weight: 600;
+  }
+  .status-preset-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .jsonpath-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+    align-items: flex-start;
+  }
+  .path-col,
+  .op-col,
+  .val-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  /* When Value field is present: JSON Path takes full top row so long paths don't get truncated,
+     Operator and Value sit side by side on row 2 */
+  .jsonpath-grid.has-val .path-col {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .jsonpath-grid.has-val .op-col {
+    flex: 1 1 120px;
+  }
+  .jsonpath-grid.has-val .val-col {
+    flex: 1 1 120px;
+  }
+
+  /* When Value field is absent (is_empty / exists): JSON Path and Operator share row 1 cleanly */
+  .jsonpath-grid:not(.has-val) .path-col {
+    flex: 2 1 140px;
+  }
+  .jsonpath-grid:not(.has-val) .op-col {
+    flex: 1 1 130px;
+  }
+
+  @media (min-width: 480px) {
+    .jsonpath-grid.has-val .path-col {
+      flex: 2 1 160px;
+      width: auto;
+    }
+    .jsonpath-grid.has-val .op-col {
+      flex: 1 1 120px;
+    }
+    .jsonpath-grid.has-val .val-col {
+      flex: 1 1 120px;
+    }
+  }
+
+  .path-col .side-text-input,
+  .val-col .side-text-input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .op-col .side-method-select {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    text-overflow: ellipsis;
+  }
+  .otherwise-callout {
+    font-size: 11px;
+    color: var(--theme-t-main, #334155);
+    font-style: italic;
+    line-height: 1.4;
+  }
+
+  /* Slot Sections in Ports Tab */
+  .ports-header-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .ports-total-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--theme-t-bright, #0f172a);
+  }
+  .ports-total-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--theme-ac, #0078d4);
+    padding: 2px 6px;
+    background: var(--theme-ac-subtle, rgba(56, 189, 248, 0.12));
+    border-radius: 4px;
+  }
+  .ports-help-note {
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--theme-t-muted, #64748b);
+    margin: 0;
+  }
+  .slot-section {
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-subtle, #3e3e42);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .slot-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .slot-badge-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .slot-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .dot-top {
+    background: #10b981;
+  }
+  .dot-mid {
+    background: #f59e0b;
+  }
+  .dot-bot {
+    background: #ef4444;
+  }
+  .slot-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--theme-t-bright, #0f172a);
+  }
+  .slot-count {
+    font-size: 10px;
+    color: var(--theme-t-muted, #64748b);
+  }
+  .slot-add-btn {
+    background: var(--theme-sb-btn-bg, rgba(15, 23, 42, 0.06));
+    border: 1px solid var(--theme-sb-btn-border, rgba(15, 23, 42, 0.15));
+    color: var(--theme-t-bright, #0f172a);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .slot-add-btn:hover:not(:disabled) {
+    background: var(--theme-sb-btn-hover-bg, rgba(15, 23, 42, 0.12));
+    border-color: var(--theme-sb-btn-hover-border, rgba(15, 23, 42, 0.25));
+  }
+  .slot-add-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .slot-ports-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .slot-empty-notice {
+    font-size: 11px;
+    color: var(--theme-t-muted, #64748b);
+    font-style: italic;
+    padding: 4px 0;
+  }
+  .port-item-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--theme-bg-panel, rgba(0, 0, 0, 0.05));
+    border: 1px solid var(--theme-b-subtle, rgba(0, 0, 0, 0.1));
+    border-radius: 6px;
+    padding: 4px 8px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .port-pin-preview {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .port-label-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    color: var(--theme-t-bright, #0f172a);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .port-label-input:focus {
+    outline: none;
+    border-bottom: 1px solid var(--theme-ac, #38bdf8);
+  }
+  .port-id-pill {
+    font-size: 10px;
+    font-family: monospace;
+    color: var(--theme-t-muted, #64748b);
+    background: var(--theme-sb-btn-bg, rgba(0, 0, 0, 0.04));
+    padding: 2px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .port-color-picker {
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  .port-delete-btn {
+    background: transparent;
+    border: none;
+    color: #ef4444;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 4px;
+    border-radius: 4px;
+  }
+  .port-delete-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+  }
+
+  /* Universal Professional Request Delete Button */
+  .req-delete-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--theme-t-muted, #858585);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    line-height: 1;
+
+    .req-del-icon {
+      width: 12px;
+      height: 12px;
+      display: block;
+      pointer-events: none;
+      transition: transform 0.12s ease;
+    }
+
+    &:hover {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.35);
+      color: #ef4444;
+      transform: scale(1.05);
+
+      .req-del-icon {
+        transform: scale(1.08);
+      }
+    }
+
+    &:active {
+      transform: scale(0.95);
+      background: rgba(239, 68, 68, 0.25);
+    }
+
+    &:focus-visible {
+      outline: 2px solid #ef4444;
+      outline-offset: 1px;
+    }
+  }
+
+  :global(.jse-theme-default) .req-delete-btn,
+  :global(.jse-theme-light) .req-delete-btn {
+    color: #64748b;
+
+    &:hover {
+      background: #fee2e2;
+      border-color: #fca5a5;
+      color: #dc2626;
+    }
+  }
+
+  .side-text-input {
+    width: 100%;
+    box-sizing: border-box;
+    height: 28px;
+    background: var(--theme-bg-input, #1e1e1e);
+    border: 1px solid var(--theme-b-input, #3e3e42);
+    border-radius: 4px;
+    color: var(--theme-t-bright, #cccccc);
+    font-size: 11px;
+    padding: 0 8px;
+    outline: none;
+    transition: border-color 0.12s ease;
+  }
+  .side-text-input:focus {
+    border-color: var(--theme-ac, #3883fa);
+  }
+
+  /* Router Evaluation Response Panel */
+  .router-eval-card {
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-subtle, #3e3e42);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .eval-header {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--theme-t-bright, #0f172a);
+  }
+  .eval-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .meta-label {
+    font-size: 10px;
+    color: var(--theme-t-muted, #64748b);
+    text-transform: uppercase;
+  }
+  .meta-val {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--theme-t-bright, #0f172a);
+  }
+  .meta-val.badge-success {
+    color: #10b981;
+  }
+  .meta-val.badge-error {
+    color: #ef4444;
+  }
+  .eval-json-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .eval-preview-title {
+    font-size: 11px;
+    color: var(--theme-t-muted, #64748b);
   }
 
   /* Node Header */
   .node-header {
+    height: 36px;
+    box-sizing: border-box;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 7px 10px;
+    padding: 7px 18px;
     background: var(--theme-bg-panel, rgba(0, 0, 0, 0.15));
     border-bottom: 1px solid var(--theme-b-subtle, #3e3e42);
     border-radius: 8px 8px 0 0;
@@ -4738,7 +9263,7 @@
   .node-title-input {
     background: transparent;
     border: none;
-    color: var(--theme-t-bright, #f1f5f9);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 11px;
     font-weight: 600;
     outline: none;
@@ -4765,8 +9290,15 @@
 
   /* Node Body */
   .node-body {
-    padding: 8px 10px;
+    flex: 1;
+    min-height: 0;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 6px 20px;
     cursor: pointer;
+    overflow: hidden;
   }
   .node-rest-preview {
     display: flex;
@@ -4783,19 +9315,19 @@
   }
   .method-get {
     background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
+    color: var(--theme-method-get, #047857);
   }
   .method-post {
     background: rgba(245, 158, 11, 0.15);
-    color: #fbbf24;
+    color: var(--theme-method-post, #b45309);
   }
   .method-put {
     background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
+    color: var(--theme-method-put, #1d4ed8);
   }
   .method-delete {
     background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
+    color: var(--theme-method-delete, #b91c1c);
   }
   .url-text {
     font-size: 10px;
@@ -4822,10 +9354,13 @@
 
   /* Node Footer */
   .node-footer {
+    height: 32px;
+    box-sizing: border-box;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 5px 10px;
+    padding: 5px 18px;
     background: var(--theme-bg-panel, rgba(0, 0, 0, 0.2));
     border-top: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.05));
     font-size: 10px;
@@ -4850,10 +9385,10 @@
     font-weight: 700;
   }
   .run-ok .status-code {
-    color: #10b981;
+    color: var(--theme-console-log, #047857);
   }
   .run-bad .status-code {
-    color: #ef4444;
+    color: var(--theme-danger-text, #b91c1c);
   }
   .duration {
     color: var(--theme-t-muted, #94a3b8);
@@ -4863,7 +9398,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: var(--theme-t-main, #cbd5e1);
+    color: var(--theme-t-main, #334155);
   }
   .node-quick-btn {
     background: var(--theme-bg-card, #2d2d30);
@@ -4942,10 +9477,10 @@
     min-width: 0;
   }
   .side-title-input {
-    background: var(--theme-bg-card, rgba(255, 255, 255, 0.04));
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 5px;
-    color: var(--theme-t-bright, #f1f5f9);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 13px;
     font-weight: 600;
     width: 100%;
@@ -4959,7 +9494,7 @@
     border-color: var(--theme-b-input-hover, rgba(56, 189, 248, 0.4));
   }
   .side-title-input:focus {
-    background: var(--theme-bg-card, #1e1e1e);
+    background: var(--theme-bg-input, #ffffff);
     border-color: var(--theme-ac, #3883fa);
     box-shadow: 0 0 0 2px var(--theme-ac-subtle, rgba(56, 189, 248, 0.2));
   }
@@ -4982,7 +9517,7 @@
     gap: 4px;
     background: var(--theme-bg-card, #2d2d30);
     border: 1px solid var(--theme-b-input, #3e3e42);
-    color: var(--theme-t-bright, #cccccc);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 11px;
     font-weight: 500;
     padding: 3px 8px;
@@ -4998,13 +9533,13 @@
   .side-run-btn {
     background: var(--theme-bg-card, #2d2d30);
     border: 1px solid var(--theme-b-input, #3e3e42);
-    color: #10b981;
+    color: var(--theme-console-log, #047857);
     font-weight: 600;
   }
   .side-run-btn:hover {
     background: var(--theme-bg-hover, #383838);
-    border-color: #10b981;
-    color: #10b981;
+    border-color: var(--theme-console-log, #047857);
+    color: var(--theme-console-log, #047857);
   }
   .side-close-btn {
     background: transparent;
@@ -5049,9 +9584,9 @@
     font-size: 11px;
     font-weight: 700;
     padding: 0 6px;
-    background: var(--theme-bg-card, #2d2d30);
-    border: 1px solid var(--theme-b-input, #3e3e42);
-    color: var(--theme-t-bright, #cccccc);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
+    color: var(--theme-t-bright, #0f172a);
     outline: none;
     cursor: pointer;
     transition: all 0.12s;
@@ -5064,48 +9599,48 @@
     border-color: var(--theme-ac, #3883fa);
   }
   .side-method-select.side-method-get {
-    color: #10b981;
+    color: var(--theme-method-get, #047857);
   }
   .side-method-select.side-method-post {
-    color: #f59e0b;
+    color: var(--theme-method-post, #b45309);
   }
   .side-method-select.side-method-put {
-    color: #3b82f6;
+    color: var(--theme-method-put, #1d4ed8);
   }
   .side-method-select.side-method-patch {
-    color: #a855f7;
+    color: #8a6df0;
   }
   .side-method-select.side-method-delete {
-    color: #ef4444;
+    color: var(--theme-method-delete, #b91c1c);
   }
   .side-method-select option {
     background-color: var(--theme-bg-card, #252526);
-    color: var(--theme-t-bright, #cccccc);
+    color: var(--theme-t-bright, #0f172a);
     font-weight: 600;
     padding: 4px 8px;
   }
   .side-method-select option[value='GET'] {
-    color: #10b981;
+    color: var(--theme-method-get, #047857);
   }
   .side-method-select option[value='POST'] {
-    color: #f59e0b;
+    color: var(--theme-method-post, #b45309);
   }
   .side-method-select option[value='PUT'] {
-    color: #3b82f6;
+    color: var(--theme-method-put, #1d4ed8);
   }
   .side-method-select option[value='PATCH'] {
-    color: #a855f7;
+    color: #8a6df0;
   }
   .side-method-select option[value='DELETE'] {
-    color: #ef4444;
+    color: var(--theme-method-delete, #b91c1c);
   }
   .side-url-input {
     flex: 1;
     height: 28px;
-    background: var(--theme-bg-card, #1e1e1e);
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 4px;
-    color: var(--theme-t-bright, #cccccc);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 11px;
     font-family: Consolas, monospace;
     padding: 0 8px;
@@ -5116,10 +9651,10 @@
   }
   .side-proxy-select {
     height: 28px;
-    background: var(--theme-bg-card, #2d2d30);
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 4px;
-    color: var(--theme-t-bright, #cccccc);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 10px;
     padding: 0 6px;
     outline: none;
@@ -5135,7 +9670,7 @@
   }
   .side-proxy-select option {
     background-color: var(--theme-bg-card, #252526);
-    color: var(--theme-t-bright, #cccccc);
+    color: var(--theme-t-bright, #0f172a);
     padding: 4px 8px;
   }
   .side-custom-proxy-row {
@@ -5150,10 +9685,10 @@
   .side-custom-proxy-input {
     flex: 1;
     height: 24px;
-    background: var(--theme-bg-card, #1e1e1e);
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 4px;
-    color: var(--theme-t-bright, #fff);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 10px;
     font-family: Consolas, monospace;
     padding: 0 6px;
@@ -5220,7 +9755,7 @@
   .pane-title {
     font-size: 11px;
     font-weight: 600;
-    color: var(--theme-t-bright, #cbd5e1);
+    color: var(--theme-t-bright, #0f172a);
   }
   .pane-right-tools {
     display: flex;
@@ -5311,14 +9846,14 @@
     background: transparent;
     border: 1px solid transparent;
     border-radius: 4px;
-    color: var(--theme-t-bright, #e2e8f0);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 11px;
     font-family: Consolas, monospace;
     padding: 0 5px;
     outline: none;
   }
   .kv-row input[type='text']:focus {
-    background: var(--theme-bg-panel, #252526);
+    background: var(--theme-bg-input, #ffffff);
     border-color: var(--theme-ac, #3883fa);
   }
   .kv-del-btn {
@@ -5353,24 +9888,26 @@
   .preset-chip {
     background: var(--theme-bg-card, rgba(255, 255, 255, 0.06));
     border: 1px solid var(--theme-b-input, #3e3e42);
-    color: var(--theme-t-main, #cbd5e1);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 10px;
+    font-weight: 500;
     padding: 2px 7px;
     border-radius: 4px;
     cursor: pointer;
+    transition: all 0.12s ease;
   }
   .preset-chip:hover {
     background: var(--theme-ac-subtle, rgba(56, 189, 248, 0.15));
     border-color: var(--theme-ac, rgba(56, 189, 248, 0.3));
-    color: var(--theme-ac, #3883fa);
+    color: var(--theme-ac, #0078d4);
   }
   .side-raw-textarea {
     width: 100%;
     height: 180px;
-    background: var(--theme-bg-card, #1e1e1e);
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 6px;
-    color: var(--theme-t-bright, #f1f5f9);
+    color: var(--theme-t-bright, #0f172a);
     font-family: Consolas, monospace;
     font-size: 11px;
     padding: 8px;
@@ -5448,10 +9985,10 @@
   .body-code-textarea {
     width: 100%;
     height: 220px;
-    background: var(--theme-bg-card, #1e1e1e);
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 4px;
-    color: var(--theme-t-bright, #cccccc);
+    color: var(--theme-t-bright, #0f172a);
     font-family: Consolas, monospace;
     font-size: 11px;
     padding: 8px;
@@ -5521,10 +10058,10 @@
   }
   .auth-text-input {
     height: 28px;
-    background: var(--theme-bg-card, #1e1e1e);
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 4px;
-    color: var(--theme-t-bright, #fff);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 11px;
     font-family: Consolas, monospace;
     padding: 0 8px;
@@ -5557,12 +10094,12 @@
   }
   .auth-val-badge.ok {
     background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
+    color: var(--theme-console-log, #047857);
     border: 1px solid rgba(16, 185, 129, 0.3);
   }
   .auth-val-badge.bad {
     background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
+    color: var(--theme-danger-text, #b91c1c);
     border: 1px solid rgba(239, 68, 68, 0.3);
   }
 
@@ -5631,9 +10168,9 @@
     color: var(--theme-ac, #3883fa);
   }
   .env-copy-chip {
-    background: var(--theme-bg-hover, rgba(255, 255, 255, 0.08));
-    border: 1px solid var(--theme-b-subtle, transparent);
-    color: var(--theme-t-main, #cbd5e1);
+    background: var(--theme-chip-bg, #f1f5f9);
+    border: 1px solid var(--theme-chip-border, #cbd5e1);
+    color: var(--theme-chip-text, #1e293b);
     font-size: 9px;
     padding: 1px 4px;
     border-radius: 3px;
@@ -5677,11 +10214,11 @@
   }
   .res-status-pill.ok {
     background: rgba(16, 185, 129, 0.18);
-    color: #34d399;
+    color: var(--theme-console-log, #047857);
   }
   .res-status-pill.bad {
     background: rgba(239, 68, 68, 0.18);
-    color: #f87171;
+    color: var(--theme-danger-text, #b91c1c);
   }
   .res-duration,
   .res-size,
@@ -5698,7 +10235,7 @@
   }
   .res-summary-text {
     font-size: 11px;
-    color: var(--theme-t-main, #cbd5e1);
+    color: var(--theme-t-main, #334155);
     margin-bottom: 10px;
   }
   .res-editor-btn {
@@ -5738,7 +10275,7 @@
   .history-section-title {
     font-size: 11px;
     font-weight: 600;
-    color: var(--theme-t-bright, #cbd5e1);
+    color: var(--theme-t-bright, #0f172a);
   }
   .history-count {
     color: var(--theme-t-muted, #64748b);
@@ -5769,10 +10306,10 @@
     font-weight: 700;
   }
   .hist-status.ok {
-    color: #34d399;
+    color: var(--theme-console-log, #047857);
   }
   .hist-status.bad {
-    color: #f87171;
+    color: var(--theme-danger-text, #b91c1c);
   }
   .hist-meta {
     color: var(--theme-t-muted, #94a3b8);
@@ -5805,10 +10342,10 @@
   .js-code-textarea {
     width: 100%;
     height: 260px;
-    background: var(--theme-bg-card, #1e1e1e);
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 6px;
-    color: var(--theme-t-bright, #f8fafc);
+    color: var(--theme-t-bright, #0f172a);
     font-family: Consolas, monospace;
     font-size: 11px;
     padding: 10px;
@@ -5833,7 +10370,7 @@
     margin: 0;
     font-family: Consolas, monospace;
     font-size: 11px;
-    color: #34d399;
+    color: var(--theme-console-log, #047857);
     max-height: 240px;
     overflow-y: auto;
     white-space: pre-wrap;
@@ -5998,7 +10535,7 @@
   .cross-flow-title {
     font-size: 12px;
     font-weight: 600;
-    color: #c084fc;
+    color: var(--theme-accent-text, #7e22ce);
   }
   .beta-badge {
     font-size: 9px;
@@ -6011,7 +10548,7 @@
   }
   .cross-flow-help {
     font-size: 11px;
-    color: var(--theme-t-main, #cbd5e1);
+    color: var(--theme-t-main, #334155);
     margin: 0;
     line-height: 1.4;
     display: flex;
@@ -6020,7 +10557,7 @@
   }
   .cross-flow-warn {
     font-size: 10px;
-    color: #fbbf24;
+    color: var(--theme-warning-text, #b45309);
     font-weight: 500;
   }
   .side-flow-select {

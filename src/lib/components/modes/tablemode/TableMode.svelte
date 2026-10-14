@@ -158,8 +158,10 @@
   import {
     buildVisualColumns,
     buildVisualRows,
-    getVisualCellValue,
+    collectExpandableDescendantPaths,
     getEffectiveSubRowIndex,
+    getVisualCellPath,
+    getVisualCellValue,
     isColumnExpandable,
     sortJsonWithExpansion,
     transformOperationsForStringJson
@@ -303,8 +305,8 @@
       )
     : ({} as Record<string, boolean>)
 
-  // Auto-expand default visualization (modo novo):
-  // When flattenColumns is enabled, expandable columns start expanded by default!
+  // Auto-expand default visualization:
+  // When flattenColumns is enabled, expandable columns start expanded by default up to 4 levels!
   let lastInitializedDoc: unknown = undefined
   let lastFlattenColumnsSetting = flattenColumns
 
@@ -317,10 +319,7 @@
       if (flattenColumns) {
         const next: Record<string, boolean> = {}
         for (const col of columns) {
-          const key = compileJSONPointer(col)
-          if (expandableColumnsMap[key]) {
-            next[key] = true
-          }
+          Object.assign(next, collectExpandableDescendantPaths(json as unknown[], col, 4))
         }
         expandedColumns = next
       } else {
@@ -332,10 +331,7 @@
       if (flattenColumns && Object.keys(expandedColumns).length === 0) {
         const next: Record<string, boolean> = {}
         for (const col of columns) {
-          const key = compileJSONPointer(col)
-          if (expandableColumnsMap[key]) {
-            next[key] = true
-          }
+          Object.assign(next, collectExpandableDescendantPaths(json as unknown[], col, 4))
         }
         expandedColumns = next
         itemHeightsCache = {}
@@ -364,25 +360,50 @@
   function toggleExpandColumn(columnPath: JSONPath) {
     const colKey = compileJSONPointer(columnPath)
     itemHeightsCache = {}
-    expandedColumns = {
-      ...expandedColumns,
-      [colKey]: !expandedColumns[colKey]
+    if (expandedColumns[colKey]) {
+      const next = { ...expandedColumns }
+      delete next[colKey]
+      const prefix = colKey === '' ? '/' : colKey + '/'
+      for (const k of Object.keys(next)) {
+        if (k.startsWith(prefix)) {
+          delete next[k]
+        }
+      }
+      expandedColumns = next
+    } else {
+      // By default expands up to 4 levels; subsequent levels expand 1 by 1
+      const maxLevels = columnPath.length < 4 ? 4 - columnPath.length + 1 : 1
+      const toExpand = collectExpandableDescendantPaths(
+        json as unknown[],
+        columnPath,
+        maxLevels
+      )
+      expandedColumns = {
+        ...expandedColumns,
+        ...toExpand,
+        [colKey]: true
+      }
     }
   }
 
-  function openColumnContextMenu(event: MouseEvent, columnPath: JSONPath, parentPath: JSONPath) {
+  function openColumnContextMenu(
+    event: MouseEvent,
+    columnPath: JSONPath,
+    parentPath: JSONPath,
+    isColExpandable: boolean,
+    isSubColumn: boolean
+  ) {
     const parentKey = compileJSONPointer(parentPath)
-    const isExpanded = !!expandedColumns[parentKey]
-    const isExpandable = !!expandableColumnsMap[parentKey]
+    const isExpanded = isSubColumn && !!expandedColumns[parentKey]
 
     const defaultItems: ContextMenuItem[] = createColumnContextMenuItems({
       columnPath,
       parentPath,
       isExpanded,
-      isExpandable,
+      isExpandable: isColExpandable,
       readOnly,
       sortedColumn,
-      onToggleExpand: () => toggleExpandColumn(parentPath),
+      onToggleExpand: (targetPath) => toggleExpandColumn(targetPath),
       onSort: onSortByHeader
     })
 
@@ -1992,8 +2013,7 @@
                 {/if}
               </th>
               {#each visualColumns as vCol}
-                {@const colKey = compileJSONPointer(vCol.parentPath)}
-                {@const isOriginalExpandable = !!expandableColumnsMap[colKey]}
+                {@const colKey = compileJSONPointer(vCol.fullPath)}
                 {@const isColExpanded = !!expandedColumns[colKey]}
                 <th class="jse-table-cell jse-table-cell-header">
                   <ColumnHeader
@@ -2002,10 +2022,24 @@
                     parentName={vCol.parentName}
                     colorIndex={vCol.colorIndex}
                     isArrayElement={vCol.isArrayElement}
-                    isExpandable={!vCol.isExpandedSubColumn && isOriginalExpandable}
-                    isExpanded={vCol.isExpandedSubColumn && isColExpanded}
-                    onToggleExpand={() => toggleExpandColumn(vCol.parentPath)}
-                    onContextMenu={(e) => openColumnContextMenu(e, vCol.fullPath, vCol.parentPath)}
+                    isExpandable={vCol.isExpandable}
+                    isExpanded={vCol.isExpandable ? isColExpanded : (vCol.isExpandedSubColumn && isColExpanded)}
+                    onToggleExpand={() => {
+                      if (vCol.isExpandable) {
+                        toggleExpandColumn(vCol.fullPath)
+                      } else if (vCol.isExpandedSubColumn) {
+                        toggleExpandColumn(vCol.parentPath)
+                      }
+                    }}
+                    onCollapseParent={vCol.isExpandedSubColumn ? () => toggleExpandColumn(vCol.parentPath) : undefined}
+                    onContextMenu={(e) =>
+                      openColumnContextMenu(
+                        e,
+                        vCol.fullPath,
+                        vCol.parentPath,
+                        vCol.isExpandable,
+                        vCol.isExpandedSubColumn
+                      )}
                     {sortedColumn}
                     {readOnly}
                     onSort={onSortByHeader}
@@ -2078,13 +2112,10 @@
                     isExpandedView && Array.isArray(json)
                       ? getEffectiveSubRowIndex(json, vRow, vCol)
                       : vRow.subRowIndex}
-                  {@const cellPath = isExpandedView
-                    ? vCol.isExpandedSubColumn && vCol.isArrayElement
-                      ? vCol.subKey && !vCol.isPrimitiveArray
-                        ? [String(rowIndex), ...vCol.parentPath, String(effSubRow), vCol.subKey]
-                        : [String(rowIndex), ...vCol.parentPath, String(effSubRow)]
-                      : [String(rowIndex), ...vCol.fullPath]
-                    : [String(rowIndex), ...vCol.parentPath]}
+                  {@const cellPath =
+                    isExpandedView && Array.isArray(json)
+                      ? getVisualCellPath(rowIndex, vCol, effSubRow, originalRowItem)
+                      : [String(rowIndex), ...vCol.parentPath]}
                   {@const isSelected =
                     isValueSelection(selection) && pathStartsWith(selection.path, cellPath)}
                   {@const validationErrorsByColumn = validationErrorsByRow?.columns[columnIndex]}

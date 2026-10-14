@@ -58,36 +58,36 @@
               onContextMenu(e, [
                 {
                   icon: '💾',
-                  label: `Salvar Workspace ("${pt.title}")`,
+                  label: `Save Workspace ("${pt.title}")`,
                   action: () => onSaveWorkspace && onSaveWorkspace(pt.id)
                 },
                 {
                   icon: '⬇',
-                  label: `Exportar Workspace ("${pt.title}") (.jsew)`,
+                  label: `Export Workspace ("${pt.title}") (.jsew)`,
                   action: () => onExportWorkspace && onExportWorkspace(pt.id)
                 },
                 { separator: true, label: 'sep-1' },
-                { icon: '📁', label: 'Novo Grupo de Flows', action: () => onCreateGroup(pt.id) },
+                { icon: '📁', label: 'New Flow Group', action: () => onCreateGroup(pt.id) },
                 {
                   icon: '🔀',
-                  label: 'Novo Spatial Flow',
+                  label: 'New Spatial Flow',
                   action: () => onCreateFlow(pt.id, pt.flowGroups?.[0]?.id ?? 'group-1')
                 },
                 { separator: true, label: 'sep-2' },
                 {
                   icon: '✏️',
-                  label: 'Renomear Workspace…',
+                  label: 'Rename Workspace…',
                   action: () => onRenameWorkspace && onRenameWorkspace(pt.id, pt.title)
                 },
                 {
                   icon: '📋',
-                  label: 'Duplicar Workspace',
+                  label: 'Duplicate Workspace',
                   action: () => onDuplicateWorkspace && onDuplicateWorkspace(pt.id)
                 },
                 { separator: true, label: 'sep-3' },
                 {
                   icon: '🗑️',
-                  label: 'Fechar / Remover Workspace',
+                  label: 'Close / Remove Workspace',
                   disabled: primaryTabs.length <= 1,
                   action: () => onDeleteWorkspace && onDeleteWorkspace(pt.id)
                 }
@@ -101,33 +101,33 @@
           <span class="ws-caret">{isWsCollapsed ? '▸' : '▾'}</span>
           <span class="ws-icon">🗂</span>
           {#if isCurrentPrimary}
-            <span class="ws-active-dot" title="Workspace ativo"></span>
+            <span class="ws-active-dot" title="Active workspace"></span>
           {/if}
           <span class="ws-title" title={`Workspace: ${pt.title}`}>{pt.title}</span>
           <div class="ws-head-actions" on:click|stopPropagation role="none">
             {#if onSaveWorkspace}
               <button
                 class="ws-icon-btn"
-                title="Salvar este workspace (.jsew)"
+                title="Save this workspace (.jsew)"
                 on:click={() => onSaveWorkspace(pt.id)}>💾</button
               >
             {/if}
             {#if onExportWorkspace}
               <button
                 class="ws-icon-btn"
-                title="Exportar este workspace (.jsew)"
+                title="Export this workspace (.jsew)"
                 on:click={() => onExportWorkspace(pt.id)}>⬇</button
               >
             {/if}
             <button
               class="ws-icon-btn ws-add-group-btn"
-              title="Adicionar novo Grupo a este Workspace"
+              title="Add new Group to this Workspace"
               on:click={() => onCreateGroup(pt.id)}>＋</button
             >
             {#if onDeleteWorkspace && primaryTabs.length > 1}
               <button
                 class="ws-icon-btn ws-btn-danger"
-                title="Fechar este Workspace"
+                title="Close this Workspace"
                 on:click={() => onDeleteWorkspace(pt.id)}>✕</button
               >
             {/if}
@@ -156,24 +156,24 @@
                       onContextMenu(e, [
                         {
                           icon: '🔀',
-                          label: `Novo Spatial Flow em "${group.name}"`,
+                          label: `New Spatial Flow in "${group.name}"`,
                           action: () => onCreateFlow(pt.id, group.id)
                         },
                         {
                           icon: '📥',
-                          label: 'Importar Flow (.flow.json) neste grupo',
+                          label: 'Import Flow (.flow.json) into this group',
                           action: () => onImportFlow(pt.id, group.id)
                         },
                         { separator: true, label: 'sep-1' },
                         {
                           icon: '✏️',
-                          label: 'Renomear Grupo…',
+                          label: 'Rename Group…',
                           action: () => onRenameGroup(pt.id, group.id, group.name)
                         },
                         { separator: true, label: 'sep-2' },
                         {
                           icon: '🗑️',
-                          label: 'Excluir Grupo',
+                          label: 'Delete Group',
                           disabled: (pt.flowGroups?.length ?? 0) <= 1,
                           action: () => onDeleteGroup(pt.id, group.id)
                         }
@@ -238,29 +238,29 @@
                             onContextMenu(e, [
                               {
                                 icon: '🔀',
-                                label: `Carregar "${flow.name}" no Canvas`,
+                                label: `Load "${flow.name}" into Canvas`,
                                 action: () => onSelectFlow(pt.id, flow.id)
                               },
                               {
                                 icon: '⬇',
-                                label: `Exportar "${flow.name}" (.flow.json)`,
+                                label: `Export "${flow.name}" (.flow.json)`,
                                 action: () => onExportFlow(flow)
                               },
                               { separator: true, label: 'sep-1' },
                               {
                                 icon: '✏️',
-                                label: 'Renomear Spatial Flow…',
+                                label: 'Rename Spatial Flow…',
                                 action: () => onRenameFlow(pt.id, flow.id, flow.name)
                               },
                               {
                                 icon: '📋',
-                                label: 'Duplicar Spatial Flow',
+                                label: 'Duplicate Spatial Flow',
                                 action: () => onDuplicateFlow && onDuplicateFlow(pt.id, flow.id)
                               },
                               { separator: true, label: 'sep-2' },
                               {
                                 icon: '🗑️',
-                                label: 'Excluir Spatial Flow',
+                                label: 'Delete Spatial Flow',
                                 disabled: (pt.spatialFlows?.length ?? 0) <= 1,
                                 action: () => onDeleteFlow(pt.id, flow.id)
                               }

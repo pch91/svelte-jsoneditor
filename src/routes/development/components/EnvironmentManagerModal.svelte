@@ -121,7 +121,7 @@
   }
 
   function deleteEnvironment(name: string) {
-    if (confirm(`Tem certeza que deseja excluir o ambiente "${name}"?`)) {
+    if (confirm(`Are you sure you want to delete environment "${name}"?`)) {
       const updated = { ...environments }
       delete updated[name]
       environments = updated
@@ -249,7 +249,7 @@
               <div class="content-header-actions">
                 {#if onOpenInEditor}
                   <button type="button" class="env-tool-btn" on:click={openCurrentInEditor}>
-                    ↗ Abrir no Editor JSON
+                    ↗ Open in JSON Editor
                   </button>
                 {/if}
               </div>
@@ -278,11 +278,11 @@
                   class:already-active={activeEnvName === selectedTab}
                   on:click={() => setActive(selectedTab)}
                 >
-                  {activeEnvName === selectedTab ? '✓ Ativo' : '★ Definir como Ativo'}
+                  {activeEnvName === selectedTab ? '✓ Active' : '★ Set as Active'}
                 </button>
                 {#if onOpenInEditor}
                   <button type="button" class="env-tool-btn" on:click={openCurrentInEditor}>
-                    ↗ Editor JSON
+                    ↗ JSON Editor
                   </button>
                 {/if}
                 <button
@@ -328,11 +328,28 @@
                     <div class="col-act">
                       <button
                         type="button"
-                        class="row-del-btn"
+                        class="req-delete-btn row-del-btn"
                         title="Delete variable"
                         on:click={() => removeRow(rIdx)}
                       >
-                        ×
+                        <svg
+                          class="req-del-icon"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M3 6h18" />
+                          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                          <line x1="10" y1="11" x2="10" y2="17" />
+                          <line x1="14" y1="11" x2="14" y2="17" />
+                        </svg>
                       </button>
                     </div>
                   </div>
@@ -471,7 +488,7 @@
   .env-sidebar-heading {
     font-size: 11px;
     font-weight: 700;
-    color: #888888;
+    color: var(--theme-t-muted, #888888);
     letter-spacing: 0.5px;
     text-transform: uppercase;
   }
@@ -491,7 +508,7 @@
   }
   .env-empty-hint {
     font-size: 11px;
-    color: #94a3b8;
+    color: var(--theme-t-muted, #94a3b8);
     font-style: italic;
     padding: 4px;
   }
@@ -508,7 +525,7 @@
     border-radius: 4px;
     background: transparent;
     border: none;
-    color: #cccccc;
+    color: var(--theme-t-bright, #0f172a);
     font-size: 12px;
     cursor: pointer;
     text-align: left;
@@ -517,12 +534,12 @@
     box-sizing: border-box;
   }
   .env-sidebar-item:hover {
-    background: #2a2d2e;
-    color: #ffffff;
+    background: var(--theme-bg-hover, rgba(0, 0, 0, 0.06));
+    color: var(--theme-t-bright, #0f172a);
   }
   .env-sidebar-item.active {
-    background: rgba(56, 131, 250, 0.25);
-    color: #38bdf8;
+    background: var(--theme-ac-subtle, rgba(56, 131, 250, 0.25));
+    color: var(--theme-accent-text, #0066cc);
     font-weight: 600;
   }
   .item-icon {
@@ -535,16 +552,17 @@
     white-space: nowrap;
   }
   .item-badge {
-    background: #323233;
-    color: #aaaaaa;
+    background: var(--theme-chip-bg, #f1f5f9);
+    color: var(--theme-chip-text, #1e293b);
+    border: 1px solid var(--theme-chip-border, #cbd5e1);
     font-size: 10px;
     font-weight: 700;
     padding: 1px 5px;
     border-radius: 8px;
   }
   .env-sidebar-item.active .item-badge {
-    background: rgba(56, 131, 250, 0.4);
-    color: #e0f2fe;
+    background: var(--theme-ac-subtle, rgba(56, 131, 250, 0.4));
+    color: var(--theme-accent-text, #0066cc);
   }
   .env-radio-btn {
     background: transparent;
@@ -633,9 +651,9 @@
   .env-name-input {
     font-size: 13px;
     font-weight: 600;
-    color: var(--theme-t-bright, #cccccc);
-    background: var(--theme-bg-input, #1e1e1e);
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    color: var(--theme-t-bright, #0f172a);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 4px;
     padding: 3px 8px;
     outline: none;
@@ -666,13 +684,13 @@
   }
   .env-set-active-btn.already-active {
     background: rgba(16, 185, 129, 0.2);
-    color: #34d399;
+    color: var(--theme-console-log, #047857);
     border: 1px solid rgba(16, 185, 129, 0.4);
   }
   .env-tool-btn {
-    background: #323233;
-    border: 1px solid #3e3e42;
-    color: #cccccc;
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
+    color: var(--theme-t-bright, #0f172a);
     font-size: 11px;
     font-weight: 500;
     padding: 5px 10px;
@@ -683,17 +701,17 @@
       border-color 0.15s;
   }
   .env-tool-btn:hover {
-    background: #3c3c3d;
-    border-color: #555555;
-    color: #ffffff;
+    background: var(--theme-bg-hover, #f1f5f9);
+    border-color: var(--theme-b-input-hover, #94a3b8);
+    color: var(--theme-t-bright, #0f172a);
   }
   .env-tool-btn.env-tool-danger {
-    color: #f87171;
+    color: var(--theme-danger-text, #b91c1c);
     border-color: rgba(239, 68, 68, 0.4);
   }
   .env-tool-btn.env-tool-danger:hover {
     background: rgba(239, 68, 68, 0.15);
-    border-color: #f87171;
+    border-color: var(--theme-danger-text, #b91c1c);
   }
 
   /* Variables Table */
@@ -704,7 +722,7 @@
     min-height: 0;
     border: 1px solid var(--theme-b-main, #3e3e42);
     border-radius: 4px;
-    background: var(--theme-bg-input, #1e1e1e);
+    background: var(--theme-bg-input, #ffffff);
     overflow: hidden;
   }
   .env-table-header {
@@ -750,9 +768,9 @@
   .env-table-row input {
     width: 100%;
     font-size: 12px;
-    color: var(--theme-t-bright, #cccccc);
-    background: var(--theme-bg-input, #1e1e1e);
-    border: 1px solid var(--theme-b-input, #3e3e42);
+    color: var(--theme-t-bright, #0f172a);
+    background: var(--theme-bg-input, #ffffff);
+    border: 1px solid var(--theme-b-input, #cbd5e1);
     border-radius: 3px;
     padding: 4px 8px;
     outline: none;
@@ -764,21 +782,39 @@
     box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.25);
   }
   .row-del-btn {
-    background: transparent;
-    border: none;
-    color: #777777;
-    font-size: 16px;
-    cursor: pointer;
-    border-radius: 3px;
-    width: 24px;
-    height: 24px;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--theme-t-muted, #777777);
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1;
+    transition: all 0.14s ease;
+  }
+  .row-del-btn .req-del-icon {
+    width: 12px;
+    height: 12px;
+    display: block;
+    pointer-events: none;
+    transition: transform 0.12s ease;
   }
   .row-del-btn:hover {
-    color: #f87171;
+    color: #ef4444;
     background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.35);
+    transform: scale(1.05);
+  }
+  .row-del-btn:hover .req-del-icon {
+    transform: scale(1.08);
+  }
+  .row-del-btn:active {
+    transform: scale(0.95);
+    background: rgba(239, 68, 68, 0.25);
   }
   .env-table-footer {
     padding: 8px 0;

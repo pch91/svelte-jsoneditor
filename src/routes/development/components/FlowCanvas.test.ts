@@ -20,13 +20,13 @@ describe('FlowCanvas', () => {
       }
     })
 
-    expect(getByText(target, '▶ Run Flow')).toBeTruthy()
+    expect(getByText(target, 'Run Flow')).toBeTruthy()
     expect(getByText(target, '＋ REST Block')).toBeTruthy()
-    expect(getByText(target, '＋ JS Block')).toBeTruthy()
-    expect(getByText(target, '＋ Evento')).toBeTruthy()
+    expect(getByText(target, '＋ Logic & Code')).toBeTruthy()
+    expect(getByText(target, '＋ Flow Control')).toBeTruthy()
+    expect(getByText(target, '＋ Event')).toBeTruthy()
     expect(getByText(target, 'Auto Layout')).toBeTruthy()
-    expect(getByText(target, 'Example')).toBeTruthy()
-    expect(getByText(target, 'Clear')).toBeTruthy()
+    expect(getByText(target, 'File')).toBeTruthy()
 
     // Should have 7 nodes rendered in default Rick & Morty flow
     expect(target.querySelectorAll('.flow-node').length).toBe(7)
@@ -34,7 +34,7 @@ describe('FlowCanvas', () => {
     expect(target.querySelectorAll('.conn-line').length).toBe(5)
   })
 
-  it('adds a new JS node when clicking + JS Block', async () => {
+  it('adds a new JS node when clicking + Logic & Code', async () => {
     const target = document.createElement('div')
     document.body.appendChild(target)
 
@@ -52,7 +52,7 @@ describe('FlowCanvas', () => {
       }
     })
 
-    const addJsBtn = getByText(target, '＋ JS Block')
+    const addJsBtn = getByText(target, '＋ Logic & Code')
     await fireEvent.click(addJsBtn)
     await tick()
 
@@ -287,9 +287,9 @@ describe('FlowCanvas', () => {
     // Title in side panel should be editable
     const titleInput = sidePanel?.querySelector('.side-title-input') as HTMLInputElement
     expect(titleInput).toBeTruthy()
-    expect(titleInput.value).toBe('1. Buscar Personagem')
-    await fireEvent.input(titleInput, { target: { value: 'Meu Novo Nome de Bloco' } })
-    expect(titleInput.value).toBe('Meu Novo Nome de Bloco')
+    expect(titleInput.value).toBe('1. Fetch Character')
+    await fireEvent.input(titleInput, { target: { value: 'My New Block Name' } })
+    expect(titleInput.value).toBe('My New Block Name')
   })
 
   it('triggers onOpenInEditor with block name in level 2 tab title', async () => {
@@ -325,12 +325,12 @@ describe('FlowCanvas', () => {
 
     await fireEvent.click(editorQuickBtn)
     expect(onOpenInEditor).toHaveBeenCalledWith(
-      '1. Buscar Personagem (200)',
+      '1. Fetch Character (200)',
       '{"results": [{"id": 1}]}'
     )
   })
 
-  it('adds a new Event node when clicking ＋ Evento', async () => {
+  it('adds a new Event node when clicking ＋ Event', async () => {
     const target = document.createElement('div')
     document.body.appendChild(target)
 
@@ -345,7 +345,7 @@ describe('FlowCanvas', () => {
       }
     })
 
-    const addEventBtn = getByText(target, '＋ Evento')
+    const addEventBtn = getByText(target, '＋ Event')
     await fireEvent.click(addEventBtn)
     await tick()
 
@@ -390,10 +390,10 @@ describe('FlowCanvas', () => {
 
     const switcher = target.querySelector('.circle-type-control') as HTMLElement
     expect(switcher).toBeTruthy()
-    expect(getByText(switcher, 'Início')).toBeTruthy()
+    expect(getByText(switcher, 'Start')).toBeTruthy()
     expect(getByText(switcher, 'Terminate')).toBeTruthy()
-    expect(getByText(switcher, 'Salto')).toBeTruthy()
-    expect(getByText(switcher, 'Receptor')).toBeTruthy()
+    expect(getByText(switcher, 'Jump')).toBeTruthy()
+    expect(getByText(switcher, 'Receiver')).toBeTruthy()
 
     // Click 'Terminate' to switch type
     const termBtn = getByText(switcher, 'Terminate')
@@ -479,4 +479,351 @@ describe('FlowCanvas', () => {
 
     expect(target.querySelector('.flow-menu')).toBeNull()
   })
+
+  it('adds a new Router node with multi-port output rack and default rules when clicking ＋ Flow Control', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = { nodes: [], connections: [] }
+    const onSaveGraph = vi.fn()
+
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: '',
+        onSaveGraph
+      }
+    })
+
+    const addRouterBtn = getByText(target, '＋ Flow Control')
+    expect(addRouterBtn).toBeTruthy()
+    await fireEvent.click(addRouterBtn)
+    await tick()
+
+    expect(target.querySelectorAll('.flow-node').length).toBe(1)
+    const routerNode = target.querySelector('.flow-node-router') as HTMLElement
+    expect(routerNode).toBeTruthy()
+
+    // Multi-port output rack rendered on card
+    const rack = routerNode.querySelector('.node-ports-rack')
+    expect(rack).toBeTruthy()
+    // Default 4 ports: Top, Mid, Bot (2)
+    expect(rack?.querySelectorAll('.port-multi').length).toBe(4)
+    expect(rack?.querySelector('.slot-top')).toBeTruthy()
+    expect(rack?.querySelector('.slot-middle')).toBeTruthy()
+    expect(rack?.querySelector('.slot-bottom')).toBeTruthy()
+
+    // Inspector side panel opened for router
+    expect(getByText(target, 'Routing Rules')).toBeTruthy()
+    expect(target.querySelector('.tab-pane-router-rules')).toBeTruthy()
+    expect(getByText(target, 'First Match (Stop at 1st match - Switch)')).toBeTruthy()
+  })
+
+  it('manages up to 10 ports across Top, Middle, Bottom slots on router node', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = { nodes: [], connections: [] }
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    // Add router node via Flow Control
+    await fireEvent.click(getByText(target, '＋ Flow Control'))
+    await tick()
+
+    // Switch to Ports tab in side panel
+    const portsTabBtn = target.querySelector('.side-tab-btn:nth-child(2)') as HTMLButtonElement
+    expect(portsTabBtn.textContent).toContain('Output Ports')
+    await fireEvent.click(portsTabBtn)
+    await tick()
+
+    const portsPane = target.querySelector('.tab-pane-ports')
+    expect(portsPane).toBeTruthy()
+    expect(getByText(target, 'TOP Slot (Max 3)')).toBeTruthy()
+    expect(getByText(target, 'MIDDLE Slot (Max 4)')).toBeTruthy()
+    expect(getByText(target, 'BOTTOM Slot (Max 3)')).toBeTruthy()
+
+    // Add another port to top slot (currently 1, max 3)
+    const addTopBtn = getByText(target, '＋ Add Top Port') as HTMLButtonElement
+    await fireEvent.click(addTopBtn)
+    await tick()
+
+    const topSection = target.querySelector('.slot-section-top')
+    expect(topSection?.querySelectorAll('.port-item-card').length).toBe(2)
+
+    // Add until top slot reaches 3
+    await fireEvent.click(addTopBtn)
+    await tick()
+    expect(topSection?.querySelectorAll('.port-item-card').length).toBe(3)
+    expect(addTopBtn.disabled).toBe(true)
+
+    // Add 3 more middle ports so MIDDLE has all 4 ports configured
+    const addMidBtn = getByText(target, '＋ Add Middle Port') as HTMLButtonElement
+    await fireEvent.click(addMidBtn)
+    await tick()
+    await fireEvent.click(addMidBtn)
+    await tick()
+    await fireEvent.click(addMidBtn)
+    await tick()
+    expect(addMidBtn.disabled).toBe(true)
+
+    // Assert all 4 middle ports are rendered on the canvas card rack with unique top positions
+    const routerNode = target.querySelector('.flow-node-router') as HTMLElement
+    const midPortEls = routerNode.querySelectorAll('.node-ports-rack .slot-middle') as NodeListOf<HTMLElement>
+    expect(midPortEls.length).toBe(4)
+
+    const topPositions = Array.from(midPortEls).map((el) => el.style.top)
+    const uniqueTops = new Set(topPositions)
+    expect(uniqueTops.size).toBe(4) // All 4 have distinct, non-overlapping positions!
+  })
+
+  it('supports configuring dynamic multi-ports on JS block', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = { nodes: [], connections: [] }
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    // Add JS node via Logic & Code
+    await fireEvent.click(getByText(target, '＋ Logic & Code'))
+    await tick()
+
+  const jsNode = target.querySelector('.flow-node-js') as HTMLElement
+  expect(jsNode).toBeTruthy()
+  // Initially single port output
+  expect(jsNode.querySelector('.node-ports-rack')).toBeNull()
+  expect(jsNode.querySelector('.port-output')).toBeTruthy()
+
+  // Open Ports tab on JS Inspector
+  const jsPortsTabBtn = target.querySelector('.side-tab-btn:nth-child(2)') as HTMLButtonElement
+  expect(jsPortsTabBtn.textContent).toContain('Ports (0/10)')
+  await fireEvent.click(jsPortsTabBtn)
+  await tick()
+
+  expect(getByText(target, 'JS Dynamic Output Ports')).toBeTruthy()
+  const addTopBtn = getByText(target, '＋ Add Top Port')
+  await fireEvent.click(addTopBtn)
+  await tick()
+
+  expect(jsNode.querySelector('.node-ports-rack')).toBeTruthy()
+  expect(jsNode.querySelectorAll('.port-multi').length).toBe(1)
 })
+
+  it('supports switching block type on cards via (↻) card switcher button', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = { nodes: [], connections: [] }
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    // Add JS block via Logic & Code
+    await fireEvent.click(getByText(target, '＋ Logic & Code'))
+    await tick()
+
+    const jsNode = target.querySelector('.flow-node-js') as HTMLElement
+    expect(jsNode).toBeTruthy()
+
+    // Find and click the (↻) switch button
+    const switchBtn = jsNode.querySelector('.card-switch-btn') as HTMLButtonElement
+    expect(switchBtn).toBeTruthy()
+    await fireEvent.click(switchBtn)
+    await tick()
+
+    // Switcher popup should be visible with Logic & Code options
+    const switcher = target.querySelector('.node-type-switcher') as HTMLElement
+    expect(switcher).toBeTruthy()
+    expect(switcher.textContent).toContain('JS Script')
+    expect(switcher.textContent).toContain('JSON Mapper')
+
+    // Click JSON Mapper
+    const mapperBtn = switcher.querySelectorAll('.variant-btn')[1] as HTMLButtonElement
+    expect(mapperBtn.textContent).toContain('JSON Mapper')
+    await fireEvent.click(mapperBtn)
+    await tick()
+
+    // Node is now transform / JSON Mapper
+    expect(target.querySelector('.flow-node-js')).toBeNull()
+    const transformNode = target.querySelector('.flow-node-transform') as HTMLElement
+    expect(transformNode).toBeTruthy()
+    expect(target.querySelector('.node-type-switcher')).toBeNull()
+    expect(transformNode.querySelector('.node-transform-preview-compact')).toBeTruthy()
+  })
+
+  it('supports Flow Control type switching between Router, Loop, Delay and Merge', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = { nodes: [], connections: [] }
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    // Add Router block via Flow Control
+    await fireEvent.click(getByText(target, '＋ Flow Control'))
+    await tick()
+
+    const routerNode = target.querySelector('.flow-node-router') as HTMLElement
+    expect(routerNode).toBeTruthy()
+
+    // Open card switcher
+    const switchBtn = routerNode.querySelector('.card-switch-btn') as HTMLButtonElement
+    await fireEvent.click(switchBtn)
+    await tick()
+
+    const switcher = target.querySelector('.node-type-switcher') as HTMLElement
+    expect(switcher).toBeTruthy()
+    expect(switcher.textContent).toContain('Router')
+    expect(switcher.textContent).toContain('Loop')
+    expect(switcher.textContent).toContain('Delay')
+    expect(switcher.textContent).toContain('Merge')
+
+    // Select Merge
+    const mergeBtn = Array.from(switcher.querySelectorAll('.variant-btn')).find((b) =>
+      b.textContent?.includes('Merge')
+    ) as HTMLButtonElement
+    expect(mergeBtn).toBeTruthy()
+    await fireEvent.click(mergeBtn)
+    await tick()
+
+    // Node is now merge
+    const mergeNode = target.querySelector('.flow-node-merge') as HTMLElement
+    expect(mergeNode).toBeTruthy()
+
+    // Merge multi-inputs rack rendered on left edge
+    const inputsRack = mergeNode.querySelector('.node-inputs-rack') as HTMLElement
+    expect(inputsRack).toBeTruthy()
+    expect(inputsRack.querySelectorAll('.port-multi-input').length).toBe(2)
+  })
+
+  it('renders slim compact preview bodies across all block types', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = { nodes: [], connections: [] }
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    // Add Router block via Flow Control
+    await fireEvent.click(getByText(target, '＋ Flow Control'))
+    await tick()
+
+    const routerNode = target.querySelector('.flow-node-router') as HTMLElement
+    expect(routerNode.querySelector('.node-router-preview-compact')).toBeTruthy()
+    expect(routerNode.querySelector('.node-compact-summary')).toBeTruthy()
+
+    // Add Logic & Code block and switch to Mapper
+    await fireEvent.click(getByText(target, '＋ Logic & Code'))
+    await tick()
+
+    const jsNode = target.querySelector('.flow-node-js') as HTMLElement
+    const switchBtn = jsNode.querySelector('.card-switch-btn') as HTMLButtonElement
+    await fireEvent.click(switchBtn)
+    await tick()
+
+    const switcher = target.querySelector('.node-type-switcher') as HTMLElement
+    const mapperBtn = switcher.querySelectorAll('.variant-btn')[1] as HTMLButtonElement
+    await fireEvent.click(mapperBtn)
+    await tick()
+
+    const mapperNode = target.querySelector('.flow-node-transform') as HTMLElement
+    expect(mapperNode.querySelector('.node-transform-preview-compact')).toBeTruthy()
+    expect(mapperNode.querySelector('.node-compact-summary')).toBeTruthy()
+  })
+
+  it('executes JSON Mapper and generates formatted output with open in editor button', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: 'map_1',
+          type: 'transform' as const,
+          title: 'User Mapper',
+          x: 100,
+          y: 100,
+          status: 'idle' as const,
+          transformData: {
+            sampleInput: JSON.stringify({ user_id: 104, raw_name: ' rick sanchez ' }),
+            mappings: [
+              { id: 'm1', sourcePath: 'user_id', targetPath: 'id', modifier: 'number' as const },
+              { id: 'm2', sourcePath: 'raw_name', targetPath: 'profile.name', modifier: 'trim' as const }
+            ]
+          }
+        }
+      ],
+      connections: []
+    }
+
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: '',
+        onOpenInEditor: () => {}
+      }
+    })
+
+    const mapperNode = target.querySelector('.flow-node-transform') as HTMLElement
+    expect(mapperNode).toBeTruthy()
+
+    // Click Run block button [▶]
+    const playBtn = mapperNode.querySelector('.node-tool-btn') as HTMLButtonElement
+    expect(playBtn).toBeTruthy()
+    await fireEvent.click(playBtn)
+    await tick()
+
+    // Node status should be success and lastRun recorded
+    expect(graph.nodes[0].status).toBe('success')
+    expect(graph.nodes[0].lastRun?.status).toBe(200)
+    expect(graph.nodes[0].lastRun?.responseText).toContain('"id": 104')
+    expect(graph.nodes[0].lastRun?.responseText).toContain('"name": "rick sanchez"')
+
+    // Quick open in editor button should now appear in the footer
+    const editorBtn = mapperNode.querySelector('.node-quick-btn') as HTMLButtonElement
+    expect(editorBtn).toBeTruthy()
+    expect(editorBtn.textContent).toContain('↗ Editor')
+  })
+})
+

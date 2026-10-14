@@ -21,6 +21,19 @@
     text-transform: none;
     letter-spacing: 0.2px;
     flex-shrink: 0;
+    transition: all 0.15s ease;
+
+    &.clickable {
+      cursor: pointer;
+      &:hover {
+        filter: brightness(1.2);
+        box-shadow: 0 0 0 1px currentColor;
+        transform: scale(1.02);
+      }
+      &:active {
+        transform: scale(0.98);
+      }
+    }
   }
 
   .jse-column-toggle-btn {

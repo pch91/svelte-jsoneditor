@@ -95,8 +95,8 @@ export function tabScrollStrip(node: HTMLElement, options: TabScrollStripOptions
     btnLeft = document.createElement('button')
     btnLeft.type = 'button'
     btnLeft.className = `tab-scroll-btn tab-scroll-left tab-scroll-l${options.level}`
-    btnLeft.setAttribute('aria-label', 'Rolar abas para a esquerda')
-    btnLeft.setAttribute('title', 'Rolar abas para a esquerda')
+    btnLeft.setAttribute('aria-label', 'Scroll tabs to the left')
+    btnLeft.setAttribute('title', 'Scroll tabs to the left')
     btnLeft.setAttribute('tabindex', '-1')
     btnLeft.innerHTML = `
       <span class="tab-scroll-btn-inner">
@@ -108,8 +108,8 @@ export function tabScrollStrip(node: HTMLElement, options: TabScrollStripOptions
     btnRight = document.createElement('button')
     btnRight.type = 'button'
     btnRight.className = `tab-scroll-btn tab-scroll-right tab-scroll-l${options.level}`
-    btnRight.setAttribute('aria-label', 'Rolar abas para a direita')
-    btnRight.setAttribute('title', 'Rolar abas para a direita')
+    btnRight.setAttribute('aria-label', 'Scroll tabs to the right')
+    btnRight.setAttribute('title', 'Scroll tabs to the right')
     btnRight.setAttribute('tabindex', '-1')
     btnRight.innerHTML = `
       <span class="tab-scroll-btn-inner">

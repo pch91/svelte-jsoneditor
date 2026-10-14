@@ -16,6 +16,8 @@ export interface VisualColumn {
   isPrimitiveArray?: boolean
   isStringJson: boolean
   colorIndex?: number
+  isExpandable: boolean
+  isExpanded: boolean
 }
 
 export interface VisualRow {
@@ -62,6 +64,47 @@ export function tryParseJson(value: unknown): { parsed: unknown; isStringJson: b
 }
 
 /**
+ * Safely extracts a value from a row along a JSONPath, traversing
+ * nested objects, arrays, and stringified JSON.
+ */
+export function getValueAtPath(row: unknown, path: JSONPath, subRowIndex = 0): unknown {
+  if (!path || path.length === 0) {
+    return tryParseJson(row).parsed
+  }
+  let current: unknown = row
+
+  for (let i = 0; i < path.length; i++) {
+    if (current === null || current === undefined) {
+      return undefined
+    }
+    const { parsed } = tryParseJson(current)
+    const segment = path[i]
+
+    if (Array.isArray(parsed)) {
+      const idx = parseInt(segment, 10)
+      if (!isNaN(idx)) {
+        current = parsed[idx]
+      } else {
+        // segment is a property of the array elements
+        const elem = parsed[parsed.length === 1 ? 0 : subRowIndex]
+        const { parsed: parsedElem } = tryParseJson(elem)
+        if (parsedElem !== null && typeof parsedElem === 'object') {
+          current = (parsedElem as Record<string, unknown>)[segment]
+        } else {
+          return undefined
+        }
+      }
+    } else if (parsed !== null && typeof parsed === 'object') {
+      current = (parsed as Record<string, unknown>)[segment]
+    } else {
+      return undefined
+    }
+  }
+
+  return current
+}
+
+/**
  * Checks if a column in the dataset contains expandable objects or arrays.
  */
 export function isColumnExpandable(
@@ -73,7 +116,7 @@ export function isColumnExpandable(
 
   const step = Math.max(1, Math.floor(json.length / maxSampleCount))
   for (let i = 0; i < json.length; i += step) {
-    const rawVal = getIn(json[i], columnPath)
+    const rawVal = getValueAtPath(json[i], columnPath)
     const { parsed } = tryParseJson(rawVal)
     if (parsed !== null && typeof parsed === 'object') {
       if (Array.isArray(parsed)) {
@@ -112,7 +155,7 @@ export function getSubColumnsInfo(
 
   const step = Math.max(1, Math.floor(json.length / maxSampleCount))
   for (let i = 0; i < json.length; i += step) {
-    const rawVal = getIn(json[i], columnPath)
+    const rawVal = getValueAtPath(json[i], columnPath)
     const res = tryParseJson(rawVal)
     if (res.isStringJson) {
       isStringJson = true
@@ -122,9 +165,11 @@ export function getSubColumnsInfo(
     if (Array.isArray(val)) {
       isArray = true
       for (const item of val) {
-        if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+        const itemRes = tryParseJson(item)
+        const itemVal = itemRes.parsed
+        if (itemVal !== null && typeof itemVal === 'object' && !Array.isArray(itemVal)) {
           hasObjectElements = true
-          for (const k of Object.keys(item)) {
+          for (const k of Object.keys(itemVal)) {
             keysSet.add(k)
           }
         }
@@ -147,7 +192,43 @@ export function getSubColumnsInfo(
 }
 
 /**
+ * Recursively collects paths to expand up to maxLevels deep.
+ * For example, if maxLevels = 4, expands up to 4 levels of nested structures.
+ */
+export function collectExpandableDescendantPaths(
+  json: unknown[],
+  basePath: JSONPath,
+  maxLevels: number
+): Record<string, boolean> {
+  const result: Record<string, boolean> = {}
+  if (maxLevels <= 0 || !Array.isArray(json) || json.length === 0) {
+    return result
+  }
+
+  if (!isColumnExpandable(json, basePath)) {
+    return result
+  }
+
+  const baseKey = compileJSONPointer(basePath)
+  result[baseKey] = true
+
+  if (maxLevels > 1) {
+    const info = getSubColumnsInfo(json, basePath)
+    if (!info.isPrimitiveArray && info.subKeys.length > 0) {
+      for (const subKey of info.subKeys) {
+        const childPath = basePath.concat(subKey)
+        const childDescendants = collectExpandableDescendantPaths(json, childPath, maxLevels - 1)
+        Object.assign(result, childDescendants)
+      }
+    }
+  }
+
+  return result
+}
+
+/**
  * Constructs the projected visual columns list based on expandedColumns state.
+ * Supports multi-level recursive expansion.
  */
 export function buildVisualColumns(
   originalColumns: JSONPath[],
@@ -157,12 +238,23 @@ export function buildVisualColumns(
   const result: VisualColumn[] = []
   let colorIdx = 0
 
-  for (const col of originalColumns) {
+  function processColumn(
+    col: JSONPath,
+    parentPath: JSONPath,
+    parentName: string | undefined,
+    colorIndex: number | undefined,
+    isArrayParent: boolean,
+    isSubColumn: boolean,
+    isStringJsonParent: boolean = false
+  ) {
     const colKey = compileJSONPointer(col)
-    if (expandedColumns[colKey]) {
+    const isExpanded = !!expandedColumns[colKey]
+
+    if (isExpanded) {
       const info = getSubColumnsInfo(json, col)
-      const parentName = col.length > 0 ? stringifyJSONPath(col) : 'value'
-      const assignedColor = colorIdx++
+      const currentParentName = col.length > 0 ? stringifyJSONPath(col) : 'value'
+      const assignedColor = colorIndex !== undefined ? colorIndex : colorIdx++
+      const currentIsStringJson = info.isStringJson || isStringJsonParent
 
       if (info.isPrimitiveArray) {
         result.push({
@@ -171,55 +263,70 @@ export function buildVisualColumns(
           subKey: undefined,
           fullPath: col,
           displayName: 'value',
-          parentName,
+          parentName: currentParentName,
           isExpandedSubColumn: true,
           isArrayElement: true,
           isPrimitiveArray: true,
-          isStringJson: info.isStringJson,
-          colorIndex: assignedColor
+          isStringJson: currentIsStringJson,
+          colorIndex: assignedColor,
+          isExpandable: false,
+          isExpanded: true
         })
       } else if (info.subKeys.length > 0) {
         for (const subKey of info.subKeys) {
-          result.push({
-            id: `${colKey}/${subKey}`,
-            parentPath: col,
-            subKey,
-            fullPath: col.concat(subKey),
-            displayName: subKey,
-            parentName,
-            isExpandedSubColumn: true,
-            isArrayElement: info.isArray,
-            isPrimitiveArray: false,
-            isStringJson: info.isStringJson,
-            colorIndex: assignedColor
-          })
+          const childPath = col.concat(subKey)
+          processColumn(
+            childPath,
+            col,
+            currentParentName,
+            assignedColor,
+            info.isArray || isArrayParent,
+            true,
+            currentIsStringJson
+          )
         }
       } else {
-        // Fallback if no sub-keys were extracted
+        const expandable = isColumnExpandable(json, col)
         result.push({
           id: colKey,
-          parentPath: col,
+          parentPath,
+          subKey: col[col.length - 1],
           fullPath: col,
-          displayName: parentName,
-          isExpandedSubColumn: false,
-          isArrayElement: false,
+          displayName: col[col.length - 1] ?? currentParentName,
+          parentName,
+          isExpandedSubColumn: isSubColumn,
+          isArrayElement: isArrayParent,
           isPrimitiveArray: false,
-          isStringJson: false
+          isStringJson: currentIsStringJson,
+          colorIndex: assignedColor,
+          isExpandable: expandable,
+          isExpanded: false
         })
       }
     } else {
+      const expandable = isColumnExpandable(json, col)
       const colName = col.length > 0 ? stringifyJSONPath(col) : 'values'
+      const displayName = isSubColumn ? (col[col.length - 1] ?? colName) : colName
       result.push({
         id: colKey,
-        parentPath: col,
+        parentPath,
+        subKey: isSubColumn ? col[col.length - 1] : undefined,
         fullPath: col,
-        displayName: colName,
-        isExpandedSubColumn: false,
-        isArrayElement: false,
+        displayName,
+        parentName,
+        isExpandedSubColumn: isSubColumn,
+        isArrayElement: isArrayParent,
         isPrimitiveArray: false,
-        isStringJson: false
+        isStringJson: isStringJsonParent,
+        colorIndex,
+        isExpandable: expandable,
+        isExpanded: false
       })
     }
+  }
+
+  for (const col of originalColumns) {
+    processColumn(col, col, undefined, undefined, false, false, false)
   }
 
   return result
@@ -254,7 +361,7 @@ export function buildVisualRows(
 
     if (arrayParentPaths.length > 0) {
       for (const pPath of arrayParentPaths) {
-        const rawVal = getIn(row, pPath)
+        const rawVal = getValueAtPath(row, pPath)
         const { parsed } = tryParseJson(rawVal)
         if (Array.isArray(parsed)) {
           maxLen = Math.max(maxLen, parsed.length)
@@ -323,7 +430,7 @@ export function getEffectiveSubRowIndex(
   if (!visualColumn.isExpandedSubColumn || !visualColumn.isArrayElement) {
     return visualRow.subRowIndex
   }
-  const rawVal = getIn(json[visualRow.originalRowIndex], visualColumn.parentPath)
+  const rawVal = getValueAtPath(json[visualRow.originalRowIndex], visualColumn.parentPath)
   const { parsed } = tryParseJson(rawVal)
   if (Array.isArray(parsed) && parsed.length === 1) {
     return 0
@@ -343,32 +450,68 @@ export function getVisualCellValue(
   if (!row) return undefined
 
   if (!visualColumn.isExpandedSubColumn) {
-    return getIn(row, visualColumn.parentPath)
+    return getValueAtPath(row, visualColumn.fullPath)
   }
 
-  const rawVal = getIn(row, visualColumn.parentPath)
-  const { parsed } = tryParseJson(rawVal)
+  const val = getValueAtPath(
+    row,
+    visualColumn.fullPath,
+    getEffectiveSubRowIndex(json, visualRow, visualColumn)
+  )
 
-  if (visualColumn.isArrayElement) {
+  if (visualColumn.isPrimitiveArray) {
+    const { parsed } = tryParseJson(val)
     if (Array.isArray(parsed)) {
-      const elem = parsed[parsed.length === 1 ? 0 : visualRow.subRowIndex]
-      if (visualColumn.isPrimitiveArray || !visualColumn.subKey) {
-        return elem
-      }
-      if (elem !== null && typeof elem === 'object') {
-        return (elem as Record<string, unknown>)[visualColumn.subKey]
-      }
-      if (visualColumn.subKey === 'value') {
-        return elem
-      }
+      return parsed[visualRow.subRowIndex]
     }
-    return undefined
-  } else {
-    if (parsed !== null && typeof parsed === 'object' && visualColumn.subKey) {
-      return (parsed as Record<string, unknown>)[visualColumn.subKey]
-    }
-    return undefined
   }
+
+  return val
+}
+
+/**
+ * Resolves the concrete JSONPath for a cell in the table,
+ * accounting for array indices when within expanded arrays.
+ */
+export function getVisualCellPath(
+  rowIndex: number,
+  visualColumn: VisualColumn,
+  effSubRow: number,
+  row?: unknown
+): JSONPath {
+  const result: JSONPath = [String(rowIndex)]
+  if (!visualColumn.isExpandedSubColumn) {
+    return result.concat(visualColumn.fullPath)
+  }
+  if (!visualColumn.isArrayElement || row === undefined) {
+    return result.concat(visualColumn.fullPath)
+  }
+
+  let current: unknown = row
+  for (let i = 0; i < visualColumn.fullPath.length; i++) {
+    const segment = visualColumn.fullPath[i]
+    const { parsed } = tryParseJson(current)
+    if (Array.isArray(parsed)) {
+      result.push(String(effSubRow))
+      current = parsed[effSubRow]
+    }
+    result.push(segment)
+    const { parsed: nextParsed } = tryParseJson(current)
+    if (nextParsed !== null && typeof nextParsed === 'object') {
+      current = (nextParsed as Record<string, unknown>)[segment]
+    } else {
+      current = undefined
+    }
+  }
+
+  if (visualColumn.isPrimitiveArray) {
+    const { parsed } = tryParseJson(current)
+    if (Array.isArray(parsed)) {
+      result.push(String(effSubRow))
+    }
+  }
+
+  return result
 }
 
 /**
@@ -387,20 +530,42 @@ export function createVisualCellPatch(
     subRowIndex: getEffectiveSubRowIndex(json, visualRow, visualColumn)
   }
 
-  if (!visualColumn.isExpandedSubColumn) {
-    return {
-      op: 'replace',
-      path: compileJSONPointer([rowPathStr, ...visualColumn.parentPath]),
-      value: newValue
+  const row = json[visualRow.originalRowIndex]
+
+  // Construct target patch path, inserting array indices if any segment is an array
+  const pathWithIndices: string[] = [rowPathStr]
+  let current: unknown = row
+
+  for (let i = 0; i < visualColumn.fullPath.length; i++) {
+    const segment = visualColumn.fullPath[i]
+    const { parsed } = tryParseJson(current)
+    if (Array.isArray(parsed)) {
+      const effIdx = parsed.length === 1 ? 0 : visualRow.subRowIndex
+      pathWithIndices.push(String(effIdx))
+      current = parsed[effIdx]
+    }
+    pathWithIndices.push(segment)
+    const { parsed: nextParsed } = tryParseJson(current)
+    if (nextParsed !== null && typeof nextParsed === 'object') {
+      current = (nextParsed as Record<string, unknown>)[segment]
+    } else {
+      current = undefined
     }
   }
 
-  const rawVal = getIn(json[visualRow.originalRowIndex], visualColumn.parentPath)
-  const { parsed, isStringJson } = tryParseJson(rawVal)
-  const subKey = visualColumn.subKey
+  if (visualColumn.isStringJson) {
+    let stringParentPath = visualColumn.parentPath
+    for (let len = visualColumn.fullPath.length - 1; len >= 0; len--) {
+      const p = visualColumn.fullPath.slice(0, len)
+      const raw = getIn(row, p)
+      if (typeof raw === 'string') {
+        stringParentPath = p
+        break
+      }
+    }
 
-  if (isStringJson) {
-    // Preserve string type: update internal property and serialize back
+    const rawVal = getIn(row, stringParentPath)
+    const { parsed } = tryParseJson(rawVal)
     let cloned: unknown
     try {
       cloned = JSON.parse(JSON.stringify(parsed))
@@ -408,68 +573,37 @@ export function createVisualCellPatch(
       cloned = visualColumn.isArrayElement ? [] : {}
     }
 
-    if (visualColumn.isArrayElement) {
-      if (!Array.isArray(cloned)) {
-        cloned = []
-      }
-      const arr = cloned as unknown[]
-      while (arr.length <= visualRow.subRowIndex) {
-        arr.push(visualColumn.isPrimitiveArray ? null : {})
-      }
-      if (visualColumn.isPrimitiveArray || !subKey) {
-        arr[visualRow.subRowIndex] = newValue
-      } else {
-        if (typeof arr[visualRow.subRowIndex] !== 'object' || arr[visualRow.subRowIndex] === null) {
-          arr[visualRow.subRowIndex] = {}
+    const relPath = visualColumn.fullPath.slice(stringParentPath.length)
+    if (relPath.length > 0) {
+      let target = cloned as any
+      if (visualColumn.isArrayElement && Array.isArray(target)) {
+        while (target.length <= visualRow.subRowIndex) {
+          target.push({})
         }
-        ;(arr[visualRow.subRowIndex] as Record<string, unknown>)[subKey] = newValue
+        target = target[visualRow.subRowIndex]
       }
-    } else {
-      if (typeof cloned !== 'object' || cloned === null || Array.isArray(cloned)) {
-        cloned = {}
+      for (let k = 0; k < relPath.length - 1; k++) {
+        if (!target[relPath[k]]) target[relPath[k]] = {}
+        target = target[relPath[k]]
       }
-      if (subKey) {
-        ;(cloned as Record<string, unknown>)[subKey] = newValue
-      }
+      target[relPath[relPath.length - 1]] = newValue
     }
 
     return {
       op: 'replace',
-      path: compileJSONPointer([rowPathStr, ...visualColumn.parentPath]),
+      path: compileJSONPointer([rowPathStr, ...stringParentPath]),
       value: JSON.stringify(cloned)
     }
-  } else {
-    // Native JSON object or array
-    if (visualColumn.isArrayElement) {
-      if (visualColumn.isPrimitiveArray || !subKey) {
-        return {
-          op: 'replace',
-          path: compileJSONPointer([
-            rowPathStr,
-            ...visualColumn.parentPath,
-            String(visualRow.subRowIndex)
-          ]),
-          value: newValue
-        }
-      } else {
-        return {
-          op: 'replace',
-          path: compileJSONPointer([
-            rowPathStr,
-            ...visualColumn.parentPath,
-            String(visualRow.subRowIndex),
-            subKey
-          ]),
-          value: newValue
-        }
-      }
-    } else {
-      return {
-        op: 'replace',
-        path: compileJSONPointer([rowPathStr, ...visualColumn.parentPath, subKey!]),
-        value: newValue
-      }
-    }
+  }
+
+  if (visualColumn.isPrimitiveArray) {
+    pathWithIndices.push(String(visualRow.subRowIndex))
+  }
+
+  return {
+    op: 'replace',
+    path: compileJSONPointer(pathWithIndices),
+    value: newValue
   }
 }
 

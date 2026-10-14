@@ -24,6 +24,7 @@
   export let colorIndex: number | undefined = undefined
   export let isArrayElement: boolean = false
   export let onToggleExpand: (() => void) | undefined = undefined
+  export let onCollapseParent: (() => void) | undefined = undefined
   export let onContextMenu: ((event: MouseEvent) => void) | undefined = undefined
 
   $: rawColumnName = displayName ?? (!isEmpty(path) ? stringifyJSONPath(path) : 'values')
@@ -62,6 +63,13 @@
     event.stopPropagation()
     onToggleExpand?.()
   }
+
+  function handleCollapseParent(event: MouseEvent) {
+    if (onCollapseParent) {
+      event.stopPropagation()
+      onCollapseParent()
+    }
+  }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -77,9 +85,18 @@
   {#if parentName}
     <span
       class="jse-column-parent-badge"
-      style="background: {badgeColor.bg}; border-color: {badgeColor.border}; color: {badgeColor.text};"
-      title="Origem: {parentName}{isArrayElement ? ' (lista)' : ' (objeto)'}"
+      class:clickable={!!onCollapseParent}
+      style="background: {badgeColor.bg}; border-color: {badgeColor.border}; color: {badgeColor.text}; cursor: {onCollapseParent ? 'pointer' : 'default'};"
+      title={onCollapseParent
+        ? `Collapse sub-columns of "${parentName}"`
+        : `Source: ${parentName}{isArrayElement ? ' (list)' : ' (object)'}`}
+      on:click={handleCollapseParent}
+      role={onCollapseParent ? 'button' : undefined}
+      tabindex={onCollapseParent ? -1 : undefined}
     >
+      {#if onCollapseParent}
+        <span class="jse-parent-collapse-icon" style="margin-right: 3px; font-size: 9px;">◱</span>
+      {/if}
       {parentName}{isArrayElement ? '[]' : ''}
     </span>
   {/if}
@@ -88,25 +105,25 @@
     {truncate(columnName, MAX_HEADER_NAME_CHARACTERS)}
   </span>
 
-  {#if isExpanded}
+  {#if isExpandable}
     <span
       class="jse-column-toggle-btn"
       on:click={handleToggle}
       role="button"
-      tabindex="0"
-      title="Recolher sub-colunas"
-    >
-      ◱
-    </span>
-  {:else if isExpandable}
-    <span
-      class="jse-column-toggle-btn"
-      on:click={handleToggle}
-      role="button"
-      tabindex="0"
-      title="Expandir sub-colunas JSON"
+      tabindex="-1"
+      title="Expand JSON sub-columns"
     >
       ◲
+    </span>
+  {:else if isExpanded}
+    <span
+      class="jse-column-toggle-btn"
+      on:click={handleToggle}
+      role="button"
+      tabindex="-1"
+      title="Collapse sub-columns"
+    >
+      ◱
     </span>
   {/if}
 

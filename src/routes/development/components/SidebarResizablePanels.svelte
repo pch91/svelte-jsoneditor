@@ -205,7 +205,7 @@
     </div>
   {/if}
 
-  <!-- AREA 3: SAMPLES (Minimizado por padrão) -->
+  <!-- AREA 3: SAMPLES (Collapsed by default) -->
   <div
     class="sidebar-panel panel-samples"
     style={!samplesOpen ? 'flex: 0 0 auto;' : `flex: ${samplesHeight} 1 0px;`}

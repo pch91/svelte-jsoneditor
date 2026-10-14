@@ -325,7 +325,7 @@
   .curl-preview-label {
     font-size: 12px;
     font-weight: 700;
-    color: #cccccc;
+    color: var(--theme-t-bright, #0f172a);
   }
   .curl-preview-row {
     display: flex;
@@ -360,7 +360,7 @@
   .curl-preview-url {
     font-family: 'dejavu sans mono', consolas, monospace;
     font-size: 12px;
-    color: #cccccc;
+    color: var(--theme-t-main, #334155);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -374,21 +374,24 @@
   .curl-tag {
     font-size: 11px;
     padding: 2px 8px;
-    background: #323233;
-    color: #cccccc;
+    background: var(--theme-chip-bg, #f1f5f9);
+    color: var(--theme-chip-text, #1e293b);
+    border: 1px solid var(--theme-chip-border, #cbd5e1);
     border-radius: 3px;
   }
   .curl-tag-body {
-    background: rgba(16, 185, 129, 0.2);
-    color: #34d399;
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--theme-console-log, #047857);
+    border-color: rgba(16, 185, 129, 0.35);
   }
   .curl-tag-auth {
-    background: rgba(245, 158, 11, 0.2);
-    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--theme-warning-text, #b45309);
+    border-color: rgba(245, 158, 11, 0.35);
   }
   .curl-invalid-hint {
     font-size: 12px;
-    color: #f87171;
+    color: var(--theme-danger-text, #b91c1c);
     background: rgba(239, 68, 68, 0.15);
     padding: 6px 10px;
     border-radius: 3px;

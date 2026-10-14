@@ -467,6 +467,7 @@
   let reqCustomProxyUrl = ''
   let reqCaptures: CaptureRule[] = []
   let reqResponseText = ''
+  let responsePreviewOpen = false
 
   const requestsViewMode = useLocalStorage('svelte-jsoneditor-demo-requests-view-mode', 'form')
   const flowGraphStore = useLocalStorage(
@@ -480,6 +481,12 @@
 
   const chainOpen = useLocalStorage('svelte-jsoneditor-demo-chain-open', true)
   const historyOpen = useLocalStorage('svelte-jsoneditor-demo-history-open', true)
+  const reqLayoutDirection = useLocalStorage(
+    'svelte-jsoneditor-demo-req-layout-direction',
+    'vertical'
+  )
+  const reqHistoryHeight = useLocalStorage('svelte-jsoneditor-demo-req-history-height', 140)
+  const reqHistoryWidth = useLocalStorage('svelte-jsoneditor-demo-req-history-width', 380)
   const sidebarAdvancedOpen = useLocalStorage('svelte-jsoneditor-demo-sidebar-advanced', false)
   const sidebarSamplesOpen = useLocalStorage('svelte-jsoneditor-demo-sidebar-samples', false)
   let reqResult:
@@ -751,7 +758,7 @@
       selectPrimaryTabInPane(newLeafId, newPrimId)
     }
     scheduleAutosave()
-    showDiskSaveLabel('Tela dividida em grid ✓')
+    showDiskSaveLabel('Screen split into grid ✓')
   }
 
   function closeActiveLeaf() {
@@ -781,7 +788,7 @@
       const p = primaryTabs.find((x) => x.id === activePrimaryTabId)
       if (p) loadPrimaryRequestToForm(p)
       scheduleAutosave()
-      showDiskSaveLabel('Grid fechado e tela ajustada ✓')
+      showDiskSaveLabel('Grid closed and view adjusted ✓')
     }
   }
 
@@ -932,13 +939,13 @@
           if (p) loadPrimaryRequestToForm(p)
           tabsRenderVersion++
           scheduleAutosave()
-          showDiskSaveLabel('Grid colapsado e tela ajustada ✓')
+          showDiskSaveLabel('Grid collapsed and view adjusted ✓')
           return
         }
       } else {
         const newPrimId = 1
         const newSubId = nextTabId++
-        addDocWithId(newSubId, 'Principal', '{}', Mode.tree)
+        addDocWithId(newSubId, 'Main', '{}', Mode.tree)
         const { primary: newP, initialSubTab } = createPrimaryTab(newPrimId, 'Editor 1', newSubId)
         nextPrimaryTabId = 2
         primaryTabs = [newP]
@@ -1267,7 +1274,7 @@
     return [
       {
         icon: '➕',
-        label: 'Nova Sub-aba (Level 2)',
+        label: 'New Sub-tab (Level 2)',
         disabled: false,
         action: () => {
           if (p) {
@@ -1278,33 +1285,33 @@
       },
       {
         icon: '💾',
-        label: `Salvar Workspace ("${p?.title ?? 'Workspace'}")`,
+        label: `Save Workspace ("${p?.title ?? 'Workspace'}")`,
         disabled: false,
         action: () => void saveSingleWorkspaceFile(primaryId)
       },
       {
         icon: '⬇',
-        label: `Exportar Workspace (.jsew)`,
+        label: `Export Workspace (.jsew)`,
         disabled: false,
         action: () => exportSingleWorkspace(primaryId)
       },
       { separator: true, label: 'sep-1' },
       {
         icon: '📁',
-        label: 'Novo Grupo de Flows',
+        label: 'New Flow Group',
         disabled: false,
         action: () => handleCreateGroup(primaryId)
       },
       {
         icon: '🔀',
-        label: 'Novo Spatial Flow',
+        label: 'New Spatial Flow',
         disabled: false,
         action: () => handleCreateFlow(primaryId, p?.flowGroups?.[0]?.id ?? 'group-1')
       },
       { separator: true, label: 'sep-2' },
       {
         icon: '✏️',
-        label: 'Renomear Workspace…',
+        label: 'Rename Workspace…',
         disabled: false,
         action: () => {
           handleRenameWorkspace(primaryId, p?.title)
@@ -1312,33 +1319,33 @@
       },
       {
         icon: '📄',
-        label: 'Duplicar Workspace',
+        label: 'Duplicate Workspace',
         disabled: false,
         action: () => duplicateWorkspace(primaryId)
       },
       { separator: true, label: 'sep-3' },
       {
         icon: '◫',
-        label: 'Dividir tela (Split Vertical)',
+        label: 'Split view (Vertical)',
         disabled: layoutLeaves.length >= 4,
         action: () => splitActiveLeaf('vertical')
       },
       {
         icon: '⊟',
-        label: 'Dividir tela (Split Horizontal)',
+        label: 'Split view (Horizontal)',
         disabled: layoutLeaves.length >= 4,
         action: () => splitActiveLeaf('horizontal')
       },
       { separator: true, label: 'sep-4' },
       {
         icon: '🧹',
-        label: 'Fechar Outros Workspaces',
+        label: 'Close Other Workspaces',
         disabled: primaryTabs.length <= 1,
         action: () => closeOtherWorkspaces(primaryId)
       },
       {
         icon: '❌',
-        label: 'Fechar Workspace',
+        label: 'Close Workspace',
         disabled: isSingle,
         action: () => closePrimaryTabInPane(effectiveLeafId, primaryId)
       }
@@ -1357,7 +1364,7 @@
         ? [
             {
               icon: '⇡',
-              label: 'Promover a Workspace (Level 1)',
+              label: 'Promote to Workspace (Level 1)',
               disabled: false,
               action: () => promoteSubTabInPane(effectiveLeafId, subTabId)
             },
@@ -1366,17 +1373,17 @@
         : []),
       {
         icon: '✏️',
-        label: 'Renomear…',
+        label: 'Rename…',
         disabled: false,
         action: () => {
           const idx = getTabIdx(subTabId)
-          const n = prompt('Renomear sub-aba:', tabTitles[idx])
+          const n = prompt('Rename sub-tab:', tabTitles[idx])
           if (n) renameSubTab(subTabId, n)
         }
       },
       {
         icon: '💾',
-        label: 'Salvar Arquivo no Disco',
+        label: 'Save File to Disk',
         disabled: false,
         action: () => void saveToDisk()
       },
@@ -1385,7 +1392,7 @@
             { separator: true, label: 'sep-close' },
             {
               icon: '❌',
-              label: 'Fechar Sub-aba',
+              label: 'Close Sub-tab',
               disabled: isSingle,
               action: () => {
                 if (primary) closeSubTabInPane(effectiveLeafId, primary, subTabId)
@@ -1458,7 +1465,7 @@
         if (!reordered.includes(p)) reordered.push(p)
       }
       primaryTabs = reordered
-      showDiskSaveLabel('Abas reorganizadas ✓')
+      showDiskSaveLabel('Tabs reordered ✓')
     } else {
       // Moving between panes
       let sourceList = [...(panePrimaryMap.get(sourceLeafId) ?? [])]
@@ -1509,7 +1516,7 @@
       }
 
       selectPrimaryTabInPane(targetLeafId, primId)
-      showDiskSaveLabel('Aba movida para o grid ✓')
+      showDiskSaveLabel('Tab moved to grid ✓')
     }
 
     tabsRenderVersion++
@@ -1559,7 +1566,7 @@
       targetPrimary.subTabIds = reorderTabIds(targetPrimary.subTabIds, sid, targetSubId, targetPos)
       primaryTabs = [...primaryTabs]
       tabsRenderVersion++
-      showDiskSaveLabel('Sub-abas reorganizadas ✓')
+      showDiskSaveLabel('Sub-tabs reordered ✓')
       scheduleAutosave()
     } else {
       // Dragging a subtab to another primary tab
@@ -1584,7 +1591,7 @@
         targetPrimary.activeSubTabId = sid
         primaryTabs = [...primaryTabs]
         tabsRenderVersion++
-        showDiskSaveLabel('Sub-aba transferida para o editor ✓')
+        showDiskSaveLabel('Sub-tab transferred to editor ✓')
         scheduleAutosave()
       }
     }
@@ -1670,7 +1677,7 @@
     tabDragActive = false
     tabsRenderVersion++
     scheduleAutosave()
-    showDiskSaveLabel('Tela dividida com sucesso ✓')
+    showDiskSaveLabel('Screen split successfully ✓')
   }
 
   // ---- Settings ----
@@ -2135,10 +2142,10 @@
       const writable = await handle.createWritable()
       await writable.write(text)
       await writable.close()
-      showDiskSaveLabel(`Workspace "${pt.title}" salvo: ${handle.name}`)
+      showDiskSaveLabel(`Workspace "${pt.title}" saved: ${handle.name}`)
     } catch (err) {
       if ((err as Error)?.name !== 'AbortError')
-        showDiskSaveLabel(`Erro ao salvar workspace "${pt.title}"`)
+        showDiskSaveLabel(`Error saving workspace "${pt.title}"`)
     }
   }
 
@@ -2146,7 +2153,7 @@
     const pt = primaryTabs.find((p) => p.id === primaryId)
     if (!pt) return
     const newPrimId = nextPrimaryTabId++
-    const newTitle = `${pt.title} (Cópia)`
+    const newTitle = `${pt.title} (Copy)`
     const newSubTabIds: number[] = []
 
     for (const sid of pt.subTabIds) {
@@ -2187,19 +2194,19 @@
     tabsRenderVersion++
     selectPrimaryTab(newPrimId)
     scheduleAutosave()
-    showDiskSaveLabel(`Workspace "${newTitle}" criado!`)
+    showDiskSaveLabel(`Workspace "${newTitle}" created!`)
   }
 
   function removeWorkspace(primaryId: number) {
     if (primaryTabs.length <= 1) {
-      alert('Não é possível remover o único workspace.')
+      alert('Cannot remove the only workspace.')
       return
     }
     const pt = primaryTabs.find((p) => p.id === primaryId)
-    if (!confirm(`Deseja fechar/remover o workspace "${pt?.title}"?`)) return
+    if (!confirm(`Do you want to close/remove workspace "${pt?.title}"?`)) return
     const leafId = findLeafForPrimary(primaryId)
     closePrimaryTabInPane(leafId, primaryId)
-    showDiskSaveLabel(`Workspace "${pt?.title}" removido!`)
+    showDiskSaveLabel(`Workspace "${pt?.title}" removed!`)
   }
 
   function handleDuplicateFlow(primaryTabId: number, flowId: string) {
@@ -2214,7 +2221,7 @@
       : { nodes: [], connections: [] }
 
     const newFlow = createDefaultSpatialFlow(
-      `${origFlow.name} (Cópia)`,
+      `${origFlow.name} (Copy)`,
       origFlow.groupId,
       clonedGraph
     )
@@ -2227,27 +2234,27 @@
 
     handleSelectFlow(primaryTabId, newFlow.id)
     scheduleAutosave()
-    showDiskSaveLabel(`Spatial Flow duplicado: "${newFlow.name}"`)
+    showDiskSaveLabel(`Spatial Flow duplicated: "${newFlow.name}"`)
   }
 
   function handleRenameWorkspace(primaryId: number, currentName?: string) {
     const pt = primaryTabs.find((p) => p.id === primaryId)
-    const name = prompt('Renomear Workspace:', currentName ?? pt?.title ?? 'Workspace')
+    const name = prompt('Rename Workspace:', currentName ?? pt?.title ?? 'Workspace')
     if (!name?.trim() || name.trim() === pt?.title) return
     renamePrimaryTab(primaryId, name.trim())
-    showDiskSaveLabel(`Workspace renomeado para "${name.trim()}"!`)
+    showDiskSaveLabel(`Workspace renamed to "${name.trim()}"!`)
   }
 
   function closeOtherWorkspaces(keepPrimaryId: number) {
     if (primaryTabs.length <= 1) return
     const pt = primaryTabs.find((p) => p.id === keepPrimaryId)
-    if (!confirm(`Deseja fechar todos os outros workspaces e manter apenas "${pt?.title}"?`)) return
+    if (!confirm(`Do you want to close all other workspaces and keep only "${pt?.title}"?`)) return
     const toRemove = primaryTabs.filter((p) => p.id !== keepPrimaryId)
     for (const p of toRemove) {
       const leafId = findLeafForPrimary(p.id)
       closePrimaryTabInPane(leafId, p.id)
     }
-    showDiskSaveLabel('Outros workspaces fechados!')
+    showDiskSaveLabel('Other workspaces closed!')
   }
 
   async function closeFolder() {
@@ -2256,7 +2263,7 @@
     folderEntries = []
     folderPendingPermission = false
     await saveDirectoryHandle(undefined)
-    showDiskSaveLabel('Pasta de arquivos fechada')
+    showDiskSaveLabel('File folder closed')
   }
 
   function openFilesZoneContextMenu(e: MouseEvent) {
@@ -2265,32 +2272,32 @@
       y: e.clientY,
       type: 'custom',
       items: [
-        { icon: '📄', label: 'Novo Arquivo (Nova Aba)', action: () => addTab() },
+        { icon: '📄', label: 'New File (New Tab)', action: () => addTab() },
         {
           icon: '📂',
-          label: 'Abrir Arquivos (com permissão de escrita)…',
+          label: 'Open Files (with write permission)…',
           action: () => void openFilesFromPicker()
         },
-        { icon: '📁', label: 'Abrir Pasta de Projeto…', action: () => void openFolder() },
+        { icon: '📁', label: 'Open Project Folder…', action: () => void openFolder() },
         ...(folderPendingPermission
           ? [
               {
                 icon: '🔌',
-                label: 'Reconectar Arquivos Salvos',
+                label: 'Reconnect Saved Files',
                 action: () => void reconnectFiles()
               }
             ]
           : []),
         { separator: true, label: 'sep-1' },
-        { icon: '💾', label: 'Salvar Arquivo Ativo no Disco', action: () => void saveToDisk() },
-        { icon: '💾', label: 'Salvar Todos os Arquivos', action: () => saveAllToDisk() },
-        { icon: '⬇', label: 'Baixar Todos os Arquivos (.zip)', action: () => downloadAllTabs() },
+        { icon: '💾', label: 'Save Active File to Disk', action: () => void saveToDisk() },
+        { icon: '💾', label: 'Save All Files', action: () => saveAllToDisk() },
+        { icon: '⬇', label: 'Download All Files (.zip)', action: () => downloadAllTabs() },
         ...(folderName
           ? [
               { separator: true, label: 'sep-2' },
               {
                 icon: '❌',
-                label: `Fechar Pasta "${folderName}"`,
+                label: `Close Folder "${folderName}"`,
                 action: () => void closeFolder()
               }
             ]
@@ -2305,48 +2312,48 @@
       y: e.clientY,
       type: 'custom',
       items: [
-        { icon: '➕', label: 'Novo Workspace', action: () => addPrimaryTab() },
+        { icon: '➕', label: 'New Workspace', action: () => addPrimaryTab() },
         {
           icon: '🗂',
-          label: 'Abrir Arquivo de Workspace (.jsew)…',
+          label: 'Open Workspace File (.jsew)…',
           action: () => void openWorkspaceFile()
         },
         { separator: true, label: 'sep-1' },
         {
           icon: '💾',
-          label: `Salvar Workspace Ativo ("${activePrimary?.title || 'Workspace'}")`,
+          label: `Save Active Workspace ("${activePrimary?.title || 'Workspace'}")`,
           action: () => void saveSingleWorkspaceFile(activePrimaryTabId)
         },
         {
           icon: '⬇',
-          label: `Exportar Workspace Ativo (.jsew)`,
+          label: `Export Active Workspace (.jsew)`,
           action: () => exportSingleWorkspace(activePrimaryTabId)
         },
         {
           icon: '📦',
-          label: 'Salvar Todos os Workspaces (.jsew)…',
+          label: 'Save All Workspaces (.jsew)…',
           action: () => void saveWorkspaceFile(false)
         },
         {
           icon: '📝',
-          label: 'Salvar Todos os Workspaces Como…',
+          label: 'Save All Workspaces As…',
           action: () => void saveWorkspaceFile(true)
         },
         { separator: true, label: 'sep-2' },
         {
           icon: '📁',
-          label: 'Novo Grupo de Flows no Workspace Ativo',
+          label: 'New Flow Group in Active Workspace',
           action: () => handleCreateGroup(activePrimaryTabId)
         },
         {
           icon: '🔀',
-          label: 'Novo Spatial Flow no Workspace Ativo',
+          label: 'New Spatial Flow in Active Workspace',
           action: () => handleCreateFlow(activePrimaryTabId, activeGroupObj?.id ?? 'group-1')
         },
         { separator: true, label: 'sep-3' },
         {
           icon: '🧹',
-          label: 'Fechar Outros Workspaces',
+          label: 'Close Other Workspaces',
           disabled: primaryTabs.length <= 1,
           action: () => closeOtherWorkspaces(activePrimaryTabId)
         }
@@ -2360,17 +2367,17 @@
       y: e.clientY,
       type: 'custom',
       items: [
-        { icon: '🧪', label: 'Carregar Exemplo Rick & Morty Flow', action: () => loadFlowSample() },
+        { icon: '🧪', label: 'Load Rick & Morty Flow Example', action: () => loadFlowSample() },
         { separator: true, label: 'sep-1' },
         {
           icon: '📊',
-          label: 'Carregar Exemplo Customers & Orders',
+          label: 'Load Customers & Orders Example',
           action: () => loadSample('customers')
         },
-        { icon: '🏷', label: 'Carregar Exemplo Tags & Arrays', action: () => loadSample('tags') },
-        { icon: '📦', label: 'Carregar Exemplo Objeto JSON', action: () => loadSample('object') },
-        { icon: '📋', label: 'Carregar Exemplo Array Longo', action: () => loadSample('long') },
-        { icon: '📄', label: 'Carregar Exemplo Texto Vazio', action: () => loadSample('empty') }
+        { icon: '🏷', label: 'Load Tags & Arrays Example', action: () => loadSample('tags') },
+        { icon: '📦', label: 'Load JSON Object Example', action: () => loadSample('object') },
+        { icon: '📋', label: 'Load Long Array Example', action: () => loadSample('long') },
+        { icon: '📄', label: 'Load Empty Text Example', action: () => loadSample('empty') }
       ]
     }
   }
@@ -3075,9 +3082,10 @@
         sizeBytes,
         timestamp: Date.now(),
         viaProxy,
-        responseText: truncateText(text, MAX_RESPONSE_HISTORY)
+        responseText: text
       }
       reqHistory = [entry, ...reqHistory].slice(0, 20)
+      void saveRequestHistory(reqHistory)
       const name = responseName(method, resolvedUrl.resolved)
       const pathPart =
         resolvedUrl.resolved.split('?')[0].split('/').filter(Boolean).pop() || 'endpoint'
@@ -3197,20 +3205,60 @@
       showDiskSaveLabel('Request URL is empty')
       return
     }
-    const env = activeEnv as Record<string, string>
-    const authHeaders = buildAuthHeaders(env)
-    const headersObj: Record<string, string> = {}
-    for (const row of reqHeaderRows) {
-      if (row.enabled && row.key.trim()) {
-        headersObj[row.key.trim()] = row.value
+    const env = (activeEnv ?? {}) as Record<string, string>
+    const globalEnv = ($globalEnvironment ?? {}) as Record<string, string>
+    const resolvedUrl = resolveVariables(url, env, globalEnv).resolved
+    const authHeaders = buildAuthHeaders(env, globalEnv)
+
+    const headersList: HeaderRow[] = []
+
+    // 1. Collect from reqHeaderRows
+    if (reqHeaderRows && reqHeaderRows.length > 0) {
+      for (const row of reqHeaderRows) {
+        if ((row.enabled ?? true) && row.key.trim()) {
+          headersList.push({
+            key: row.key.trim(),
+            value: resolveVariables(row.value, env, globalEnv).resolved,
+            enabled: true
+          })
+        }
       }
     }
-    const combinedHeaders = { ...headersObj, ...authHeaders }
+
+    // 2. Fallback to reqHeaders if reqHeaderRows didn't yield any enabled headers
+    if (headersList.length === 0 && reqHeaders && reqHeaders.trim()) {
+      const parsed = parseHeadersText(resolveVariables(reqHeaders, env, globalEnv).resolved)
+      for (const [k, v] of Object.entries(parsed)) {
+        headersList.push({ key: k, value: v, enabled: true })
+      }
+    }
+
+    // 3. Include auth headers if not already specified in headersList
+    for (const [authKey, authVal] of Object.entries(authHeaders)) {
+      if (!headersList.some((h) => h.key.toLowerCase() === authKey.toLowerCase())) {
+        headersList.push({ key: authKey, value: authVal, enabled: true })
+      }
+    }
+
+    // 4. Ensure Content-Type if request has a body
+    const hasBody = reqBodyType !== 'none' && !['GET', 'HEAD'].includes(reqMethod)
+    const resolvedBody = hasBody ? resolveVariables(reqBody, env, globalEnv).resolved : undefined
+    if (hasBody) {
+      const hasContentType = headersList.some((h) => h.key.toLowerCase() === 'content-type')
+      if (!hasContentType) {
+        headersList.push({
+          key: 'Content-Type',
+          value: reqBodyType === 'text' ? 'text/plain' : 'application/json',
+          enabled: true
+        })
+      }
+    }
+
     const curl = buildCurlCommand({
       method: reqMethod,
-      url,
-      headers: combinedHeaders,
-      body: reqBodyType !== 'none' && !['GET', 'HEAD'].includes(reqMethod) ? reqBody : undefined,
+      url: resolvedUrl,
+      headers: headersList,
+      body: resolvedBody,
       bodyType: reqBodyType
     })
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -3342,9 +3390,9 @@
       }
       authValidationMessage = {
         ok: true,
-        text: `✓ Basic Auth configurado: [${user} : ****] → Header: Basic ${encodeBasicAuth(user, pass).slice(0, 14)}...`
+        text: `✓ Basic Auth configured: [${user} : ****] → Header: Basic ${encodeBasicAuth(user, pass).slice(0, 14)}...`
       }
-      showDiskSaveLabel('Basic Auth validado')
+      showDiskSaveLabel('Basic Auth validated')
       return
     }
 
@@ -3357,9 +3405,9 @@
       }
       authValidationMessage = {
         ok: true,
-        text: `✓ API Key configurada: [${name}: ${val.slice(0, 8)}...]`
+        text: `✓ API Key configured: [${name}: ${val.slice(0, 8)}...]`
       }
-      showDiskSaveLabel('API Key validada')
+      showDiskSaveLabel('API Key validated')
       return
     }
   }
@@ -3481,6 +3529,17 @@
     if (idx !== -1 && getTabText(idx) !== reqBody) {
       tabContents[idx] = { text: reqBody, json: undefined }
       tabContents = [...tabContents]
+    }
+  }
+
+  function formatRequestBody() {
+    if (!reqBody || !reqBody.trim()) return
+    try {
+      const parsed = JSON.parse(reqBody)
+      reqBody = JSON.stringify(parsed, null, 2)
+      onBodyInput()
+    } catch {
+      // ignore formatting if invalid JSON
     }
   }
 
@@ -3638,6 +3697,35 @@
     window.addEventListener('mouseup', onUp)
   }
 
+  function startReqAreasResize(e: MouseEvent) {
+    if (!requestsPanelEl) return
+    e.preventDefault()
+    const isVert = $reqLayoutDirection === 'vertical'
+    const startPos = isVert ? e.clientY : e.clientX
+    const startVal = isVert ? $reqHistoryHeight : $reqHistoryWidth
+    const panelRect = requestsPanelEl.getBoundingClientRect()
+    const onMove = (ev: MouseEvent) => {
+      const delta = startPos - (isVert ? ev.clientY : ev.clientX)
+      if (isVert) {
+        const maxH = Math.max(60, panelRect.height - 130)
+        $reqHistoryHeight = Math.round(Math.max(45, Math.min(startVal + delta, maxH)))
+      } else {
+        const maxW = Math.max(160, panelRect.width - 220)
+        $reqHistoryWidth = Math.round(Math.max(160, Math.min(startVal + delta, maxW)))
+      }
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  function toggleReqLayoutDirection() {
+    $reqLayoutDirection = $reqLayoutDirection === 'vertical' ? 'horizontal' : 'vertical'
+  }
+
   async function runChain() {
     const items = [...(chainItems as ChainItem[])]
     if (items.length === 0 || chainRunning) return
@@ -3726,7 +3814,7 @@
           sizeBytes,
           timestamp: Date.now(),
           viaProxy,
-          responseText: truncateText(text, MAX_RESPONSE_HISTORY)
+          responseText: text
         }
         reqHistory = [entry, ...reqHistory].slice(0, 20)
         void saveRequestHistory(reqHistory)
@@ -3967,14 +4055,14 @@
     showRequests = true
     $requestsViewMode = 'flow'
     scheduleAutosave()
-    showDiskSaveLabel(`Spatial Flow "${flow?.name ?? 'Flow'}" carregado!`)
+    showDiskSaveLabel(`Spatial Flow "${flow?.name ?? 'Flow'}" loaded!`)
   }
 
   function handleCreateGroup(primaryTabId: number) {
     const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
     if (ptIndex === -1) return
     const pt = primaryTabs[ptIndex]
-    const name = prompt('Nome do novo Grupo de Flows:', `Grupo ${(pt.flowGroups?.length ?? 0) + 1}`)
+    const name = prompt('Name of new Flow Group:', `Group ${(pt.flowGroups?.length ?? 0) + 1}`)
     if (!name?.trim()) return
 
     if (!pt.flowGroups) pt.flowGroups = []
@@ -3984,14 +4072,14 @@
     primaryTabs = [...primaryTabs]
     tabsRenderVersion++
     scheduleAutosave()
-    showDiskSaveLabel(`Grupo "${newGrp.name}" criado!`)
+    showDiskSaveLabel(`Group "${newGrp.name}" created!`)
   }
 
   function handleRenameGroup(primaryTabId: number, groupId: string, currentName: string) {
     const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
     if (ptIndex === -1) return
     const pt = primaryTabs[ptIndex]
-    const name = prompt('Renomear Grupo:', currentName)
+    const name = prompt('Rename Group:', currentName)
     if (!name?.trim() || name.trim() === currentName) return
 
     const grp = pt.flowGroups?.find((g) => g.id === groupId)
@@ -4001,7 +4089,7 @@
       primaryTabs = [...primaryTabs]
       tabsRenderVersion++
       scheduleAutosave()
-      showDiskSaveLabel(`Grupo renomeado para "${grp.name}"!`)
+      showDiskSaveLabel(`Group renamed to "${grp.name}"!`)
     }
   }
 
@@ -4010,13 +4098,13 @@
     if (ptIndex === -1) return
     const pt = primaryTabs[ptIndex]
     if (!pt || !pt.flowGroups || pt.flowGroups.length <= 1) {
-      alert('Não é possível remover o único grupo do workspace.')
+      alert('Cannot remove the only group in the workspace.')
       return
     }
     const grp = pt.flowGroups.find((g) => g.id === groupId)
     const hasFlows = pt.spatialFlows?.some((f) => f.groupId === groupId)
     if (hasFlows) {
-      if (!confirm(`O grupo "${grp?.name}" possui fluxos dentro. Deseja excluí-lo e seus fluxos?`))
+      if (!confirm(`The group "${grp?.name}" contains flows. Do you want to delete it and its flows?`))
         return
       pt.spatialFlows = pt.spatialFlows?.filter((f) => f.groupId !== groupId)
     }
@@ -4031,7 +4119,7 @@
     primaryTabs = [...primaryTabs]
     tabsRenderVersion++
     scheduleAutosave()
-    showDiskSaveLabel(`Grupo removido!`)
+    showDiskSaveLabel('Group removed!')
   }
 
   function handleCreateFlow(primaryTabId: number, groupId: string) {
@@ -4040,7 +4128,7 @@
     const pt = primaryTabs[ptIndex]
     const grp = pt.flowGroups?.find((g) => g.id === groupId)
     const name = prompt(
-      `Nome do novo Spatial Flow em "${grp?.name || 'Grupo'}":`,
+      `Name of new Spatial Flow in "${grp?.name || 'Group'}":`,
       `Flow ${(pt.spatialFlows?.length ?? 0) + 1}`
     )
     if (!name?.trim()) return
@@ -4055,14 +4143,14 @@
 
     handleSelectFlow(primaryTabId, newFlow.id)
     scheduleAutosave()
-    showDiskSaveLabel(`Spatial Flow "${newFlow.name}" criado!`)
+    showDiskSaveLabel(`Spatial Flow "${newFlow.name}" created!`)
   }
 
   function handleRenameFlow(primaryTabId: number, flowId: string, currentName: string) {
     const ptIndex = primaryTabs.findIndex((p) => p.id === primaryTabId)
     if (ptIndex === -1) return
     const pt = primaryTabs[ptIndex]
-    const name = prompt('Renomear Spatial Flow:', currentName)
+    const name = prompt('Rename Spatial Flow:', currentName)
     if (!name?.trim() || name.trim() === currentName) return
 
     const flow = pt.spatialFlows?.find((f) => f.id === flowId)
@@ -4072,7 +4160,7 @@
       primaryTabs = [...primaryTabs]
       tabsRenderVersion++
       scheduleAutosave()
-      showDiskSaveLabel(`Spatial Flow renomeado para "${flow.name}"!`)
+      showDiskSaveLabel(`Spatial Flow renamed to "${flow.name}"!`)
     }
   }
 
@@ -4081,11 +4169,11 @@
     if (ptIndex === -1) return
     const pt = primaryTabs[ptIndex]
     if (!pt || !pt.spatialFlows || pt.spatialFlows.length <= 1) {
-      alert('O workspace deve manter ao menos um Spatial Flow.')
+      alert('The workspace must keep at least one Spatial Flow.')
       return
     }
     const flow = pt.spatialFlows.find((f) => f.id === flowId)
-    if (!confirm(`Deseja excluir o Spatial Flow "${flow?.name}"?`)) return
+    if (!confirm(`Do you want to delete Spatial Flow "${flow?.name}"?`)) return
 
     pt.spatialFlows = pt.spatialFlows.filter((f) => f.id !== flowId)
     if (pt.activeSpatialFlowId === flowId) {
@@ -4097,7 +4185,7 @@
     primaryTabs = [...primaryTabs]
     tabsRenderVersion++
     scheduleAutosave()
-    showDiskSaveLabel(`Spatial Flow excluído!`)
+    showDiskSaveLabel('Spatial Flow deleted!')
   }
 
   function handleExportFlow(flow: WorkspaceSpatialFlow) {
@@ -4109,7 +4197,7 @@
     a.download = `${flow.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.flow.json`
     a.click()
     URL.revokeObjectURL(url)
-    showDiskSaveLabel(`Exportado: "${a.download}"`)
+    showDiskSaveLabel(`Exported: "${a.download}"`)
   }
 
   function handleImportFlow(primaryTabId: number, groupId: string) {
@@ -4134,9 +4222,9 @@
         tabsRenderVersion++
         handleSelectFlow(primaryTabId, importedFlow.id)
         scheduleAutosave()
-        showDiskSaveLabel(`Spatial Flow "${importedFlow.name}" importado com sucesso!`)
+        showDiskSaveLabel(`Spatial Flow "${importedFlow.name}" imported successfully!`)
       } catch (err) {
-        alert(`Erro ao importar Spatial Flow: ${(err as Error).message}`)
+        alert(`Error importing Spatial Flow: ${(err as Error).message}`)
       }
     }
     input.click()
@@ -4495,7 +4583,7 @@
             </div>
           </svelte:fragment>
 
-          <!-- AREA 3: SAMPLES (Minimizado por padrão) -->
+          <!-- AREA 3: SAMPLES (Collapsed by default) -->
           <svelte:fragment slot="samples">
             <div class="sb-samples-group">
               <button class="sb-btn" on:click={() => loadSample('array')}>Array</button>
@@ -4542,7 +4630,7 @@
             on:dragover={onPaneDragOver}
             on:drop={(e) => onPaneDrop(e, lr.leafId)}
           >
-            <!-- TAB BAR LEVEL 1 (Abas Principais deste Painel) -->
+            <!-- TAB BAR LEVEL 1 (Main Tabs of this Pane) -->
             <div
               class="tab-bar-strip tab-bar-strip-l1"
               class:is-dragging-tab={draggedPrimaryId !== undefined || draggedTabId !== undefined}
@@ -4587,7 +4675,7 @@
                       dragOverTargetPrimaryPosition === 'after'}
                     on:click={() => selectPrimaryTabInPane(lr.leafId, pt.id)}
                     on:dblclick={() => {
-                      const n = prompt('Renomear aba principal:', pt.title)
+                      const n = prompt('Rename main tab:', pt.title)
                       if (n) renamePrimaryTab(pt.id, n)
                     }}
                     on:contextmenu|preventDefault={(e) =>
@@ -4605,7 +4693,7 @@
                     on:drop={(e) => onPrimaryTabDrop(e, lr.leafId, pt.id)}
                   >
                     {#if pt.id === activePrimaryTabId}
-                      <span class="tab-active-dot" title="Workspace selecionado"></span>
+                      <span class="tab-active-dot" title="Selected workspace"></span>
                     {/if}
                     <span
                       class="tab-dirty"
@@ -4614,7 +4702,7 @@
                     <span class="tab-l1-icon">📁</span>
                     <span class="tab-label">{pt.title}</span>
                     {#if pt.subTabIds.length > 1}
-                      <span class="tab-count-badge" title="{pt.subTabIds.length} sub-abas"
+                      <span class="tab-count-badge" title="{pt.subTabIds.length} sub-tabs"
                         >{pt.subTabIds.length}</span
                       >
                     {/if}
@@ -4628,7 +4716,7 @@
                   </button>
                 {/each}
 
-                <!-- Indicador de Mover para este Grid (mostrado na área vazia da barra ao arrastar de outro grid!) -->
+                <!-- Move to pane indicator (shown in empty space when dragging from another pane) -->
                 {#if draggedPrimaryId !== undefined && draggedPrimarySourceLeafId !== lr.leafId}
                   <div
                     class="tab-drop-move-pane"
@@ -4643,11 +4731,11 @@
                     on:drop={(e) => onPrimaryTabDrop(e, lr.leafId)}
                   >
                     <span class="tab-drop-icon">↳</span>
-                    <span>Mover para este grid</span>
+                    <span>Move to this pane</span>
                   </div>
                 {/if}
 
-                <!-- Área Azul para Subir Sub-abas para Nível 1 -->
+                <!-- Drop zone to promote sub-tab to Level 1 -->
                 {#if draggedTabId !== undefined && canPromoteSubTab(subTabsMeta.get(draggedTabId))}
                   <div
                     class="tab-drop-promote"
@@ -4669,12 +4757,12 @@
                 <button
                   class="tab tab-add"
                   on:click={() => addPrimaryTabInPane(lr.leafId)}
-                  title="Nova aba principal neste painel">+</button
+                  title="New main tab in this pane">+</button
                 >
               </nav>
             </div>
 
-            <!-- TAB BAR LEVEL 2 (Abas Secundárias do Editor Ativo deste Painel) -->
+            <!-- TAB BAR LEVEL 2 (Secondary Tabs of Active Editor in this Pane) -->
             <div
               class="tab-bar-strip tab-bar-strip-l2"
               class:is-dragging-tab={draggedPrimaryId !== undefined || draggedTabId !== undefined}
@@ -4720,7 +4808,7 @@
                         : undefined}
                     on:click={() => selectSubTabInPane(lr.leafId, paneActivePrim, item.subTabId)}
                     on:dblclick={() => {
-                      const n = prompt('Renomear sub-aba:', tabTitles[item.idx])
+                      const n = prompt('Rename sub-tab:', tabTitles[item.idx])
                       if (n) renameSubTab(item.subTabId, n)
                     }}
                     on:contextmenu|preventDefault={(e) =>
@@ -5013,8 +5101,8 @@
 
               <!-- Global Proxy Pill -->
               <div class="requests-proxy-pill">
-                <span class="req-proxy-icon" title="CORS Proxy Global">🛡</span>
-                <span class="req-proxy-label">Proxy Geral:</span>
+                <span class="req-proxy-icon" title="Global CORS Proxy">🛡</span>
+                <span class="req-proxy-label">Global Proxy:</span>
                 <select
                   class="tb-select req-proxy-select"
                   value={proxyPresetValue}
@@ -5119,7 +5207,7 @@
                   onOpenInEditor={(title: string, text: string) => {
                     const mode = guessMode(title, text)
                     addSubTabWithContent(title, text, mode, 'response', activePrimary?.id)
-                    showDiskSaveLabel(`Aberto no editor: "${title}"`)
+                    showDiskSaveLabel(`Opened in editor: "${title}"`)
                   }}
                 />
               {/key}
@@ -5157,11 +5245,11 @@
                   bind:value={reqProxyMode}
                   title="Specific proxy for this request"
                 >
-                  <option value="inherit">Proxy: Geral</option>
-                  <option value="direct">Proxy: Direto</option>
+                  <option value="inherit">Proxy: Global</option>
+                  <option value="direct">Proxy: Direct</option>
                   <option value="corsproxy">Proxy: corsproxy.io</option>
                   <option value="allorigins">Proxy: allorigins.win</option>
-                  <option value="custom">Proxy: Customizado…</option>
+                  <option value="custom">Proxy: Custom…</option>
                 </select>
                 {#if reqProxyMode === 'custom'}
                   <input
@@ -5169,7 +5257,7 @@
                     type="text"
                     placeholder="https://proxy/?url=&#123;url&#125;"
                     bind:value={reqCustomProxyUrl}
-                    title="URL do proxy com &#123;url&#125;"
+                    title="Proxy URL with &#123;url&#125;"
                   />
                 {/if}
               </div>
@@ -5184,7 +5272,7 @@
                 >
                   {#if reqSending}
                     <span class="req-spinner"></span>
-                    <span>Enviando…</span>
+                    <span>Sending…</span>
                   {:else}
                     <svg
                       class="req-send-icon"
@@ -5209,8 +5297,8 @@
                   bind:value={reqSendMode}
                   title="Response target: same tab or new secondary tab"
                 >
-                  <option value="same">Mesma aba</option>
-                  <option value="new">Nova aba</option>
+                  <option value="same">Same tab</option>
+                  <option value="new">New tab</option>
                 </select>
               </div>
               <button
@@ -5245,8 +5333,12 @@
               </button>
             </div>
 
-            <!-- Section tabs -->
-            <div class="req-tabs">
+            <!-- Main Content Layout: Config pane + Resizer + History pane -->
+            <div class="requests-body-layout" class:is-horizontal={$reqLayoutDirection === 'horizontal'}>
+              <!-- Request Configuration Pane -->
+              <div class="req-config-pane">
+                <!-- Section tabs -->
+                <div class="req-tabs">
               {#each REQ_TABS as [tab, label]}
                 <button
                   class="req-tab"
@@ -5259,305 +5351,576 @@
             <!-- Section content -->
             <div class="req-section-content">
               {#if reqActiveTab === 'params'}
-                <div class="req-params">
-                  {#if reqParams.length === 0}
-                    <p class="req-note">No query parameters. Add key/value pairs below.</p>
-                  {/if}
-                  {#if reqParams.length > 0}
-                    <table class="req-rows">
-                      <thead>
-                        <tr><th></th><th>Key</th><th>Value</th><th></th></tr>
-                      </thead>
-                      <tbody>
-                        {#each reqParams as param, pi (pi)}
-                          <tr>
-                            <td>
-                              <input
-                                type="checkbox"
-                                title="Include this parameter"
-                                bind:checked={param.enabled}
-                                on:change={onParamChange}
-                              />
-                            </td>
-                            <td>
-                              <input
-                                type="text"
-                                placeholder="key"
-                                bind:value={param.key}
-                                on:input={onParamChange}
-                              />
-                            </td>
-                            <td>
-                              <input
-                                type="text"
-                                placeholder="value"
-                                bind:value={param.value}
-                                on:input={onParamChange}
-                              />
-                            </td>
-                            <td>
-                              <button
-                                class="req-mini-btn"
-                                title="Remove parameter"
-                                on:click={() => removeParam(pi)}>×</button
-                              >
-                            </td>
-                          </tr>
-                        {/each}
-                      </tbody>
-                    </table>
-                  {/if}
-                  <button class="req-mini-btn" on:click={addParam}>＋ Add parameter</button>
-                </div>
-              {:else if reqActiveTab === 'headers'}
-                <div class="req-headers">
-                  {#if reqHeaderRows.length > 0}
-                    <table class="req-rows">
-                      <thead>
-                        <tr><th></th><th>Key</th><th>Value</th><th></th></tr>
-                      </thead>
-                      <tbody>
-                        {#each reqHeaderRows as row, ri (ri)}
-                          <tr>
-                            <td>
-                              <input
-                                type="checkbox"
-                                title="Include this header"
-                                bind:checked={row.enabled}
-                                on:change={onHeaderRowChange}
-                              />
-                            </td>
-                            <td>
-                              <input
-                                type="text"
-                                list="req-header-suggest"
-                                placeholder="Header"
-                                bind:value={row.key}
-                                on:input={onHeaderRowChange}
-                              />
-                            </td>
-                            <td>
-                              <input
-                                type="text"
-                                placeholder="value"
-                                bind:value={row.value}
-                                on:input={onHeaderRowChange}
-                              />
-                            </td>
-                            <td>
-                              <button
-                                class="req-mini-btn"
-                                title="Remove header"
-                                on:click={() => removeHeaderRow(ri)}>×</button
-                              >
-                            </td>
-                          </tr>
-                        {/each}
-                      </tbody>
-                    </table>
-                  {/if}
-                  <datalist id="req-header-suggest">
-                    {#each HEADER_SUGGESTIONS as suggestion}
-                      <option value={suggestion}></option>
-                    {/each}
-                  </datalist>
-                  <button class="req-mini-btn" on:click={addHeaderRow}>＋ Add header</button>
-                </div>
-              {:else if reqActiveTab === 'body'}
-                <div class="req-body">
-                  <div class="req-label-row">
-                    <span class="req-label"
-                      >Body{#if bodyIgnored}
-                        <span class="req-note"> (ignored for {reqMethod})</span>{/if}</span
-                    >
-                    <span class="req-spacer"></span>
-                    <button
-                      class="req-open-btn"
-                      title="Open body in the main editor"
-                      on:click={openBodyInEditor}>↗ Editor</button
-                    >
-                  </div>
-                  <div class="req-row">
-                    <span class="req-label">Type</span>
-                    <select class="tb-select" bind:value={reqBodyType}>
-                      <option value="none">None</option>
-                      <option value="json">JSON</option>
-                      <option value="text">Text</option>
-                    </select>
-                  </div>
-                  <textarea
-                    class="req-textarea"
-                    rows="6"
-                    placeholder={'{"key": "value"}'}
-                    bind:value={reqBody}
-                    on:input={onBodyInput}
-                    on:keydown={(e) => {
-                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void sendRequest()
-                    }}
-                  ></textarea>
-                  {#if reqBodyInvalid}
-                    <div class="req-warn">⚠ Invalid JSON in the body — fix it before sending.</div>
-                  {/if}
-                </div>
-              {:else if reqActiveTab === 'auth'}
-                <div class="req-auth">
-                  <p class="req-note">How should the request authenticate?</p>
-                  <div class="req-auth-methods">
-                    {#each AUTH_METHODS as [value, label, hint]}
-                      <button
-                        class="req-auth-method"
-                        class:active={reqAuthType === value}
-                        title={hint}
-                        on:click={() => (reqAuthType = value)}>{label}</button
-                      >
-                    {/each}
-                  </div>
-                  {#if reqAuthType === 'bearer'}
-                    <div class="req-auth-fields">
-                      <label class="req-auth-field">
-                        <span class="req-label">Token</span>
-                        <input
-                          class="req-auth-input"
-                          type="text"
-                          placeholder={BEARER_PLACEHOLDER}
-                          bind:value={authBearerToken}
-                        />
-                      </label>
-                      <div class="req-token-block">
-                        <span class="req-note"
-                          >Fetch a token from an API — saves it as <code>{TOKEN_VAR}</code> in the active
-                          environment.</span
-                        >
-                        <div class="req-token-row">
-                          <input
-                            class="req-auth-input"
-                            type="text"
-                            placeholder="Token URL (https://auth.example.com/token)"
-                            bind:value={tokenUrl}
-                          />
-                          <input
-                            class="req-path"
-                            type="text"
-                            placeholder="token path"
-                            bind:value={tokenPath}
-                          />
-                          <button
-                            class="sb-btn-status"
-                            title={'Fetch token into {{token}} of the active environment'}
-                            on:click={() => void fetchToken()}>🔑 Get token</button
-                          >
-                        </div>
+                <div class="req-panel-container req-params-view">
+                  <div class="req-card">
+                    <div class="req-card-header">
+                      <div class="req-card-title">
+                        <span class="req-card-icon">🔍</span>
+                        <span>Query Parameters</span>
+                        {#if reqParams.length > 0}
+                          <span class="req-count-badge">
+                            {reqParams.filter((p) => p.enabled && p.key.trim()).length} active
+                          </span>
+                        {/if}
+                      </div>
+                      <div class="req-card-actions">
+                        <button type="button" class="req-btn-add primary" on:click={addParam}>
+                          <span class="btn-icon">＋</span> Add Parameter
+                        </button>
                       </div>
                     </div>
-                  {:else if reqAuthType === 'basic'}
-                    <div class="req-auth-fields">
-                      <label class="req-auth-field">
-                        <span class="req-label">Username</span>
-                        <input
-                          class="req-auth-input"
-                          type="text"
-                          placeholder="username"
-                          bind:value={authBasicUser}
-                        />
-                      </label>
-                      <label class="req-auth-field">
-                        <span class="req-label">Password</span>
-                        <input
-                          class="req-auth-input"
-                          type="password"
-                          placeholder="password"
-                          bind:value={authBasicPass}
-                        />
-                      </label>
-                    </div>
-                  {:else if reqAuthType === 'apikey'}
-                    <div class="req-auth-fields">
-                      <label class="req-auth-field">
-                        <span class="req-label">Header name</span>
-                        <input
-                          class="req-auth-input"
-                          type="text"
-                          placeholder="X-API-Key"
-                          bind:value={authApiKeyName}
-                        />
-                      </label>
-                      <label class="req-auth-field">
-                        <span class="req-label">Key value</span>
-                        <input
-                          class="req-auth-input"
-                          type="text"
-                          placeholder="key"
-                          bind:value={authApiKeyValue}
-                        />
-                      </label>
-                    </div>
-                  {/if}
-                  <div class="req-auth-actions-bar">
-                    <button
-                      type="button"
-                      class="sb-btn-status auth-validate-btn"
-                      title="Audit and validate the configured authentication"
-                      on:click={validateAndRevalidateAuth}
-                    >
-                      ⚡ Testar / Validar Auth
-                    </button>
-                    {#if authValidationMessage}
-                      <span
-                        class="auth-validation-badge"
-                        class:ok={authValidationMessage.ok}
-                        class:bad={!authValidationMessage.ok}
-                      >
-                        {authValidationMessage.text}
-                      </span>
+
+                    {#if reqParams.length === 0}
+                      <div class="req-empty-card">
+                        <span class="empty-icon">🔍</span>
+                        <div class="empty-text">
+                          <strong>No query parameters configured</strong>
+                          <small>Parameters are automatically serialized and appended to the URL as <code>?key=value</code></small>
+                        </div>
+                        <button type="button" class="req-btn-add secondary" on:click={addParam}>
+                          ＋ Add First Parameter
+                        </button>
+                      </div>
+                    {:else}
+                      <div class="req-table-wrapper">
+                        <table class="req-data-table">
+                          <thead>
+                            <tr>
+                              <th class="col-checkbox" title="Enable/Disable">✓</th>
+                              <th class="col-key">Key</th>
+                              <th class="col-val">Value</th>
+                              <th class="col-actions"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {#each reqParams as param, pi (pi)}
+                              <tr class:is-disabled={!param.enabled}>
+                                <td class="col-checkbox">
+                                  <input
+                                    type="checkbox"
+                                    title="Include this parameter"
+                                    bind:checked={param.enabled}
+                                    on:change={onParamChange}
+                                  />
+                                </td>
+                                <td class="col-key">
+                                  <input
+                                    type="text"
+                                    placeholder="Key (e.g. limit or page)"
+                                    bind:value={param.key}
+                                    on:input={onParamChange}
+                                    spellcheck="false"
+                                  />
+                                </td>
+                                <td class="col-val">
+                                  <input
+                                    type="text"
+                                    placeholder="Value"
+                                    bind:value={param.value}
+                                    on:input={onParamChange}
+                                    spellcheck="false"
+                                  />
+                                </td>
+                                <td class="col-actions">
+                                  <button
+                                    type="button"
+                                    class="req-row-del-btn"
+                                    title="Remove parameter"
+                                    aria-label="Remove parameter"
+                                    on:click={() => removeParam(pi)}
+                                  >
+                                    <svg
+                                      class="req-del-icon"
+                                      width="13"
+                                      height="13"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="2"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                      aria-hidden="true"
+                                    >
+                                      <path d="M3 6h18" />
+                                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                      <line x1="10" y1="11" x2="10" y2="17" />
+                                      <line x1="14" y1="11" x2="14" y2="17" />
+                                    </svg>
+                                  </button>
+                                </td>
+                              </tr>
+                            {/each}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div class="req-table-footer">
+                        <button type="button" class="req-add-row-inline" on:click={addParam}>
+                          ＋ Add another parameter
+                        </button>
+                      </div>
                     {/if}
                   </div>
                 </div>
+              {:else if reqActiveTab === 'headers'}
+                <div class="req-panel-container req-headers-view">
+                  <div class="req-card">
+                    <div class="req-card-header">
+                      <div class="req-card-title">
+                        <span class="req-card-icon">🏷️</span>
+                        <span>Request Headers</span>
+                        {#if reqHeaderRows.length > 0}
+                          <span class="req-count-badge">
+                            {reqHeaderRows.filter((r) => r.enabled && r.key.trim()).length} active
+                          </span>
+                        {/if}
+                      </div>
+                      <div class="req-card-actions">
+                        <button type="button" class="req-btn-add primary" on:click={addHeaderRow}>
+                          <span class="btn-icon">＋</span> Add Header
+                        </button>
+                      </div>
+                    </div>
+
+                    {#if reqHeaderRows.length === 0}
+                      <div class="req-empty-card">
+                        <span class="empty-icon">🏷️</span>
+                        <div class="empty-text">
+                          <strong>No custom headers configured</strong>
+                          <small>Common headers like <code>Content-Type</code> or <code>Authorization</code> can be added here.</small>
+                        </div>
+                        <button type="button" class="req-btn-add secondary" on:click={addHeaderRow}>
+                          ＋ Add First Header
+                        </button>
+                      </div>
+                    {:else}
+                      <div class="req-table-wrapper">
+                        <table class="req-data-table">
+                          <thead>
+                            <tr>
+                              <th class="col-checkbox" title="Enable/Disable">✓</th>
+                              <th class="col-key">Header</th>
+                              <th class="col-val">Value</th>
+                              <th class="col-actions"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {#each reqHeaderRows as row, ri (ri)}
+                              <tr class:is-disabled={!row.enabled}>
+                                <td class="col-checkbox">
+                                  <input
+                                    type="checkbox"
+                                    title="Include this header"
+                                    bind:checked={row.enabled}
+                                    on:change={onHeaderRowChange}
+                                  />
+                                </td>
+                                <td class="col-key">
+                                  <input
+                                    type="text"
+                                    list="req-header-suggest"
+                                    placeholder="Header (e.g. Accept or Authorization)"
+                                    bind:value={row.key}
+                                    on:input={onHeaderRowChange}
+                                    spellcheck="false"
+                                  />
+                                </td>
+                                <td class="col-val">
+                                  <input
+                                    type="text"
+                                    placeholder="Value or {'{{variable}}'}"
+                                    bind:value={row.value}
+                                    on:input={onHeaderRowChange}
+                                    spellcheck="false"
+                                  />
+                                </td>
+                                <td class="col-actions">
+                                  <button
+                                    type="button"
+                                    class="req-row-del-btn"
+                                    title="Remove header"
+                                    aria-label="Remove header"
+                                    on:click={() => removeHeaderRow(ri)}
+                                  >
+                                    <svg
+                                      class="req-del-icon"
+                                      width="13"
+                                      height="13"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="2"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                      aria-hidden="true"
+                                    >
+                                      <path d="M3 6h18" />
+                                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                      <line x1="10" y1="11" x2="10" y2="17" />
+                                      <line x1="14" y1="11" x2="14" y2="17" />
+                                    </svg>
+                                  </button>
+                                </td>
+                              </tr>
+                            {/each}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div class="req-table-footer">
+                        <button type="button" class="req-add-row-inline" on:click={addHeaderRow}>
+                          ＋ Add another header
+                        </button>
+                      </div>
+                    {/if}
+                    <datalist id="req-header-suggest">
+                      {#each HEADER_SUGGESTIONS as suggestion}
+                        <option value={suggestion}></option>
+                      {/each}
+                    </datalist>
+                  </div>
+                </div>
+              {:else if reqActiveTab === 'body'}
+                <div class="req-panel-container req-body-view">
+                  <div class="req-card">
+                    <div class="req-card-header">
+                      <div class="req-body-type-selector">
+                        <span class="body-type-label">Payload Format:</span>
+                        <div class="body-segmented-control" role="tablist">
+                          <button
+                            type="button"
+                            class="seg-btn"
+                            class:active={reqBodyType === 'none'}
+                            on:click={() => (reqBodyType = 'none')}
+                          >
+                            None
+                          </button>
+                          <button
+                            type="button"
+                            class="seg-btn"
+                            class:active={reqBodyType === 'json'}
+                            on:click={() => (reqBodyType = 'json')}
+                          >
+                            JSON (application/json)
+                          </button>
+                          <button
+                            type="button"
+                            class="seg-btn"
+                            class:active={reqBodyType === 'text'}
+                            on:click={() => (reqBodyType = 'text')}
+                          >
+                            Text (Raw)
+                          </button>
+                        </div>
+                        {#if bodyIgnored}
+                          <span class="body-ignored-badge" title="GET and HEAD requests typically do not have a body">
+                            ⚠ Ignored for {reqMethod}
+                          </span>
+                        {/if}
+                      </div>
+
+                      <div class="req-card-actions">
+                        {#if reqBodyType === 'json'}
+                          <button
+                            type="button"
+                            class="req-tool-btn"
+                            title="Format and prettify JSON payload"
+                            on:click={formatRequestBody}
+                            disabled={!reqBody.trim() || reqBodyInvalid}
+                          >
+                            ✨ Prettify JSON
+                          </button>
+                        {/if}
+                        <button
+                          type="button"
+                          class="req-tool-btn primary"
+                          title="Open payload in the main JSON Editor view"
+                          on:click={openBodyInEditor}
+                        >
+                          ↗ Open in Editor
+                        </button>
+                      </div>
+                    </div>
+
+                    {#if reqBodyType === 'none'}
+                      <div class="req-empty-card">
+                        <span class="empty-icon">📄</span>
+                        <div class="empty-text">
+                          <strong>This request has no body payload</strong>
+                          <small>Select <strong>JSON</strong> or <strong>Text</strong> above to attach a payload for POST, PUT or PATCH requests.</small>
+                        </div>
+                        <button type="button" class="req-btn-add secondary" on:click={() => (reqBodyType = 'json')}>
+                          Attach JSON Payload
+                        </button>
+                      </div>
+                    {:else}
+                      <div class="req-code-editor-box">
+                        <div class="code-editor-header">
+                          <span class="code-header-badge">
+                            {#if reqBodyType === 'json'}
+                              <span class="json-icon">&#123;&#125;</span> application/json
+                            {:else}
+                              <span class="text-icon">📝</span> text/plain
+                            {/if}
+                          </span>
+                          <span class="code-header-hint">Ctrl + Enter to Send</span>
+                        </div>
+                        <textarea
+                          class="req-code-textarea"
+                          rows="9"
+                          placeholder={reqBodyType === 'json' ? '{\n  "key": "value"\n}' : 'Raw text payload...'}
+                          bind:value={reqBody}
+                          on:input={onBodyInput}
+                          on:keydown={(e) => {
+                            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void sendRequest()
+                          }}
+                          spellcheck="false"
+                        ></textarea>
+                        <div class="code-editor-footer">
+                          {#if reqBodyType === 'json'}
+                            {#if reqBodyInvalid}
+                              <span class="payload-status invalid">
+                                ⚠ Invalid JSON syntax — verify braces, quotes and commas
+                              </span>
+                            {:else if reqBody.trim()}
+                              <span class="payload-status valid">
+                                ✓ Valid JSON payload
+                              </span>
+                            {:else}
+                              <span class="payload-status empty">Empty payload (optional)</span>
+                            {/if}
+                          {:else}
+                            <span class="payload-status text">{reqBody.length} characters</span>
+                          {/if}
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+              {:else if reqActiveTab === 'auth'}
+                <div class="req-panel-container req-auth-view">
+                  <div class="req-card">
+                    <div class="req-card-header">
+                      <div class="req-card-title">
+                        <span class="req-card-icon">🔐</span>
+                        <span>Authentication</span>
+                        <span class="req-count-badge">{reqAuthType.toUpperCase()}</span>
+                      </div>
+                      <div class="req-card-actions">
+                        <button
+                          type="button"
+                          class="req-tool-btn"
+                          title="Audit and validate configured authentication"
+                          on:click={validateAndRevalidateAuth}
+                        >
+                          ⚡ Test / Validate Auth
+                        </button>
+                        {#if authValidationMessage}
+                          <span
+                            class="auth-validation-badge"
+                            class:ok={authValidationMessage.ok}
+                            class:bad={!authValidationMessage.ok}
+                          >
+                            {authValidationMessage.text}
+                          </span>
+                        {/if}
+                      </div>
+                    </div>
+
+                    <div class="req-auth-card-body">
+                      <p class="req-auth-intro">Choose an authentication method for this request:</p>
+                      <div class="req-auth-methods">
+                        {#each AUTH_METHODS as [value, label, hint]}
+                          <button
+                            type="button"
+                            class="req-auth-method"
+                            class:active={reqAuthType === value}
+                            title={hint}
+                            on:click={() => (reqAuthType = value)}
+                          >
+                            {label}
+                          </button>
+                        {/each}
+                      </div>
+
+                      {#if reqAuthType === 'bearer'}
+                        <div class="req-auth-fields">
+                          <label class="req-auth-field">
+                            <span class="req-label">Token:</span>
+                            <input
+                              class="req-auth-input"
+                              type="text"
+                              placeholder={BEARER_PLACEHOLDER}
+                              bind:value={authBearerToken}
+                              spellcheck="false"
+                            />
+                          </label>
+                          <div class="req-token-block">
+                            <span class="req-note"
+                              >Fetch a token from an API — saves it as <code>{TOKEN_VAR}</code> in the active environment.</span
+                            >
+                            <div class="req-token-row">
+                              <input
+                                class="req-auth-input"
+                                type="text"
+                                placeholder="Token URL (https://auth.example.com/token)"
+                                bind:value={tokenUrl}
+                                spellcheck="false"
+                              />
+                              <input
+                                class="req-path"
+                                type="text"
+                                placeholder="token JSON path (e.g. access_token)"
+                                bind:value={tokenPath}
+                                spellcheck="false"
+                              />
+                              <button
+                                type="button"
+                                class="req-tool-btn primary"
+                                title={'Fetch token into {{token}} of the active environment'}
+                                on:click={() => void fetchToken()}
+                              >
+                                🔑 Get token
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      {:else if reqAuthType === 'basic'}
+                        <div class="req-auth-fields">
+                          <label class="req-auth-field">
+                            <span class="req-label">Username:</span>
+                            <input
+                              class="req-auth-input"
+                              type="text"
+                              placeholder="username"
+                              bind:value={authBasicUser}
+                              spellcheck="false"
+                            />
+                          </label>
+                          <label class="req-auth-field">
+                            <span class="req-label">Password:</span>
+                            <input
+                              class="req-auth-input"
+                              type="password"
+                              placeholder="password"
+                              bind:value={authBasicPass}
+                              spellcheck="false"
+                            />
+                          </label>
+                        </div>
+                      {:else if reqAuthType === 'apikey'}
+                        <div class="req-auth-fields">
+                          <label class="req-auth-field">
+                            <span class="req-label">Header name:</span>
+                            <input
+                              class="req-auth-input"
+                              type="text"
+                              placeholder="X-API-Key"
+                              bind:value={authApiKeyName}
+                              spellcheck="false"
+                            />
+                          </label>
+                          <label class="req-auth-field">
+                            <span class="req-label">Key value:</span>
+                            <input
+                              class="req-auth-input"
+                              type="text"
+                              placeholder="key"
+                              bind:value={authApiKeyValue}
+                              spellcheck="false"
+                            />
+                          </label>
+                        </div>
+                      {:else if reqAuthType === 'none'}
+                        <div class="req-auth-empty-note">
+                          <span>✓ No authentication will be sent with this request.</span>
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
               {:else if reqActiveTab === 'captures'}
-                <div class="req-captures-pane">
+                <div class="req-panel-container req-captures-pane">
                   <CapturePathsTable bind:captures={reqCaptures} sampleJsonText={reqResponseText} />
                 </div>
               {:else}
-                <div class="req-env">
-                  <div class="req-row">
-                    <select class="tb-select" bind:value={$activeEnvName} on:change={onEnvSelected}>
-                      <option value="">No environment</option>
-                      {#each Object.keys($environments) as name}
-                        <option value={name}>{name}</option>
-                      {/each}
-                    </select>
-                    <button class="sb-btn-status" title="New environment" on:click={newEnvironment}
-                      >＋ Env</button
-                    >
-                    <button
-                      class="sb-btn-status"
-                      title="Manage Environments & Globals (Postman style)"
-                      on:click={() => (envManagerOpen = true)}
-                    >
-                      ⚙️ Gerenciar
-                    </button>
+                <div class="req-panel-container req-env-view">
+                  <div class="req-card">
+                    <div class="req-card-header">
+                      <div class="req-env-selector-group">
+                        <span class="env-selector-label">Active Environment:</span>
+                        <div class="env-select-wrap">
+                          <select class="tb-select env-main-select" bind:value={$activeEnvName} on:change={onEnvSelected}>
+                            <option value="">No environment</option>
+                            {#each Object.keys($environments) as name}
+                              <option value={name}>{name}</option>
+                            {/each}
+                          </select>
+                        </div>
+                        <button type="button" class="req-tool-btn" title="Create new environment" on:click={newEnvironment}>
+                          ＋ New Env
+                        </button>
+                        <button
+                          type="button"
+                          class="req-tool-btn"
+                          title="Manage Environments & Globals (Postman style)"
+                          on:click={() => (envManagerOpen = true)}
+                        >
+                          ⚙️ Manage All
+                        </button>
+                      </div>
+
+                      <div class="req-card-actions">
+                        <button
+                          type="button"
+                          class="req-tool-btn primary"
+                          title="Open environment in the main editor"
+                          disabled={!$activeEnvName}
+                          on:click={openEnvInEditor}
+                        >
+                          ↗ Open in Editor
+                        </button>
+                      </div>
+                    </div>
+
+                    {#if !$activeEnvName}
+                      <div class="req-empty-card">
+                        <span class="empty-icon">🌐</span>
+                        <div class="empty-text">
+                          <strong>No active environment selected</strong>
+                          <small>Select an environment from the dropdown above or click <strong>＋ New Env</strong> to manage environment variables (e.g. <code>baseUrl</code>, <code>token</code>, <code>apiKey</code>).</small>
+                        </div>
+                        <button type="button" class="req-btn-add secondary" on:click={newEnvironment}>
+                          ＋ Create First Environment
+                        </button>
+                      </div>
+                    {:else}
+                      <div class="req-code-editor-box">
+                        <div class="code-editor-header">
+                          <span class="code-header-badge">
+                            <span class="json-icon">&#123;&#125;</span> Variables for <strong>{$activeEnvName}</strong>
+                          </span>
+                          <span class="code-header-hint">
+                            Variables can be referenced as <code>{'{{variableName}}'}</code>
+                          </span>
+                        </div>
+                        <textarea
+                          class="req-code-textarea"
+                          rows="9"
+                          placeholder={'{\n  "baseUrl": "https://api.example.com",\n  "token": "..."\n}'}
+                          disabled={!$activeEnvName}
+                          bind:value={envJsonText}
+                          on:input={onEnvJsonInput}
+                          spellcheck="false"
+                        ></textarea>
+                        <div class="code-editor-footer">
+                          <span class="payload-status text">
+                            Variables defined in JSON format. Changes save automatically.
+                          </span>
+                        </div>
+                      </div>
+                    {/if}
                   </div>
-                  <label class="req-field">
-                    <span class="req-label-row">
-                      <span class="req-label"
-                        >Env JSON{#if $activeEnvName}
-                          ({$activeEnvName}){/if}</span
-                      >
-                      <span class="req-spacer"></span>
-                      <button
-                        class="req-open-btn"
-                        title="Open environment in the main editor"
-                        on:click={openEnvInEditor}>↗ Editor</button
-                      >
-                    </span>
-                    <textarea
-                      class="req-textarea"
-                      rows="5"
-                      placeholder={'{"baseUrl": "…", "token": "…"}'}
-                      disabled={!$activeEnvName}
-                      bind:value={envJsonText}
-                      on:input={onEnvJsonInput}
-                    ></textarea>
-                  </label>
                 </div>
               {/if}
             </div>
@@ -5586,124 +5949,159 @@
                         · 🛡 via proxy{/if}</span
                     >
                     <span class="req-spacer"></span>
-                    <span class="req-meta">full response opened as a new tab</span>
+                    <span class="req-meta">Response opened in editor tab</span>
+                    {#if reqResponseText}
+                      <button
+                        type="button"
+                        class="req-mini-btn"
+                        title={responsePreviewOpen ? 'Hide preview' : 'Show preview'}
+                        on:click={() => (responsePreviewOpen = !responsePreviewOpen)}
+                      >
+                        {responsePreviewOpen ? 'Hide preview ▴' : 'Preview ▾'}
+                      </button>
+                    {/if}
                   </div>
                   {#if reqResult.missing && reqResult.missing.length > 0}
                     <div class="req-result req-error">
                       Unresolved variables: {reqResult.missing.join(', ')}
                     </div>
                   {/if}
-                  {#if reqResponseText}
+                  {#if reqResponseText && responsePreviewOpen}
                     <pre class="req-response-body">{reqResponseText}</pre>
                   {/if}
                 </div>
               {/if}
             {/if}
 
-            <!-- Fluxograma Espacial (Substitui o antigo Chain) -->
-            <div class="req-flow-banner">
-              <div class="flow-banner-left">
-                <span class="flow-banner-icon">🔀</span>
-                <div class="flow-banner-text">
-                  <span class="flow-banner-title">Spatial Flow (Chain replacement)</span>
-                  <span class="flow-banner-sub">
-                    Visual chaining with REST and JS blocks, solid (wait/join) and dotted (async)
-                    arrows, and an integrated side panel.
-                  </span>
-                </div>
               </div>
-              <div class="flow-banner-actions">
-                <button
-                  type="button"
-                  class="flow-banner-btn-secondary"
-                  title="Add the active request as a block in the flow"
-                  on:click={addCurrentFormToFlow}
-                >
-                  ➕ Add to Flow
-                </button>
-                <button
-                  type="button"
-                  class="flow-banner-btn-primary"
-                  title="Open the visual flow editor"
-                  on:click={() => ($requestsViewMode = 'flow')}
-                >
-                  Open Spatial Flow →
-                </button>
-              </div>
-            </div>
 
-            <!-- History (collapsible) -->
-            {#if reqHistory.length > 0}
-              <div class="req-history">
+              <!-- Resizer divider between Config Pane and History (when history exists and is open) -->
+              {#if reqHistory.length > 0 && $historyOpen}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
-                  class="req-section-head"
-                  role="button"
-                  tabindex="0"
-                  on:click={() => ($historyOpen = !$historyOpen)}
-                  on:keydown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') $historyOpen = !$historyOpen
-                  }}
+                  class="req-areas-resizer"
+                  class:is-row={$reqLayoutDirection === 'vertical'}
+                  class:is-col={$reqLayoutDirection === 'horizontal'}
+                  title="Drag to resize areas"
+                  on:mousedown={startReqAreasResize}
                 >
-                  <span class="req-caret">{$historyOpen ? '▾' : '▸'}</span>
-                  <span class="req-label">History ({reqHistory.length})</span>
-                  <span class="req-spacer"></span>
-                  <button
-                    class="req-mini-btn"
-                    title="Clear history"
-                    on:click|stopPropagation={clearHistory}>Clear</button
-                  >
+                  <div class="req-resizer-grip"></div>
                 </div>
-                {#if $historyOpen}
-                  {#each reqHistory as entry (entry.id)}
-                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                    <div
-                      class="req-history-item"
-                      title="Open response in the editor and load the request into the form"
-                      on:click={() => openHistoryResponse(entry)}
+              {/if}
+
+              <!-- History Pane (collapsible) -->
+              {#if reqHistory.length > 0}
+                <div
+                  class="req-history-pane"
+                  class:is-collapsed={!$historyOpen}
+                  style={$historyOpen
+                    ? ($reqLayoutDirection === 'horizontal'
+                        ? `width: ${$reqHistoryWidth}px; flex-shrink: 0;`
+                        : `height: ${$reqHistoryHeight}px; flex-shrink: 0;`)
+                    : ''}
+                >
+                  <div
+                    class="req-section-head"
+                    role="button"
+                    tabindex="0"
+                    on:click={() => ($historyOpen = !$historyOpen)}
+                    on:keydown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') $historyOpen = !$historyOpen
+                    }}
+                  >
+                    <span class="req-caret">{$historyOpen ? '▾' : '▸'}</span>
+                    <span class="req-label">History ({reqHistory.length})</span>
+                    <span class="req-spacer"></span>
+                    <button
+                      type="button"
+                      class="req-mini-btn req-dir-toggle-btn"
+                      title={$reqLayoutDirection === 'vertical'
+                        ? 'Mudar layout para lado a lado (horizontal)'
+                        : 'Mudar layout para empilhado (vertical)'}
+                      on:click|stopPropagation={toggleReqLayoutDirection}
                     >
-                      <span class="req-method-tag">{entry.method}</span>
-                      <span
-                        class="req-status"
-                        class:ok={typeof entry.status === 'number' && entry.status < 400}
-                        class:bad={entry.status === 'error' ||
-                          (typeof entry.status === 'number' && entry.status >= 400)}
-                      >
-                        {entry.status}
-                      </span>
-                      <span class="req-history-url">{entry.url}</span>
-                      <span class="req-history-meta"
-                        >{relativeTime(entry.timestamp)} · {entry.durationMs} ms ·
-                        {formatBytes(entry.sizeBytes)}{#if entry.viaProxy}
-                          · 🛡 proxy{/if}</span
-                      >
-                      <span class="req-history-actions">
-                        <button
-                          class="req-mini-btn"
-                          title="Add this request as a block in the Spatial Flow"
-                          on:click|stopPropagation={() => addHistoryEntryToFlow(entry)}
-                          >＋ Flow</button
+                      {$reqLayoutDirection === 'vertical' ? '⇄ Lado a lado' : '⇅ Empilhado'}
+                    </button>
+                    <button
+                      class="req-mini-btn"
+                      title="Clear history"
+                      on:click|stopPropagation={clearHistory}>Clear</button
+                    >
+                  </div>
+                  {#if $historyOpen}
+                    <div class="req-history-list">
+                      {#each reqHistory as entry (entry.id)}
+                        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                        <div
+                          class="req-history-item"
+                          title="Open response in the editor and load the request into the form"
+                          on:click={() => openHistoryResponse(entry)}
                         >
-                        <button
-                          class="req-mini-btn"
-                          title="Load request into form"
-                          on:click|stopPropagation={() => loadRequestIntoForm(entry)}>✎</button
-                        >
-                        <button
-                          class="req-mini-btn"
-                          title="Re-send"
-                          on:click|stopPropagation={() => void reSendRequest(entry)}>↻</button
-                        >
-                        <button
-                          class="req-mini-btn"
-                          title="Remove"
-                          on:click|stopPropagation={() => removeHistoryEntry(entry.id)}>×</button
-                        >
-                      </span>
+                          <span class="req-method-tag">{entry.method}</span>
+                          <span
+                            class="req-status"
+                            class:ok={typeof entry.status === 'number' && entry.status < 400}
+                            class:bad={entry.status === 'error' ||
+                              (typeof entry.status === 'number' && entry.status >= 400)}
+                          >
+                            {entry.status}
+                          </span>
+                          <span class="req-history-url">{entry.url}</span>
+                          <span class="req-history-meta"
+                            >{relativeTime(entry.timestamp)} · {entry.durationMs} ms ·
+                            {formatBytes(entry.sizeBytes)}{#if entry.viaProxy}
+                              · 🛡 proxy{/if}</span
+                          >
+                          <span class="req-history-actions">
+                            <button
+                              class="req-mini-btn"
+                              title="Add this request as a block in the Spatial Flow"
+                              on:click|stopPropagation={() => addHistoryEntryToFlow(entry)}
+                              >＋ Flow</button
+                            >
+                            <button
+                              class="req-mini-btn"
+                              title="Load request into form"
+                              on:click|stopPropagation={() => loadRequestIntoForm(entry)}>✎</button
+                            >
+                            <button
+                              class="req-mini-btn"
+                              title="Re-send"
+                              on:click|stopPropagation={() => void reSendRequest(entry)}>↻</button
+                            >
+                            <button
+                              type="button"
+                              class="req-delete-btn"
+                              title="Remove from history"
+                              on:click|stopPropagation={() => removeHistoryEntry(entry.id)}
+                            >
+                              <svg
+                                class="req-del-icon"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M3 6h18" />
+                                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                <line x1="10" y1="11" x2="10" y2="17" />
+                                <line x1="14" y1="11" x2="14" y2="17" />
+                              </svg>
+                            </button>
+                          </span>
+                        </div>
+                      {/each}
                     </div>
-                  {/each}
-                {/if}
-              </div>
-            {/if}
+                  {/if}
+                </div>
+              {/if}
+            </div>
           {/if}
         </div>
       {/if}
@@ -5827,8 +6225,18 @@
 
     --theme-t-bright: #ffffff;
     --theme-t-main: #d4d4d4;
+    --theme-t-sub: #94a3b8;
     --theme-t-muted: #9d9d9d;
     --theme-t-inverse: #181818;
+    --theme-console-log: #34d399;
+    --theme-chip-bg: rgba(255, 255, 255, 0.08);
+    --theme-chip-text: #cbd5e1;
+    --theme-chip-border: rgba(255, 255, 255, 0.14);
+    --theme-method-get: #34d399;
+    --theme-method-post: #fbbf24;
+    --theme-method-put: #60a5fa;
+    --theme-method-delete: #f87171;
+    --theme-danger-text: #f87171;
 
     --theme-ac: #0078d4;
     --theme-ac-hover: #1177bb;
@@ -5874,8 +6282,18 @@
 
       --theme-t-bright: #ffffff;
       --theme-t-main: #d4d4d4;
+      --theme-t-sub: #94a3b8;
       --theme-t-muted: #9d9d9d;
       --theme-t-inverse: #181818;
+      --theme-console-log: #34d399;
+      --theme-chip-bg: rgba(255, 255, 255, 0.08);
+      --theme-chip-text: #cbd5e1;
+      --theme-chip-border: rgba(255, 255, 255, 0.14);
+      --theme-method-get: #34d399;
+      --theme-method-post: #fbbf24;
+      --theme-method-put: #60a5fa;
+      --theme-method-delete: #f87171;
+      --theme-danger-text: #f87171;
 
       --theme-ac: #0078d4;
       --theme-ac-hover: #1177bb;
@@ -5919,8 +6337,18 @@
 
       --theme-t-bright: #0f172a;
       --theme-t-main: #334155;
+      --theme-t-sub: #475569;
       --theme-t-muted: #64748b;
       --theme-t-inverse: #ffffff;
+      --theme-console-log: #047857;
+      --theme-chip-bg: #f1f5f9;
+      --theme-chip-text: #1e293b;
+      --theme-chip-border: #cbd5e1;
+      --theme-method-get: #047857;
+      --theme-method-post: #b45309;
+      --theme-method-put: #1d4ed8;
+      --theme-method-delete: #b91c1c;
+      --theme-danger-text: #b91c1c;
 
       --theme-ac: #0078d4;
       --theme-ac-hover: #0067b8;
@@ -5967,8 +6395,18 @@
 
       --theme-t-bright: #3b1d16;
       --theme-t-main: #5c352c;
+      --theme-t-sub: #78350f;
       --theme-t-muted: #8c5b50;
       --theme-t-inverse: #ffffff;
+      --theme-console-log: #b45309;
+      --theme-chip-bg: #fde68a;
+      --theme-chip-text: #78350f;
+      --theme-chip-border: #fcd34d;
+      --theme-method-get: #047857;
+      --theme-method-post: #b45309;
+      --theme-method-put: #1d4ed8;
+      --theme-method-delete: #b91c1c;
+      --theme-danger-text: #b91c1c;
 
       --theme-ac: #e65100;
       --theme-ac-hover: #bf360c;
@@ -6000,6 +6438,7 @@
   $bg-panel: var(--theme-bg-panel);
   $bg-card: var(--theme-bg-card);
   $bg-hover: var(--theme-bg-hover);
+  $bg-input: var(--theme-bg-input, var(--theme-bg-editor));
 
   $b-subtle: var(--theme-b-subtle);
   $b-main: var(--theme-b-main);
@@ -7270,12 +7709,12 @@
     font-family: Consolas, monospace;
     &.ok {
       background: rgba(16, 185, 129, 0.15);
-      color: #34d399;
+      color: var(--theme-console-log, #047857);
       border: 1px solid rgba(16, 185, 129, 0.3);
     }
     &.bad {
       background: rgba(239, 68, 68, 0.15);
-      color: #f87171;
+      color: var(--theme-danger-text, #b91c1c);
       border: 1px solid rgba(239, 68, 68, 0.3);
     }
   }
@@ -7300,6 +7739,149 @@
     flex-shrink: 0;
     background: $bg-editor;
     border-bottom: 1px solid $b-main;
+  }
+  .requests-body-layout,
+  .requests-body-scroll {
+    flex: 1 1 0%;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+
+    &.is-horizontal {
+      flex-direction: row;
+    }
+  }
+  .req-config-pane {
+    flex: 1 1 0%;
+    min-height: 80px;
+    min-width: 240px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    background: $bg-editor;
+  }
+  .req-areas-resizer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: $bg-chrome;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    user-select: none;
+    z-index: 5;
+    flex-shrink: 0;
+
+    &.is-row {
+      height: 6px;
+      cursor: row-resize;
+      border-top: 1px solid $b-main;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+
+      &:hover {
+        background: rgba(56, 189, 248, 0.22);
+        border-top-color: $ac;
+      }
+      .req-resizer-grip {
+        width: 36px;
+        height: 2px;
+        border-radius: 1px;
+        background: $b-input;
+        pointer-events: none;
+      }
+      &:hover .req-resizer-grip {
+        background: $ac;
+      }
+    }
+
+    &.is-col {
+      width: 6px;
+      cursor: col-resize;
+      border-left: 1px solid $b-main;
+      border-right: 1px solid rgba(0, 0, 0, 0.2);
+
+      &:hover {
+        background: rgba(56, 189, 248, 0.22);
+        border-left-color: $ac;
+      }
+      .req-resizer-grip {
+        width: 2px;
+        height: 36px;
+        border-radius: 1px;
+        background: $b-input;
+        pointer-events: none;
+      }
+      &:hover .req-resizer-grip {
+        background: $ac;
+      }
+    }
+  }
+  .req-history-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 28px;
+    background: $bg-editor;
+    overflow: hidden;
+
+    &.is-collapsed {
+      flex: 0 0 auto !important;
+      height: auto !important;
+      border-top: 1px solid $b-main;
+    }
+
+    .is-horizontal & {
+      border-left: 1px solid $b-main;
+      min-width: 180px;
+
+      &.is-collapsed {
+        width: auto !important;
+        border-left: 1px solid $b-main;
+        border-top: none;
+      }
+    }
+
+    .req-section-head {
+      border-top: none;
+      background: $bg-chrome;
+      padding: 5px 10px;
+    }
+  }
+  .req-history-list {
+    flex: 1 1 0%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 4px 8px;
+  }
+  .req-dir-toggle-btn {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 6px;
+    border: 1px solid $b-input;
+    border-radius: 3px;
+    background: $bg-card;
+    color: $t-muted;
+    transition: all 0.12s ease;
+    margin-right: 4px;
+
+    &:hover {
+      background: $bg-hover;
+      color: $t-bright;
+      border-color: $b-input-hover;
+    }
+  }
+  .is-horizontal .req-history-item {
+    flex-wrap: wrap;
+    row-gap: 3px;
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+
+    .req-history-meta {
+      width: 100%;
+      order: 3;
+      padding-left: 56px;
+    }
   }
   .req-method {
     flex-shrink: 0;
@@ -7438,7 +8020,8 @@
     }
   }
   .req-textarea {
-    resize: none;
+    resize: vertical;
+    max-height: 80px;
     padding: 3px 6px;
     font-size: 11px;
     font-family: Consolas, 'Courier New', monospace;
@@ -7544,6 +8127,63 @@
     &:hover {
       color: #fff;
       background: rgba(255, 255, 255, 0.1);
+    }
+  }
+  .req-delete-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--theme-td, #858585);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    line-height: 1;
+
+    .req-del-icon {
+      width: 12px;
+      height: 12px;
+      display: block;
+      pointer-events: none;
+      transition: transform 0.12s ease;
+    }
+
+    &:hover {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.35);
+      color: #f14c4c;
+      transform: scale(1.05);
+
+      .req-del-icon {
+        transform: scale(1.08);
+      }
+    }
+
+    &:active {
+      transform: scale(0.95);
+      background: rgba(239, 68, 68, 0.25);
+    }
+
+    &:focus-visible {
+      outline: 2px solid #ef4444;
+      outline-offset: 1px;
+    }
+  }
+
+  /* High contrast for Light theme */
+  :global(.jse-theme-default) .req-delete-btn,
+  :global(.jse-theme-light) .req-delete-btn {
+    color: #64748b;
+
+    &:hover {
+      background: #fee2e2;
+      border-color: #fca5a5;
+      color: #dc2626;
     }
   }
   .req-history-head {
@@ -7960,43 +8600,545 @@
     }
   }
   .req-section-content {
-    flex-shrink: 0;
-    padding: 6px 8px;
-    max-height: 180px;
+    flex: 1 1 auto;
+    padding: 8px 12px;
+    min-height: 80px;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
-  .req-rows {
+
+  .req-panel-container {
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .req-card {
+    width: 100%;
+    box-sizing: border-box;
+    background: $bg-card;
+    border: 1px solid $b-subtle;
+    border-radius: 6px;
+    box-shadow: var(--theme-shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.08));
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.15s ease;
+  }
+
+  .req-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    background: $bg-panel;
+    border-bottom: 1px solid $b-subtle;
+    gap: 10px;
+  }
+
+  .req-card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: $t-bright;
+  }
+
+  .req-card-icon {
+    font-size: 13px;
+  }
+
+  .req-count-badge {
+    font-size: 10px;
+    font-weight: 600;
+    background: var(--theme-ac-subtle, rgba(0, 120, 212, 0.12));
+    color: $ac;
+    padding: 1px 7px;
+    border-radius: 10px;
+    letter-spacing: normal;
+  }
+
+  .req-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .req-btn-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 5px;
+    border: 1px solid $b-main;
+    background: $bg-card;
+    color: $t-bright;
+    cursor: pointer;
+    transition: all 0.12s ease;
+
+    &:hover {
+      background: $bg-hover;
+      border-color: $ac;
+      color: $ac;
+    }
+
+    &.primary {
+      background: $ac;
+      color: #ffffff;
+      border-color: $ac;
+
+      &:hover {
+        background: $ac-hover;
+      }
+    }
+
+    &.secondary {
+      background: var(--theme-ac-subtle, rgba(0, 120, 212, 0.1));
+      color: $ac;
+      border-color: var(--theme-ac, #0078d4);
+
+      &:hover {
+        background: $ac;
+        color: #ffffff;
+      }
+    }
+  }
+
+  .req-table-wrapper {
+    overflow-x: auto;
+    width: 100%;
+  }
+
+  .req-data-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 11px;
+    font-size: 11.5px;
+    table-layout: fixed;
+
     th {
       text-align: left;
-      color: $td;
+      color: $t-muted;
       font-weight: 600;
-      padding: 2px 4px;
+      padding: 6px 10px;
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
+      border-bottom: 1px solid $b-subtle;
+      background: $bg-panel;
+      user-select: none;
     }
+
     td {
-      padding: 2px 2px;
+      padding: 4px 8px;
+      vertical-align: middle;
+      border-bottom: 1px solid $b-subtle;
     }
-    input[type='text'] {
-      width: 100%;
-      padding: 3px 6px;
-      font-size: 11px;
-      background: $bg;
-      color: $t;
-      border: 1px solid $b;
-      border-radius: 3px;
-      outline: none;
-      &:focus {
-        border-color: $ac;
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: $bg-hover;
+    }
+
+    tr.is-disabled {
+      opacity: 0.5;
+    }
+
+    .col-checkbox {
+      width: 36px;
+      text-align: center;
+
+      input[type='checkbox'] {
+        accent-color: $ac;
+        cursor: pointer;
+        width: 14px;
+        height: 14px;
+        margin: 0;
       }
     }
-    input[type='checkbox'] {
-      accent-color: $ac;
+
+    .col-key {
+      width: 40%;
+      min-width: 160px;
     }
+
+    .col-val {
+      width: 54%;
+      min-width: 200px;
+    }
+
+    .col-actions {
+      width: 38px;
+      text-align: center;
+    }
+
+    input[type='text'] {
+      width: 100%;
+      box-sizing: border-box;
+      height: 28px;
+      padding: 0 8px;
+      font-size: 11.5px;
+      font-family: var(--jse-font-family-mono, monospace);
+      background: $bg-input;
+      color: $t-bright;
+      border: 1px solid $b-input;
+      border-radius: 4px;
+      outline: none;
+      transition: border-color 0.12s, box-shadow 0.12s;
+
+      &:focus {
+        border-color: $ac;
+        box-shadow: 0 0 0 2px var(--theme-ac-subtle, rgba(0, 120, 212, 0.15));
+      }
+
+      &::placeholder {
+        color: $t-muted;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        opacity: 0.65;
+      }
+    }
+  }
+
+  .req-table-footer {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    background: $bg-panel;
+    border-top: 1px solid $b-subtle;
+  }
+
+  .req-add-row-inline {
+    background: none;
+    border: none;
+    font-size: 11px;
+    font-weight: 500;
+    color: $ac;
+    cursor: pointer;
+    padding: 2px 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: opacity 0.12s;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  .req-row-del-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: $t-muted;
+    cursor: pointer;
+    transition: all 0.12s ease;
+
+    &:hover {
+      color: #ef4444;
+      background: rgba(239, 68, 68, 0.12);
+      transform: scale(1.05);
+    }
+  }
+
+  .req-empty-card {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-align: center;
+    background: $bg-card;
+
+    .empty-icon {
+      font-size: 24px;
+      opacity: 0.8;
+    }
+
+    .empty-text {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+
+      strong {
+        font-size: 12px;
+        color: $t-bright;
+      }
+
+      small {
+        font-size: 11px;
+        color: $t-muted;
+
+        code {
+          background: $bg-hover;
+          padding: 1px 4px;
+          border-radius: 3px;
+          color: $ac;
+        }
+      }
+    }
+  }
+
+  /* Body Tab */
+  .req-body-type-selector {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .body-type-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: $t-muted;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .body-segmented-control {
+    display: flex;
+    align-items: center;
+    background: $bg-panel;
+    border: 1px solid $b-subtle;
+    border-radius: 6px;
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .seg-btn {
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: $t-muted;
+    cursor: pointer;
+    transition: all 0.12s ease;
+
+    &:hover {
+      color: $t-bright;
+    }
+
+    &.active {
+      background: $bg-card;
+      color: $ac;
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    }
+  }
+
+  .body-ignored-badge {
+    font-size: 10.5px;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .req-tool-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 5px;
+    border: 1px solid $b-main;
+    background: $bg-card;
+    color: $t-bright;
+    cursor: pointer;
+    transition: all 0.12s ease;
+
+    &:hover:not(:disabled) {
+      background: $bg-hover;
+      border-color: $ac;
+      color: $ac;
+    }
+
+    &:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    &.primary {
+      background: var(--theme-ac-subtle, rgba(0, 120, 212, 0.12));
+      color: $ac;
+      border-color: $ac;
+
+      &:hover:not(:disabled) {
+        background: $ac;
+        color: #ffffff;
+      }
+    }
+  }
+
+  .req-code-editor-box {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid $b-subtle;
+    background: $bg-editor;
+  }
+
+  .code-editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: $bg-panel;
+    border-bottom: 1px solid $b-subtle;
+    font-size: 11px;
+  }
+
+  .code-header-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: 600;
+    color: $t-bright;
+
+    .json-icon {
+      color: $ac;
+      font-weight: bold;
+      font-size: 11px;
+    }
+  }
+
+  .code-header-hint {
+    font-size: 10px;
+    color: $t-muted;
+
+    code {
+      background: $bg-hover;
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: $ac;
+    }
+  }
+
+  .req-code-textarea {
+    width: 100%;
+    min-height: 140px;
+    max-height: 380px;
+    padding: 10px 12px;
+    font-family: var(--jse-font-family-mono, monospace);
+    font-size: 12px;
+    line-height: 1.5;
+    background: $bg-input;
+    color: $t-bright;
+    border: none;
+    outline: none;
+    resize: vertical;
+    box-sizing: border-box;
+
+    &:focus {
+      background: $bg-card;
+    }
+  }
+
+  .code-editor-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: $bg-panel;
+    border-top: 1px solid $b-subtle;
+    font-size: 11px;
+  }
+
+  .payload-status {
+    font-size: 11px;
+
+    &.valid {
+      color: #10b981;
+      font-weight: 500;
+    }
+
+    &.invalid {
+      color: #ef4444;
+      font-weight: 500;
+    }
+
+    &.empty {
+      color: $t-muted;
+    }
+
+    &.text {
+      color: $t-muted;
+    }
+  }
+
+  /* Auth Tab */
+  .req-auth-card-body {
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: $bg-card;
+  }
+
+  .req-auth-intro {
+    font-size: 11.5px;
+    color: $t-muted;
+    margin: 0;
+  }
+
+  .req-auth-empty-note {
+    font-size: 11.5px;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    padding: 8px 12px;
+    border-radius: 5px;
+  }
+
+  /* Environment Tab */
+  .req-env-selector-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .env-selector-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: $t-muted;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .env-select-wrap {
+    display: inline-flex;
+  }
+
+  .env-main-select {
+    min-width: 140px;
+    height: 26px;
+    font-size: 11.5px;
+    font-weight: 500;
   }
   .req-row {
     display: flex;
@@ -8052,16 +9194,16 @@
     }
   }
   .req-response-body {
-    margin: 6px 0 2px 0;
-    max-height: 160px;
+    margin: 4px 0 2px 0;
+    max-height: 90px;
     overflow: auto;
-    padding: 8px;
+    padding: 4px 6px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid $b;
     border-radius: 4px;
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
     font-size: 11px;
-    line-height: 1.5;
+    line-height: 1.4;
     white-space: pre-wrap;
     word-break: break-all;
   }

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { createDefaultFlowGraph, executeJsSandbox, migrateChainToFlowGraph } from './flowTypes.js'
+import {
+  createDefaultFlowGraph,
+  createAdvancedFlowGraph,
+  executeJsSandbox,
+  migrateChainToFlowGraph
+} from './flowTypes.js'
 
 describe('executeJsSandbox', () => {
   it('reads and writes environment variables using pm.environment', () => {
@@ -38,7 +43,7 @@ describe('executeJsSandbox', () => {
     const result = executeJsSandbox(code, initialEnv)
     expect(result.success).toBe(false)
     expect(result.error).toBeTruthy()
-    expect(result.logs.some((l) => l.includes('[ERRO]'))).toBe(true)
+    expect(result.logs.some((l) => l.includes('[ERROR]'))).toBe(true)
   })
 })
 
@@ -86,6 +91,60 @@ describe('createDefaultFlowGraph', () => {
     const catchNode = graph.nodes.find((n) => n.type === 'event-catch')
     expect(throwNode?.eventData?.eventName).toBe('valida total')
     expect(catchNode?.eventData?.eventName).toBe('valida total')
+  })
+})
+
+describe('createAdvancedFlowGraph', () => {
+  it('returns an advanced Rick & Morty workflow with router, transform, multi-port connectors, and branch jumps', () => {
+    const graph = createAdvancedFlowGraph()
+    expect(graph.nodes.length).toBe(14)
+    expect(graph.nodes.some((n) => n.type === 'start')).toBe(true)
+    expect(graph.nodes.some((n) => n.type === 'rest')).toBe(true)
+    expect(graph.nodes.some((n) => n.type === 'router')).toBe(true)
+    expect(graph.nodes.some((n) => n.type === 'transform')).toBe(true)
+    expect(graph.nodes.some((n) => n.type === 'js')).toBe(true)
+    expect(graph.nodes.some((n) => n.type === 'event-throw')).toBe(true)
+    expect(graph.nodes.some((n) => n.type === 'event-catch')).toBe(true)
+    expect(graph.nodes.some((n) => n.type === 'terminate')).toBe(true)
+
+    // Router node validation
+    const routerNode = graph.nodes.find((n) => n.type === 'router')
+    expect(routerNode?.routerData?.ports.length).toBe(3)
+    expect(routerNode?.routerData?.ports.map((p) => p.id)).toEqual(['port_alive', 'port_dead', 'port_unknown'])
+    expect(routerNode?.routerData?.rules.length).toBe(3)
+    expect(routerNode?.routerData?.rules[0].operator).toBe('==')
+    expect(routerNode?.routerData?.rules[0].value).toBe('Alive')
+
+    // Transform node validation
+    const transformNode = graph.nodes.find((n) => n.type === 'transform')
+    expect(transformNode?.transformData?.mappings.length).toBe(3)
+    expect(transformNode?.transformData?.saveToEnvVar).toBe('heroProfile')
+
+    // Chained URLs: later REST blocks use values captured by earlier blocks
+    const fetchChar = graph.nodes.find((n) => n.id === 'node_fetch_char')
+    expect(fetchChar?.restData?.captures?.map((c) => c.name)).toEqual(
+      expect.arrayContaining(['originUrl', 'firstEpisodeUrl'])
+    )
+    expect(graph.nodes.find((n) => n.id === 'node_fetch_origin')?.restData?.url).toBe('{{originUrl}}')
+    expect(graph.nodes.find((n) => n.id === 'node_fetch_episode')?.restData?.url).toBe(
+      '{{firstEpisodeUrl}}'
+    )
+
+    // fromPort multi-port connections validation
+    const aliveConn = graph.connections.find((c) => c.fromPort === 'port_alive')
+    const deadConn = graph.connections.find((c) => c.fromPort === 'port_dead')
+    const unkConn = graph.connections.find((c) => c.fromPort === 'port_unknown')
+    expect(aliveConn?.toId).toBe('node_transform_alive')
+    expect(deadConn?.toId).toBe('node_fetch_episode')
+    expect(unkConn?.toId).toBe('node_js_unknown')
+
+    // Event jump & receiver validation
+    const jumps = graph.nodes.filter((n) => n.type === 'event-throw')
+    expect(jumps.length).toBe(3)
+    expect(jumps.every((j) => j.eventData?.eventName === 'finish_telemetry')).toBe(true)
+
+    const receiver = graph.nodes.find((n) => n.type === 'event-catch')
+    expect(receiver?.eventData?.eventName).toBe('finish_telemetry')
   })
 })
 

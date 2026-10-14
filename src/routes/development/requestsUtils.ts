@@ -885,7 +885,7 @@ export function buildCurlCommand(options: BuildCurlOptions): string {
   const headerList: Array<{ key: string; value: string }> = []
   if (Array.isArray(options.headers)) {
     for (const h of options.headers) {
-      if (h.enabled && h.key.trim()) {
+      if ((h.enabled ?? true) && h.key.trim()) {
         headerList.push({ key: h.key.trim(), value: h.value })
       }
     }
@@ -923,6 +923,16 @@ export function buildCurlCommand(options: BuildCurlOptions): string {
           headerList.push({ key: k, value: v })
         }
       }
+    }
+  }
+
+  // Ensure Content-Type is included if request has a body and not already specified
+  if (options.body && options.bodyType !== 'none' && !['GET', 'HEAD'].includes(method)) {
+    if (!headerList.some((h) => h.key.toLowerCase() === 'content-type')) {
+      headerList.push({
+        key: 'Content-Type',
+        value: options.bodyType === 'text' ? 'text/plain' : 'application/json'
+      })
     }
   }
 

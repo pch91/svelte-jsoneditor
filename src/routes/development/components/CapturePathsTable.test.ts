@@ -23,11 +23,11 @@ describe('CapturePathsTable', () => {
     })
 
     expect(getByText(target, 'Response Captures (Capture Paths)')).toBeTruthy()
-    expect(getByText(target, 'Caminho no JSON (JSON Path)')).toBeTruthy()
+    expect(getByText(target, 'JSON Path')).toBeTruthy()
     expect(getByText(target, 'Environment Variable')).toBeTruthy()
   })
 
-  it('runs live extraction against sample JSON when clicking Testar na Resposta', async () => {
+  it('runs live extraction against sample JSON when clicking Test on Response', async () => {
     const target = document.createElement('div')
     document.body.appendChild(target)
 

@@ -32,15 +32,16 @@ export default function createColumnContextMenuItems({
         {
           type: 'column',
           items: [
-            { type: 'label', text: 'Visualização JSON:' },
+            { type: 'label', text: 'JSON View:' },
             {
               type: 'button',
               icon: isExpanded ? faCompress : faExpand,
-              text: isExpanded ? 'Recolher sub-colunas' : 'Expandir sub-colunas JSON',
+              text: isExpanded ? 'Collapse sub-columns' : 'Expand JSON sub-columns',
               title: isExpanded
-                ? 'Recolher sub-colunas de volta para a coluna original'
-                : 'Expandir objetos ou arrays desta coluna em sub-colunas para comparar na tabela',
-              onClick: () => onToggleExpand(parentPath ?? columnPath)
+                ? 'Collapse sub-columns back to original column'
+                : 'Expand objects or arrays in this column into sub-columns to compare in table',
+              onClick: () =>
+                onToggleExpand(isExpandable ? columnPath : (parentPath ?? columnPath))
             }
           ]
         }
@@ -65,12 +66,12 @@ export default function createColumnContextMenuItems({
         {
           type: 'column',
           items: [
-            { type: 'label', text: 'Ordenar:' },
+            { type: 'label', text: 'Sort:' },
             {
               type: 'button',
               icon: faCaretUp,
-              text: 'Ordenar crescente',
-              title: 'Ordenar valores em ordem crescente (A-Z / 0-9)',
+              text: 'Sort ascending',
+              title: 'Sort values in ascending order (A-Z / 0-9)',
               disabled: isSortedAsc,
               onClick: () =>
                 onSort({
@@ -81,8 +82,8 @@ export default function createColumnContextMenuItems({
             {
               type: 'button',
               icon: faCaretDown,
-              text: 'Ordenar decrescente',
-              title: 'Ordenar valores em ordem decrescente (Z-A / 9-0)',
+              text: 'Sort descending',
+              title: 'Sort values in descending order (Z-A / 9-0)',
               disabled: isSortedDesc,
               onClick: () =>
                 onSort({

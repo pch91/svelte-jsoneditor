@@ -474,6 +474,34 @@ describe('buildCurlCommand', () => {
     expect(curl).toContain('--data \'{"username":"john"}\'')
   })
 
+  it('automatically adds Content-Type when request has a body and Content-Type is missing', () => {
+    const curl = buildCurlCommand({
+      method: 'POST',
+      url: 'https://api.example.com/data',
+      headers: [{ key: 'X-Custom', value: '123', enabled: true }],
+      body: '{"foo":"bar"}',
+      bodyType: 'json'
+    })
+
+    expect(curl).toContain("--header 'X-Custom: 123'")
+    expect(curl).toContain("--header 'Content-Type: application/json'")
+    expect(curl).toContain('--data \'{"foo":"bar"}\'')
+  })
+
+  it('preserves headers when enabled property is omitted', () => {
+    const curl = buildCurlCommand({
+      method: 'GET',
+      url: 'https://api.example.com/test',
+      headers: [
+        { key: 'Accept', value: 'application/json' } as any,
+        { key: 'User-Agent', value: 'MyApp/1.0' } as any
+      ]
+    })
+
+    expect(curl).toContain("--header 'Accept: application/json'")
+    expect(curl).toContain("--header 'User-Agent: MyApp/1.0'")
+  })
+
   it('round-trips through buildCurlCommand and parseCurlCommand', () => {
     const original = {
       method: 'POST',

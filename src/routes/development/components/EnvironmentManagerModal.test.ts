@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, tick } from 'svelte'
 import { fireEvent, getByText, queryByText } from '@testing-library/svelte'
 
@@ -94,7 +94,7 @@ describe('EnvironmentManagerModal', () => {
     expect(inputs.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('calls onOpenInEditor when clicking Abrir no Editor JSON', async () => {
+  it('calls onOpenInEditor when clicking Open in JSON Editor', async () => {
     const target = document.createElement('div')
     document.body.appendChild(target)
 
@@ -110,7 +110,7 @@ describe('EnvironmentManagerModal', () => {
       }
     })
 
-    const editorBtn = getByText(target, '↗ Abrir no Editor JSON')
+    const editorBtn = getByText(target, '↗ Open in JSON Editor')
     await fireEvent.click(editorBtn)
     expect(onOpenInEditor).toHaveBeenCalledWith('globals.json', expect.stringContaining('testVar'))
   })

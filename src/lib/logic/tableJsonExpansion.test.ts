@@ -3,8 +3,10 @@ import type { JSONPatchReplace } from 'immutable-json-patch'
 import {
   buildVisualColumns,
   buildVisualRows,
+  collectExpandableDescendantPaths,
   createVisualCellPatch,
   getRowSortValue,
+  getVisualCellPath,
   getVisualCellValue,
   isColumnExpandable,
   sortJsonWithExpansion,
@@ -450,6 +452,108 @@ describe('tableJsonExpansion', () => {
 
       // Carla (empty orders) remains at the end
       expect(sorted[7].name).toBe('Carla Ferreira')
+    })
+  })
+
+  describe('multi-level expansion and recursive collapse', () => {
+    const deepData = [
+      {
+        id: 1,
+        root: {
+          level2: {
+            level3: {
+              level4: {
+                level5: 'leaf_value'
+              }
+            }
+          }
+        }
+      }
+    ]
+
+    test('collectExpandableDescendantPaths expands up to 4 levels by default for top-level column', () => {
+      // Top-level column has length 1. maxLevels = 4 expands levels 1, 2, 3, 4.
+      const expanded = collectExpandableDescendantPaths(deepData, ['root'], 4)
+      expect(expanded['/root']).toBe(true)
+      expect(expanded['/root/level2']).toBe(true)
+      expect(expanded['/root/level2/level3']).toBe(true)
+      expect(expanded['/root/level2/level3/level4']).toBe(true)
+      // Level 5 is string 'leaf_value', so it's not expandable anyway
+    })
+
+    test('deep structures with > 4 levels stop at 4th level, and deeper levels expand one by one', () => {
+      const veryDeepData = [
+        {
+          id: 1,
+          root: {
+            l2: {
+              l3: {
+                l4: {
+                  l5: {
+                    l6: 'deepest'
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+
+      // Expanding root (length 1) with 4 levels expands root, l2, l3, l4.
+      const initialExpanded = collectExpandableDescendantPaths(veryDeepData, ['root'], 4)
+      expect(initialExpanded['/root']).toBe(true)
+      expect(initialExpanded['/root/l2']).toBe(true)
+      expect(initialExpanded['/root/l2/l3']).toBe(true)
+      expect(initialExpanded['/root/l2/l3/l4']).toBe(true)
+      // /root/l2/l3/l4/l5 should NOT be expanded automatically
+      expect(initialExpanded['/root/l2/l3/l4/l5']).toBeUndefined()
+
+      // Visual columns should contain l5 with isExpandable = true
+      const vCols = buildVisualColumns([['id'], ['root']], initialExpanded, veryDeepData)
+      const l5Col = vCols.find((c) => c.displayName === 'l5')
+      expect(l5Col).toBeDefined()
+      expect(l5Col?.isExpandable).toBe(true)
+
+      // Expanding l5 (depth >= 4) expands 1 level further ("um por um")
+      const l5Path = ['root', 'l2', 'l3', 'l4', 'l5']
+      const maxLevelsForL5 = l5Path.length < 4 ? 4 - l5Path.length + 1 : 1
+      expect(maxLevelsForL5).toBe(1)
+
+      const expandedL5 = collectExpandableDescendantPaths(veryDeepData, l5Path, maxLevelsForL5)
+      expect(expandedL5['/root/l2/l3/l4/l5']).toBe(true)
+      expect(expandedL5['/root/l2/l3/l4/l5/l6']).toBeUndefined()
+
+      const allExpanded = { ...initialExpanded, ...expandedL5 }
+      const vColsAfter = buildVisualColumns([['id'], ['root']], allExpanded, veryDeepData)
+      const l6Col = vColsAfter.find((c) => c.displayName === 'l6')
+      expect(l6Col).toBeDefined()
+      expect(l6Col?.isExpandable).toBe(false)
+      expect(getVisualCellValue(veryDeepData, { originalRowIndex: 0, subRowIndex: 0, isSubRow: false, subRowTotal: 1 }, l6Col!)).toBe('deepest')
+    })
+
+    test('collapsing a column removes all its descendants', () => {
+      const expandedColumns: Record<string, boolean> = {
+        '/root': true,
+        '/root/l2': true,
+        '/root/l2/l3': true,
+        '/other': true
+      }
+
+      // Simulate toggleExpandColumn collapse logic
+      const colKey: string = '/root'
+      const next = { ...expandedColumns }
+      delete next[colKey]
+      const prefix = colKey === '' ? '/' : colKey + '/'
+      for (const k of Object.keys(next)) {
+        if (k.startsWith(prefix)) {
+          delete next[k]
+        }
+      }
+
+      expect(next['/root']).toBeUndefined()
+      expect(next['/root/l2']).toBeUndefined()
+      expect(next['/root/l2/l3']).toBeUndefined()
+      expect(next['/other']).toBe(true)
     })
   })
 })

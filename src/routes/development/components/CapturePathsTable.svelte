@@ -60,7 +60,8 @@
           title="Test paths against the last response received"
           on:click={testCaptures}
         >
-          ⚡ Test on Response
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Test on Response
         </button>
       {/if}
       <button
@@ -69,26 +70,31 @@
         title="Add new capture rule"
         on:click={addRow}
       >
-        ＋ Add Rule
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        Add Rule
       </button>
     </div>
   </div>
 
   {#if captures.length === 0}
     <div class="captures-empty">
-      <p>
-        No captures configured. Extract values from the JSON response into environment variables
-        (ex: <code>data.token</code> → <code>token</code>).
+      <span class="empty-icon">🎯</span>
+      <p class="empty-text">
+        No capture rules defined. Extract values from the JSON response into environment variables
+        (e.g. <code>data.token</code> → <code>authToken</code>).
       </p>
-      <button type="button" class="cap-btn-link" on:click={addRow}>＋ Add first capture</button>
+      <button type="button" class="cap-btn cap-btn-add" on:click={addRow}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        Add First Rule
+      </button>
     </div>
   {:else}
     <div class="captures-table-wrapper">
       <table class="captures-table">
         <thead>
           <tr>
-            <th class="col-check" title="Ativar/desativar">✓</th>
-            <th class="col-path">Caminho no JSON (JSON Path)</th>
+            <th class="col-check" title="Enable/disable">✓</th>
+            <th class="col-path">JSON Path</th>
             <th class="col-arrow"></th>
             <th class="col-var">Environment Variable</th>
             <th class="col-preview">Preview / Test</th>
@@ -99,18 +105,24 @@
           {#each captures as rule, idx (idx)}
             <tr>
               <td class="col-check">
-                <input type="checkbox" title="Habilitar esta regra" bind:checked={rule.enabled} />
+                <input type="checkbox" title="Enable this rule" bind:checked={rule.enabled} />
               </td>
               <td class="col-path">
                 <input
                   type="text"
-                  placeholder="ex: data.token ou id ou items[0].name"
+                  placeholder="e.g. data.token or id or items[0].name"
                   bind:value={rule.path}
+                  spellcheck="false"
                 />
               </td>
               <td class="col-arrow">→</td>
               <td class="col-var">
-                <input type="text" placeholder="ex: authToken ou charId" bind:value={rule.name} />
+                <input
+                  type="text"
+                  placeholder="e.g. authToken or charId"
+                  bind:value={rule.name}
+                  spellcheck="false"
+                />
               </td>
               <td class="col-preview">
                 {#if testResults[idx]}
@@ -128,10 +140,29 @@
               <td class="col-actions">
                 <button
                   type="button"
-                  class="cap-del-btn"
+                  class="req-delete-btn cap-del-btn"
                   title="Remove rule"
-                  on:click={() => removeRow(idx)}>×</button
+                  on:click={() => removeRow(idx)}
                 >
+                  <svg
+                    class="req-del-icon"
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 6h18" />
+                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                    <line x1="10" y1="11" x2="10" y2="17" />
+                    <line x1="14" y1="11" x2="14" y2="17" />
+                  </svg>
+                </button>
               </td>
             </tr>
           {/each}
@@ -143,13 +174,15 @@
 
 <style lang="scss">
   .captures-container {
+    width: 100%;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
     background: var(--theme-bg-card, #252526);
-    border: 1px solid var(--theme-b-main, rgba(255, 255, 255, 0.1));
+    border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.1));
     border-radius: 8px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     font-size: 12px;
     box-shadow: var(--theme-shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.08));
     transition:
@@ -170,6 +203,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
   }
 
   .captures-title {
@@ -184,12 +219,13 @@
   }
 
   .captures-badge {
-    background: var(--theme-bg-hover, rgba(255, 255, 255, 0.1));
-    color: var(--theme-t-muted, #94a3b8);
+    background: var(--theme-ac-subtle, rgba(0, 120, 212, 0.12));
+    color: var(--theme-ac, #0078d4);
     border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
-    padding: 1px 6px;
+    padding: 1px 7px;
     border-radius: 10px;
     font-size: 10px;
+    font-weight: 600;
   }
 
   .captures-actions {
@@ -201,8 +237,8 @@
   .cap-btn {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    height: 24px;
+    gap: 5px;
+    height: 26px;
     padding: 0 10px;
     font-size: 11px;
     font-weight: 500;
@@ -210,27 +246,31 @@
     border: 1px solid transparent;
     cursor: pointer;
     transition: all 0.12s ease;
+
+    svg {
+      flex-shrink: 0;
+    }
   }
 
   .cap-btn-test {
-    background: rgba(16, 185, 129, 0.14);
+    background: rgba(16, 185, 129, 0.12);
     color: #10b981;
-    border-color: rgba(16, 185, 129, 0.35);
+    border: 1px solid rgba(16, 185, 129, 0.3);
 
     &:hover {
-      background: rgba(16, 185, 129, 0.24);
+      background: rgba(16, 185, 129, 0.22);
       border-color: #10b981;
     }
   }
 
   :global(.jse-theme-default) .cap-btn-test,
   :global(.jse-theme-light) .cap-btn-test {
-    background: rgba(16, 185, 129, 0.12);
+    background: rgba(16, 185, 129, 0.1);
     color: #047857;
-    border-color: rgba(16, 185, 129, 0.4);
+    border-color: rgba(16, 185, 129, 0.35);
 
     &:hover {
-      background: rgba(16, 185, 129, 0.22);
+      background: rgba(16, 185, 129, 0.2);
       border-color: #047857;
       color: #065f46;
     }
@@ -239,54 +279,60 @@
   .cap-btn-add {
     background: var(--theme-ac, #0078d4);
     color: #ffffff;
-    border-color: transparent;
+    border: 1px solid transparent;
 
     &:hover {
       background: var(--theme-ac-hover, #0067b8);
+      box-shadow: 0 2px 6px rgba(0, 120, 212, 0.25);
     }
   }
 
   :global(.jse-theme-dark) .cap-btn-add {
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
-    border-color: rgba(59, 130, 246, 0.4);
+    background: rgba(59, 130, 246, 0.25);
+    color: #93c5fd;
+    border-color: rgba(59, 130, 246, 0.45);
 
     &:hover {
-      background: rgba(59, 130, 246, 0.3);
-      border-color: #60a5fa;
+      background: rgba(59, 130, 246, 0.38);
+      border-color: #93c5fd;
+      color: #ffffff;
     }
   }
 
   .captures-empty {
-    padding: 14px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 24px 16px;
     text-align: center;
     color: var(--theme-t-muted, #94a3b8);
-    font-size: 11px;
+    font-size: 12px;
     background: var(--theme-bg-panel, rgba(0, 0, 0, 0.04));
     border-radius: 6px;
-    border: 1px dashed var(--theme-b-main, #cbd5e1);
+    border: 1px dashed var(--theme-b-subtle, #cbd5e1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+
+    .empty-icon {
+      font-size: 24px;
+      opacity: 0.8;
+    }
+
+    .empty-text {
+      margin: 0;
+      max-width: 440px;
+      line-height: 1.5;
+    }
 
     code {
       background: var(--theme-bg-hover, rgba(0, 0, 0, 0.06));
       border: 1px solid var(--theme-b-subtle, transparent);
-      padding: 2px 5px;
+      padding: 1px 5px;
       border-radius: 3px;
-      color: var(--theme-accent-text, #0078d4);
+      color: var(--theme-ac, #0078d4);
       font-family: Consolas, monospace;
-    }
-  }
-
-  .cap-btn-link {
-    margin-top: 6px;
-    background: none;
-    border: none;
-    color: var(--theme-ac, #0078d4);
-    cursor: pointer;
-    font-size: 11px;
-    text-decoration: underline;
-
-    &:hover {
-      color: var(--theme-ac-hover, #0067b8);
+      font-size: 11px;
     }
   }
 
@@ -296,6 +342,7 @@
 
   .captures-table {
     width: 100%;
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 11px;
 
@@ -312,6 +359,14 @@
 
     td {
       padding: 4px 4px;
+      vertical-align: middle;
+    }
+
+    tbody tr {
+      transition: background-color 0.1s ease;
+      &:hover {
+        background: var(--theme-bg-hover, rgba(255, 255, 255, 0.03));
+      }
     }
   }
 
@@ -322,13 +377,21 @@
   }
 
   .col-check {
-    width: 28px;
+    width: 36px;
     text-align: center;
 
     input {
       accent-color: var(--theme-ac, #0078d4);
       cursor: pointer;
+      width: 14px;
+      height: 14px;
+      margin: 0;
     }
+  }
+
+  .col-path {
+    width: 40%;
+    min-width: 160px;
   }
 
   .col-path input,
@@ -344,6 +407,7 @@
     border-radius: 4px;
     outline: none;
     transition: all 0.12s ease;
+    box-sizing: border-box;
 
     &:focus {
       border-color: var(--theme-ac, #0078d4);
@@ -357,14 +421,21 @@
   }
 
   .col-arrow {
-    width: 20px;
+    width: 26px;
     text-align: center;
     color: var(--theme-t-muted, #64748b);
     font-weight: bold;
+    user-select: none;
+  }
+
+  .col-var {
+    width: 34%;
+    min-width: 150px;
   }
 
   .col-preview {
-    min-width: 120px;
+    width: 22%;
+    min-width: 110px;
     padding: 0 6px;
   }
 
@@ -409,24 +480,57 @@
   }
 
   .col-actions {
-    width: 28px;
-    text-align: right;
+    width: 38px;
+    text-align: center;
   }
 
   .cap-del-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid transparent;
     background: transparent;
-    border: none;
     color: var(--theme-t-muted, #94a3b8);
-    font-size: 14px;
+    border-radius: 5px;
     cursor: pointer;
-    padding: 3px 6px;
-    border-radius: 4px;
     line-height: 1;
-    transition: all 0.12s ease;
+    transition: all 0.14s ease;
+
+    .req-del-icon {
+      width: 13px;
+      height: 13px;
+      display: block;
+      pointer-events: none;
+      transition: transform 0.12s ease;
+    }
 
     &:hover {
       background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.35);
       color: #ef4444;
+      transform: scale(1.05);
+
+      .req-del-icon {
+        transform: scale(1.08);
+      }
+    }
+
+    &:active {
+      transform: scale(0.95);
+      background: rgba(239, 68, 68, 0.25);
+    }
+  }
+
+  :global(.jse-theme-default) .cap-del-btn,
+  :global(.jse-theme-light) .cap-del-btn {
+    color: #64748b;
+    &:hover {
+      background: #fee2e2;
+      border-color: #fca5a5;
+      color: #dc2626;
     }
   }
 </style>
