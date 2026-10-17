@@ -1,0 +1,20 @@
+{
+  "name": "JSON Editor & Spatial Flow Studio",
+  "short_name": "JSON Studio",
+  "description": "Editor JSON profissional e estúdio de fluxos espaciais 100% offline-first com colaboração P2P em tempo real.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1e1e2e",
+  "theme_color": "#2563eb",
+  "categories": ["utilities", "developer tools", "productivity"],
+  "icons": [
+    {
+      "src": "favicon.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

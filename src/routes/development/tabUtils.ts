@@ -68,6 +68,8 @@ export interface PrimaryTabState {
   flowGroups?: WorkspaceFlowGroup[]
   spatialFlows?: WorkspaceSpatialFlow[]
   activeSpatialFlowId?: string
+  p2pGroupId?: string
+  p2pGroupName?: string
 }
 
 export function createDefaultFlowGroup(id = 'group-1', name = 'General'): WorkspaceFlowGroup {

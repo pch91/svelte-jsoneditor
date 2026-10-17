@@ -45,6 +45,8 @@ export interface StoredPrimaryTab {
   flowGroups?: WorkspaceFlowGroup[]
   spatialFlows?: WorkspaceSpatialFlow[]
   activeSpatialFlowId?: string
+  p2pGroupId?: string
+  p2pGroupName?: string
 }
 
 export interface StoredWorkspace {

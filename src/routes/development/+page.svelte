@@ -40,7 +40,7 @@
     type JSONPath
   } from 'immutable-json-patch'
   import { loadWorkspace, saveWorkspace } from './workspaceStorage.js'
-  import type { StoredWorkspace } from './workspaceStorage.js'
+  import type { StoredWorkspace, StoredWorkspaceTab } from './workspaceStorage.js'
   import {
     WORKSPACE_FILE_EXT,
     parseWorkspaceFile,
@@ -58,6 +58,9 @@
   import SidebarResizablePanels from './components/SidebarResizablePanels.svelte'
   import WorkspaceTree from './components/WorkspaceTree.svelte'
   import SaveFlowModal from './components/SaveFlowModal.svelte'
+  import P2PCollaborationModal from './components/P2PCollaborationModal.svelte'
+  import { getYjsWorkspace, type GroupInfo, type P2PWorkspaceState } from './p2p/yjsWorkspace.js'
+  import { extractOfferFromUrl } from './p2p/sdpToken.js'
   import { tabScrollStrip } from './tabScrollAction.js'
   import {
     type FlowGraph,
@@ -510,6 +513,69 @@
   const globalEnvironment = useLocalStorage('svelte-jsoneditor-demo-global-env', {})
   let envManagerOpen = false
   let settingsPopoverOpen = false
+
+  // ---- P2P Real-Time Collaboration & Group Management ----
+  const p2pWorkspace = getYjsWorkspace()
+  let p2pModalOpen = false
+  let p2pPrefillOffer = ''
+  let p2pGroupInfo: GroupInfo | null = null
+  let p2pState: P2PWorkspaceState = {
+    status: 'offline',
+    peerCount: 0,
+    peers: [],
+    presences: [],
+    persistedLocally: false,
+    autoSync: true,
+    group: null
+  }
+
+  function handleUpdatePrimaryTabP2P(
+    tabId: number,
+    patch: { p2pGroupId?: string; p2pGroupName?: string }
+  ) {
+    const idx = primaryTabs.findIndex((p) => p.id === tabId)
+    if (idx >= 0) {
+      primaryTabs[idx] = {
+        ...primaryTabs[idx],
+        ...patch
+      }
+      primaryTabs = [...primaryTabs]
+      tabsRenderVersion++
+      scheduleAutosave()
+    }
+  }
+
+  function handleCreateFolderFromShare(
+    folderName: string,
+    groupId: string,
+    groupName: string
+  ): number {
+    const newId = nextPrimaryTabId++
+    const newSubTabId = nextTabId++
+    const title = folderName.trim() || `Pasta ${newId}`
+    const initialText = '{\n  "info": "Pasta sincronizada via P2P"\n}'
+
+    const idx = addDocWithId(newSubTabId, 'Documento 1', initialText, Mode.tree)
+    const { primary, initialSubTab } = createPrimaryTab(newId, title, newSubTabId)
+    subTabsMeta.set(newSubTabId, initialSubTab)
+    primary.p2pGroupId = groupId
+    primary.p2pGroupName = groupName
+
+    primaryTabs = [...primaryTabs, primary]
+    const existing = panePrimaryMap.get(activeLeafId) ?? []
+    panePrimaryMap.set(activeLeafId, [...existing, newId])
+    panePrimaryMap = new Map(panePrimaryMap)
+    paneActivePrimaryMap.set(activeLeafId, newId)
+    paneActivePrimaryMap = new Map(paneActivePrimaryMap)
+
+    activePrimaryTabId = newId
+    setActiveLeafTab(idx)
+    loadPrimaryRequestToForm(primary)
+    tabsRenderVersion++
+    scheduleAutosave()
+    showDiskSaveLabel(`Nova pasta P2P criada: "${title}"`)
+    return newId
+  }
 
   function handleUpdateTargetDocument(targetId: string | number, newContent: Content) {
     const idx = getTabIdx(Number(targetId))
@@ -1811,7 +1877,9 @@
       requestState: pt.requestState,
       flowGroups: pt.flowGroups,
       spatialFlows: pt.spatialFlows,
-      activeSpatialFlowId: pt.activeSpatialFlowId
+      activeSpatialFlowId: pt.activeSpatialFlowId,
+      p2pGroupId: pt.p2pGroupId,
+      p2pGroupName: pt.p2pGroupName
     })),
     activePrimaryTabId,
     panePrimaryMap: Object.fromEntries([...panePrimaryMap.entries()].map(([k, v]) => [k, v])),
@@ -1832,6 +1900,28 @@
     saveTimer = setTimeout(() => {
       void saveWorkspace(workspaceSnapshot).then(() => {
         saveStatus = 'saved'
+        if (p2pWorkspace.isAutoSyncEnabled() && p2pGroupInfo) {
+          p2pWorkspace.importWorkspaceSnapshot(workspaceSnapshot)
+        }
+        // Folder-scoped sync for each folder that has a P2P group:
+        for (const pt of primaryTabs) {
+          if (pt.p2pGroupId && p2pWorkspace.isFolderAutoSyncEnabled(pt.id)) {
+            const folderTabs: StoredWorkspaceTab[] = []
+            for (const sid of pt.subTabIds) {
+              const idx = getTabIdx(sid)
+              if (idx >= 0) {
+                folderTabs.push({
+                  id: sid,
+                  title: tabTitles[idx] || `Documento ${sid}`,
+                  text: getTabText(idx),
+                  mode: tabModes[idx] || 'tree',
+                  primaryTabId: pt.id
+                })
+              }
+            }
+            p2pWorkspace.syncLocalFolder(pt.id, pt as any, folderTabs)
+          }
+        }
         clearTimeout(savedFlashTimer)
         savedFlashTimer = setTimeout(() => (saveStatus = 'idle'), 2500)
       })
@@ -2419,6 +2509,76 @@
     // Sync the Env JSON textarea with the persisted active environment
     if ($activeEnvName) {
       envJsonText = JSON.stringify($environments[$activeEnvName] ?? {}, null, 2)
+    }
+
+    // P2P Collaboration Subscriptions
+    p2pWorkspace.subscribeStatus((state) => {
+      p2pState = state
+    })
+    p2pWorkspace.subscribeGroup((info) => {
+      p2pGroupInfo = info
+    })
+    p2pWorkspace.onKicked((reason) => {
+      alert(`⚠️ Notificação do Grupo P2P:\n\n${reason}`)
+    })
+    p2pWorkspace.subscribeRemoteChanges((remoteWs) => {
+      if (p2pWorkspace.isAutoSyncEnabled()) {
+        applyWorkspace(remoteWs)
+      }
+    })
+
+    // Isolated Folder Collaboration Subscription (Strict Level-1 Folder Isolation)
+    p2pWorkspace.subscribeRemoteFolderChanges((folderId, data) => {
+      const pIdx = primaryTabs.findIndex((p) => p.id === Number(folderId))
+      if (pIdx >= 0) {
+        for (const remoteTab of data.tabs) {
+          const tabIdx = getTabIdx(remoteTab.id)
+          if (tabIdx >= 0) {
+            tabContents[tabIdx] = { text: remoteTab.text, json: undefined }
+            tabTitles[tabIdx] = remoteTab.title
+            tabLastSavedText[tabIdx] = remoteTab.text
+            bumpRevision(tabIdx)
+          } else {
+            addDocWithId(remoteTab.id, remoteTab.title, remoteTab.text, Mode.tree)
+            subTabsMeta.set(remoteTab.id, {
+              id: remoteTab.id,
+              primaryTabId: Number(folderId),
+              title: remoteTab.title,
+              kind: 'custom'
+            })
+            if (!primaryTabs[pIdx].subTabIds.includes(remoteTab.id)) {
+              primaryTabs[pIdx].subTabIds.push(remoteTab.id)
+            }
+          }
+        }
+        if (data.primaryTab) {
+          if (data.primaryTab.title) primaryTabs[pIdx].title = data.primaryTab.title
+          if (data.primaryTab.spatialFlows)
+            primaryTabs[pIdx].spatialFlows = data.primaryTab.spatialFlows
+          if (data.primaryTab.flowGroups)
+            primaryTabs[pIdx].flowGroups = data.primaryTab.flowGroups
+        }
+        primaryTabs = [...primaryTabs]
+        tabContents = [...tabContents]
+        tabTitles = [...tabTitles]
+        tabsRenderVersion++
+        scheduleAutosave()
+      }
+    })
+
+    // URL fragment detection for P2P invite links (#p2p-offer=...)
+    if (typeof window !== 'undefined' && window.location.hash) {
+      const offer = extractOfferFromUrl(window.location.href)
+      if (offer) {
+        p2pPrefillOffer = offer
+        p2pModalOpen = true
+        history.replaceState(null, '', window.location.pathname + window.location.search)
+      }
+    }
+
+    // Register Service Worker for 100% offline PWA
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && import.meta.env.PROD) {
+      navigator.serviceWorker.register('./service-worker.js', { scope: './' }).catch(() => {})
     }
   })
 
@@ -3089,7 +3249,7 @@
       const name = responseName(method, resolvedUrl.resolved)
       const pathPart =
         resolvedUrl.resolved.split('?')[0].split('/').filter(Boolean).pop() || 'endpoint'
-      const displayTitle = `⚡ ${method} ${pathPart} [${res.status}]`
+      const displayTitle = `${method} ${pathPart} [${res.status}]`
 
       if (reqSendMode === 'same' && activePrimary.requestState.lastResponseTabId !== undefined) {
         const lastRespId = activePrimary.requestState.lastResponseTabId
@@ -4701,6 +4861,12 @@
                     ></span>
                     <span class="tab-l1-icon">📁</span>
                     <span class="tab-label">{pt.title}</span>
+                    {#if pt.p2pGroupId}
+                      <span
+                        class="tab-p2p-badge"
+                        title="Pasta compartilhada no grupo: {pt.p2pGroupName || 'P2P'}"
+                      >👥</span>
+                    {/if}
                     {#if pt.subTabIds.length > 1}
                       <span class="tab-count-badge" title="{pt.subTabIds.length} sub-tabs"
                         >{pt.subTabIds.length}</span
@@ -5075,6 +5241,35 @@
             </div>
 
             <div class="requests-header-right">
+              <!-- P2P Collaborative Group Button & Status Badge -->
+              <div class="p2p-collab-pill">
+                <button
+                  type="button"
+                  class="p2p-collab-btn"
+                  class:in-group={!!activePrimary?.p2pGroupId}
+                  class:paused={activePrimary?.id
+                    ? !p2pWorkspace.isFolderAutoSyncEnabled(activePrimary.id)
+                    : false}
+                  on:click={() => (p2pModalOpen = true)}
+                  title={activePrimary?.p2pGroupId
+                    ? `Pasta "${activePrimary.title}": Grupo ${activePrimary.p2pGroupName || 'Ativo'} - Sincronismo: ${p2pWorkspace.isFolderAutoSyncEnabled(activePrimary.id) ? 'Ativo' : 'Pausado'}`
+                    : `Colaboração P2P para a pasta "${activePrimary?.title || 'Ativa'}"`}
+                >
+                  <span class="p2p-pill-icon">👥</span>
+                  {#if activePrimary?.p2pGroupId}
+                    <span class="p2p-group-name">{activePrimary.p2pGroupName || 'Grupo'}</span>
+                    <span
+                      class="p2p-sync-status"
+                      class:active={p2pWorkspace.isFolderAutoSyncEnabled(activePrimary.id)}
+                    >
+                      {p2pWorkspace.isFolderAutoSyncEnabled(activePrimary.id) ? '🟢' : '⏸'}
+                    </span>
+                  {:else}
+                    <span class="p2p-collab-label">Colaborar P2P</span>
+                  {/if}
+                </button>
+              </div>
+
               <!-- Environment Manager Pill (Postman style) -->
               <div class="requests-env-pill">
                 <span class="req-env-icon" title="Environments">🌍</span>
@@ -6180,6 +6375,16 @@
     selectedGroupId={activeFlowObj?.groupId ?? ''}
     onSave={handleSaveFlowFromModal}
     onClose={() => (saveFlowModalOpen = false)}
+  />
+
+  <P2PCollaborationModal
+    bind:open={p2pModalOpen}
+    prefillOfferToken={p2pPrefillOffer}
+    primaryTabs={primaryTabs}
+    activePrimaryTabId={activePrimaryTabId}
+    onUpdatePrimaryTab={handleUpdatePrimaryTabP2P}
+    onCreateFolderFromShare={handleCreateFolderFromShare}
+    onClose={() => (p2pModalOpen = false)}
   />
 
   {#if tabMenu}
@@ -7525,6 +7730,59 @@
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+  .p2p-collab-pill {
+    display: flex;
+    align-items: center;
+  }
+  .p2p-collab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: $bg-card;
+    border: 1px solid $b-input;
+    border-radius: 4px;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: 600;
+    color: $t-bright;
+    cursor: pointer;
+    transition: all 0.15s ease;
+
+    &:hover {
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(59, 130, 246, 0.4);
+      color: #3b82f6;
+    }
+
+    &.in-group {
+      background: rgba(59, 130, 246, 0.14);
+      border-color: rgba(59, 130, 246, 0.4);
+      color: #60a5fa;
+    }
+
+    &.paused {
+      background: rgba(234, 179, 8, 0.14);
+      border-color: rgba(234, 179, 8, 0.4);
+      color: #facc15;
+    }
+  }
+  .p2p-pill-icon {
+    font-size: 13px;
+  }
+  .p2p-group-name {
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .p2p-member-count {
+    font-size: 10px;
+    opacity: 0.8;
+  }
+  .p2p-sync-status {
+    font-size: 10px;
+    margin-left: 2px;
   }
   .requests-env-pill {
     display: flex;

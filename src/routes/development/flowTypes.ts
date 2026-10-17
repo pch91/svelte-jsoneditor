@@ -148,7 +148,7 @@ export interface FlowNodeMergeData {
   status?: 'future'
 }
 
-export type FlowNodeExecutionStatus = 'idle' | 'waiting' | 'running' | 'success' | 'error'
+export type FlowNodeExecutionStatus = 'idle' | 'waiting' | 'running' | 'success' | 'error' | 'skipped'
 
 export interface FlowNodeExecutionHistoryEntry {
   id: string

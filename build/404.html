@@ -3,13 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <link rel="icon" href="/svelte-jsoneditor/favicon.png" />
+    <link rel="manifest" href="/svelte-jsoneditor/manifest.webmanifest" />
+    <meta name="theme-color" content="#2563eb" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <link href="/svelte-jsoneditor/_app/immutable/entry/start.BzaVPITd.js" rel="modulepreload">
-		<link href="/svelte-jsoneditor/_app/immutable/chunks/BgRTsykw.js" rel="modulepreload">
+    <link href="/svelte-jsoneditor/_app/immutable/entry/start._DqQTl8h.js" rel="modulepreload">
+		<link href="/svelte-jsoneditor/_app/immutable/chunks/asqfdSmR.js" rel="modulepreload">
 		<link href="/svelte-jsoneditor/_app/immutable/chunks/CImsVoTq.js" rel="modulepreload">
 		<link href="/svelte-jsoneditor/_app/immutable/chunks/DIiBblAC.js" rel="modulepreload">
-		<link href="/svelte-jsoneditor/_app/immutable/entry/app.DN5lPBr9.js" rel="modulepreload">
+		<link href="/svelte-jsoneditor/_app/immutable/entry/app.DNPsMq1i.js" rel="modulepreload">
 		<link href="/svelte-jsoneditor/_app/immutable/chunks/C8Qz27k1.js" rel="modulepreload">
 		<link href="/svelte-jsoneditor/_app/immutable/chunks/S-KyrcF8.js" rel="modulepreload">
 		
@@ -18,7 +22,7 @@
     <div id="svelte">
 			<script>
 				{
-					__sveltekit_1xq526u = {
+					__sveltekit_1hi5o9p = {
 						base: "/svelte-jsoneditor",
 						assets: "/svelte-jsoneditor"
 					};
@@ -26,11 +30,17 @@
 					const element = document.currentScript.parentElement;
 
 					Promise.all([
-						import("/svelte-jsoneditor/_app/immutable/entry/start.BzaVPITd.js"),
-						import("/svelte-jsoneditor/_app/immutable/entry/app.DN5lPBr9.js")
+						import("/svelte-jsoneditor/_app/immutable/entry/start._DqQTl8h.js"),
+						import("/svelte-jsoneditor/_app/immutable/entry/app.DNPsMq1i.js")
 					]).then(([kit, app]) => {
 						kit.start(app, element);
 					});
+
+					if ('serviceWorker' in navigator) {
+						addEventListener('load', function () {
+							navigator.serviceWorker.register('/svelte-jsoneditor/service-worker.js');
+						});
+					}
 				}
 			</script>
 		</div>

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
+  import { getYjsWorkspace, type UserPresence } from '../p2p/yjsWorkspace.js'
   import type {
     FlowGraph,
     FlowNode,
@@ -127,14 +128,22 @@
     }
   }
 
+  const p2pWorkspace = getYjsWorkspace()
+  let remotePresences: UserPresence[] = []
+  let unsubPresence: (() => void) | null = null
+
   onMount(() => {
     if (canvasEl) {
       canvasEl.addEventListener('wheel', handleCanvasWheel, { passive: false })
     }
+    unsubPresence = p2pWorkspace.subscribePresence((list) => {
+      remotePresences = list
+    })
     return () => {
       if (canvasEl) {
         canvasEl.removeEventListener('wheel', handleCanvasWheel)
       }
+      if (unsubPresence) unsubPresence()
     }
   })
 
@@ -325,6 +334,95 @@
     }
     return node.type === 'js' && (node.jsData?.ports?.length ?? 0) > 0
   }
+
+  function getLoopBodyNodes(loopNode: FlowNode): FlowNode[] {
+    if (!loopNode || loopNode.type !== 'loop') return []
+
+    // Outgoing connections from loopNode on 'item' port (or 'body', or not 'done')
+    const startConns = flowGraph.connections.filter(
+      (c) =>
+        c.fromId === loopNode.id &&
+        (c.fromPort === 'item' || c.fromPort === 'body' || (c.fromPort !== 'done' && !c.fromPort))
+    )
+    const startNodeIds = startConns.map((c) => c.toId)
+
+    // Nodes strictly connected from 'done'
+    const doneConns = flowGraph.connections.filter(
+      (c) => c.fromId === loopNode.id && c.fromPort === 'done'
+    )
+    const doneNodeIds = new Set<string>(doneConns.map((c) => c.toId))
+
+    const visited = new Set<string>()
+    const queue = [...startNodeIds]
+    const bodyNodes: FlowNode[] = []
+
+    while (queue.length > 0) {
+      const curId = queue.shift()!
+      if (curId === loopNode.id || visited.has(curId) || doneNodeIds.has(curId)) {
+        continue
+      }
+      visited.add(curId)
+      const targetNode = flowGraph.nodes.find((n) => n.id === curId)
+      if (targetNode) {
+        bodyNodes.push(targetNode)
+        const outConns = flowGraph.connections.filter((c) => c.fromId === curId)
+        for (const oc of outConns) {
+          if (oc.toId !== loopNode.id && !visited.has(oc.toId) && !doneNodeIds.has(oc.toId)) {
+            queue.push(oc.toId)
+          }
+        }
+      }
+    }
+
+    // Topological sort so execution order respects internal connections between body nodes
+    const nodeMap = new Map<string, FlowNode>()
+    bodyNodes.forEach((n) => nodeMap.set(n.id, n))
+    const inDegree = new Map<string, number>()
+    bodyNodes.forEach((n) => inDegree.set(n.id, 0))
+
+    for (const c of flowGraph.connections) {
+      if (nodeMap.has(c.fromId) && nodeMap.has(c.toId)) {
+        inDegree.set(c.toId, (inDegree.get(c.toId) || 0) + 1)
+      }
+    }
+
+    const sortQueue: FlowNode[] = []
+    for (const n of bodyNodes) {
+      if ((inDegree.get(n.id) || 0) === 0) {
+        sortQueue.push(n)
+      }
+    }
+
+    const sorted: FlowNode[] = []
+    while (sortQueue.length > 0) {
+      const cur = sortQueue.shift()!
+      sorted.push(cur)
+      for (const c of flowGraph.connections) {
+        if (c.fromId === cur.id && nodeMap.has(c.toId)) {
+          const nextId = c.toId
+          const deg = (inDegree.get(nextId) || 0) - 1
+          inDegree.set(nextId, deg)
+          if (deg === 0) {
+            sortQueue.push(nodeMap.get(nextId)!)
+          }
+        }
+      }
+    }
+
+    for (const n of bodyNodes) {
+      if (!sorted.includes(n)) sorted.push(n)
+    }
+
+    return sorted
+  }
+
+  function isLoopFeedbackConnection(conn: FlowConnection): boolean {
+    const toNode = flowGraph.nodes.find((n) => n.id === conn.toId)
+    if (!toNode || toNode.type !== 'loop') return false
+    const bodyNodes = getLoopBodyNodes(toNode)
+    return bodyNodes.some((bn) => bn.id === conn.fromId)
+  }
+
 
   function canAddPortToSlot(ports: FlowNodePort[], slot: PortSlot): boolean {
     if (ports.length >= 10) return false
@@ -846,11 +944,21 @@
     window.addEventListener('mouseup', onMouseUp)
   }
 
+  let lastCursorBroadcast = 0
   function updateMousePos(e: MouseEvent) {
     if (!canvasEl) return
     const rect = canvasEl.getBoundingClientRect()
     mouseX = (e.clientX - rect.left + canvasEl.scrollLeft) / zoomLevel
     mouseY = (e.clientY - rect.top + canvasEl.scrollTop) / zoomLevel
+
+    const now = Date.now()
+    if (now - lastCursorBroadcast > 40) {
+      lastCursorBroadcast = now
+      p2pWorkspace.updateLocalAwareness({
+        cursor: { x: Math.round(mouseX), y: Math.round(mouseY) },
+        activeNodeId: selectedNodeId || undefined
+      })
+    }
   }
 
   function endConnect(toId: string, toPortId?: string) {
@@ -1652,6 +1760,574 @@
     showToast('Snippet inserted!')
   }
 
+  // --- SUB-FLOW RUNNER (Executes sub-flow nodes, captures logs and outputs) ---
+  async function runSubFlow(
+    targetFlowId: string,
+    targetFlowName: string,
+    eventName: string,
+    initialEnv: Record<string, string>,
+    initialPayload?: unknown
+  ): Promise<{
+    success: boolean
+    durationMs: number
+    logs: string[]
+    responseText: string
+    updatedEnv: Record<string, string>
+  }> {
+    const subStart = performance.now()
+    let subSuccess = true
+    const subLogs: string[] = [`Sub-flow started: ${targetFlowName}`]
+    let subLastResp = ''
+    let subEnv = { ...initialEnv }
+
+    const targetInfo = availableFlows.find((f) => f.id === targetFlowId)
+    if (!targetInfo || !targetInfo.graph?.nodes?.length) {
+      subLogs.push(`Sub-flow "${targetFlowName}" (ID: ${targetFlowId}) not found or has no nodes.`)
+      return {
+        success: false,
+        durationMs: Math.round(performance.now() - subStart),
+        logs: subLogs,
+        responseText: JSON.stringify({ error: 'Sub-flow graph not found' }, null, 2),
+        updatedEnv: subEnv
+      }
+    }
+
+    try {
+      const graph = targetInfo.graph
+      const evLower = (eventName || '').trim().toLowerCase()
+
+      // Find receptor nodes (event-catch) matching this event name in target flow
+      const matchingReceptors = evLower
+        ? graph.nodes.filter(
+            (sn) =>
+              sn.type === 'event-catch' &&
+              (sn.eventData?.eventName || '').trim().toLowerCase() === evLower
+          )
+        : []
+
+      let nodesToExecute = graph.nodes
+      if (matchingReceptors.length > 0) {
+        subLogs.push(
+          `Found ${matchingReceptors.length} receiver(s) (Catch) for event "${eventName}" in "${targetFlowName}".`
+        )
+        const reachable = new Set<string>()
+        const queue = matchingReceptors.map((r) => r.id)
+        while (queue.length > 0) {
+          const curId = queue.shift()!
+          const outConns = (graph.connections || []).filter((c) => c.fromId === curId)
+          for (const c of outConns) {
+            if (!reachable.has(c.toId)) {
+              reachable.add(c.toId)
+              queue.push(c.toId)
+            }
+          }
+        }
+        if (reachable.size > 0) {
+          nodesToExecute = graph.nodes.filter((n) => reachable.has(n.id))
+        }
+      } else if (evLower) {
+        subLogs.push(
+          `No receiver with event "${eventName}" in "${targetFlowName}". Executing default flow.`
+        )
+      }
+
+      for (const subNode of nodesToExecute) {
+        if (subNode.type === 'rest' && subNode.restData) {
+          const resUrl = resolveVariables(subNode.restData.url, subEnv, globalEnvironment).resolved
+          if (resUrl) {
+            try {
+              let subProxyToUse = globalProxy
+              if (subNode.restData.proxyMode === 'direct') subProxyToUse = ''
+              else if (subNode.restData.proxyMode === 'corsproxy')
+                subProxyToUse = 'https://corsproxy.io/?url={url}'
+              else if (subNode.restData.proxyMode === 'allorigins')
+                subProxyToUse = 'https://api.allorigins.win/raw?url={url}'
+              else if (subNode.restData.proxyMode === 'custom' && subNode.restData.customProxyUrl)
+                subProxyToUse = subNode.restData.customProxyUrl
+
+              const rawHeaders = subNode.restData.headerRows
+                ? rowsToHeadersText(subNode.restData.headerRows)
+                : subNode.restData.headers || ''
+              const resolvedHeaders = resolveVariables(rawHeaders, subEnv, globalEnvironment).resolved
+              const resolvedBody = resolveVariables(subNode.restData.body || '', subEnv, globalEnvironment).resolved
+
+              const hasBody =
+                subNode.restData.bodyType !== 'none' &&
+                !['GET', 'HEAD'].includes(subNode.restData.method)
+              const bodyPayload = hasBody ? resolvedBody : undefined
+              const contentType =
+                subNode.restData.bodyType === 'text' ? 'text/plain' : 'application/json'
+
+              const { res } = await fetchWithProxy(
+                resUrl,
+                {
+                  method: subNode.restData.method || 'GET',
+                  headers: withContentType(
+                    parseHeadersText(resolvedHeaders),
+                    bodyPayload,
+                    contentType
+                  ),
+                  body: bodyPayload
+                },
+                subProxyToUse
+              )
+              subLastResp = await res.text()
+              subLogs.push(`REST ${subNode.restData.method} ${resUrl}: HTTP ${res.status}`)
+
+              if (subNode.restData.captures?.length) {
+                try {
+                  const jsonRes = JSON.parse(subLastResp)
+                  for (const rule of subNode.restData.captures) {
+                    if (!rule.enabled || !rule.path.trim()) continue
+                    const val = extractValueByPath(jsonRes, rule.path.trim())
+                    if (val !== undefined && rule.name.trim()) {
+                      subEnv[rule.name.trim()] = String(val)
+                      subLogs.push(`Captured: ${rule.name}=${String(val).slice(0, 20)}`)
+                    }
+                  }
+                } catch {
+                  // non-json
+                }
+              }
+            } catch (e) {
+              subLogs.push(`REST error: ${(e as Error).message}`)
+            }
+          }
+        } else if (subNode.type === 'js' && subNode.jsData) {
+          let jsInputPayload: unknown = null
+          if (subLastResp) {
+            try {
+              jsInputPayload = JSON.parse(subLastResp)
+            } catch {
+              jsInputPayload = subLastResp
+            }
+          } else {
+            jsInputPayload = initialPayload
+          }
+          const jsRes = executeJsSandbox(subNode.jsData.code, subEnv, globalEnvironment, {
+            ports: subNode.jsData.ports,
+            payload: jsInputPayload
+          })
+          if (jsRes.success) {
+            subEnv = { ...subEnv, ...jsRes.updatedEnv }
+            globalEnvironment = { ...globalEnvironment, ...jsRes.updatedGlobalEnv }
+            if (jsRes.logs?.length) subLogs.push(...jsRes.logs)
+            subLastResp = JSON.stringify(jsRes.updatedEnv, null, 2)
+          } else {
+            subSuccess = false
+            if (jsRes.logs?.length) subLogs.push(...jsRes.logs)
+            subLogs.push(`JS error: ${jsRes.error || 'Execution failed'}`)
+          }
+        } else if (subNode.type === 'transform' && subNode.transformData) {
+          let transformInput: unknown = null
+          if (subLastResp) {
+            try {
+              transformInput = JSON.parse(subLastResp)
+            } catch {
+              transformInput = subLastResp
+            }
+          } else {
+            transformInput = initialPayload
+          }
+          const mapped = applyMappings(transformInput || {}, subNode.transformData.mappings || [])
+          subLastResp = JSON.stringify(mapped, null, 2)
+          if (subNode.transformData.saveToEnvVar) {
+            subEnv[subNode.transformData.saveToEnvVar] = subLastResp
+          }
+          subLogs.push(
+            `Transform: ${(subNode.transformData.mappings || []).length} fields mapped`
+          )
+        } else if (subNode.type === 'delay' && subNode.delayData) {
+          const dMs = Math.min(subNode.delayData.delayMs || 1000, 3000)
+          await new Promise((r) => setTimeout(r, dMs))
+          subLogs.push(`Delay: paused for ${dMs}ms`)
+        }
+      }
+    } catch (err) {
+      subSuccess = false
+      subLogs.push(`Error executing sub-flow: ${(err as Error).message}`)
+    }
+
+    const durationMs = Math.round(performance.now() - subStart)
+    return {
+      success: subSuccess,
+      durationMs,
+      logs: subLogs,
+      responseText:
+        subLastResp || JSON.stringify({ subFlow: targetFlowName, durationMs }, null, 2),
+      updatedEnv: subEnv
+    }
+  }
+
+  // --- LOOP ITERATOR ENGINE (Executes loop body N times, captures logs) ---
+  async function executeLoopNode(
+    node: FlowNode,
+    currentEnv: Record<string, string>,
+    isPartOfFlow: boolean = false,
+    completedNodes?: Set<string>,
+    activeNodePorts?: Map<string, Set<string>>
+  ): Promise<Record<string, string>> {
+    const started = performance.now()
+    const upConns = flowGraph.connections.filter(
+      (c) => c.toId === node.id && !isLoopFeedbackConnection(c)
+    )
+    let inputPayload: unknown = null
+    if (upConns.length > 0) {
+      const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+      if (upNode?.lastRun?.responseText) {
+        try {
+          inputPayload = JSON.parse(upNode.lastRun.responseText)
+        } catch {
+          inputPayload = upNode.lastRun.responseText
+        }
+      }
+    }
+
+    const mode = node.loopData?.mode || 'for-each'
+    let items: unknown[] = []
+    let arrayPath = node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
+
+    if (mode === 'count') {
+      const count = Math.min(
+        Math.max(1, Number(node.loopData?.repeatCount) || 5),
+        node.loopData?.maxIterations || 1000
+      )
+      items = Array.from({ length: count }, (_, i) => ({ index: i, count: i + 1 }))
+      arrayPath = `[Counter 0..${count - 1}]`
+    } else {
+      const arr = extractValueByPath(inputPayload || {}, arrayPath)
+      items = Array.isArray(arr) ? arr : arr !== undefined ? [arr] : [inputPayload]
+    }
+
+    const max = node.loopData?.maxIterations || 1000
+    const processed = items.slice(0, max)
+
+    const itemVar = node.loopData?.itemVar || 'item'
+    const indexVar = node.loopData?.indexVar || 'index'
+    const delayMs = Math.min(Math.max(0, Number(node.loopData?.delayMs) || 0), 5000)
+
+    const bodyNodes = getLoopBodyNodes(node)
+    const bodyNodeLogs = new Map<string, string[]>()
+    bodyNodes.forEach((bn) => bodyNodeLogs.set(bn.id, []))
+    const loopLogs: string[] = []
+
+    for (let iter = 0; iter < processed.length; iter++) {
+      const currentItem = processed[iter]
+
+      // 1. Injected iteration variables
+      if (typeof currentItem === 'object' && currentItem !== null) {
+        currentEnv[itemVar] = JSON.stringify(currentItem)
+        for (const [prop, val] of Object.entries(currentItem)) {
+          currentEnv[`${itemVar}.${prop}`] =
+            typeof val === 'object' ? JSON.stringify(val) : String(val)
+        }
+      } else {
+        currentEnv[itemVar] = String(currentItem)
+      }
+
+      currentEnv[indexVar] = String(iter)
+      currentEnv['loop_index'] = String(iter)
+      currentEnv['loop_total'] = String(processed.length)
+
+      if (activeEnvName) {
+        environments[activeEnvName] = { ...currentEnv }
+        environments = { ...environments }
+      }
+
+      loopLogs.push(
+        `[Iter #${iter + 1}/${processed.length}] ${indexVar}=${iter}, ${itemVar}=${typeof currentItem === 'object' ? JSON.stringify(currentItem).slice(0, 50) : currentItem}`
+      )
+
+      if (delayMs > 0 && iter > 0) {
+        await new Promise((r) => setTimeout(r, delayMs))
+      }
+
+      // 2. Execute each body block
+      for (const bNode of bodyNodes) {
+        bNode.status = 'running'
+        flowGraph = { ...flowGraph }
+        const bStart = performance.now()
+
+        try {
+          if (bNode.type === 'js' && bNode.jsData) {
+            const res = executeJsSandbox(bNode.jsData.code, currentEnv, globalEnvironment, {
+              ports: bNode.jsData.ports,
+              payload: currentItem
+            })
+            const bDuration = Math.round(performance.now() - bStart)
+            if (res.success) {
+              currentEnv = { ...currentEnv, ...res.updatedEnv }
+              globalEnvironment = { ...globalEnvironment, ...res.updatedGlobalEnv }
+              if (activeEnvName) {
+                environments[activeEnvName] = { ...currentEnv }
+                environments = { ...environments }
+              }
+              bNode.status = 'success'
+              const iterLogs =
+                res.logs.length > 0
+                  ? res.logs.map((l) => `[Iter #${iter + 1}] ${l}`)
+                  : [`[Iter #${iter + 1}] Executed successfully`]
+              const cumLogs = bodyNodeLogs.get(bNode.id)!
+              cumLogs.push(...iterLogs)
+
+              bNode.lastRun = {
+                durationMs: bDuration,
+                status: 'OK',
+                outputSummary: `Iter ${iter + 1}/${processed.length}: ${res.logs[res.logs.length - 1] || 'OK'}`,
+                timestamp: Date.now(),
+                logs: [...cumLogs],
+                responseText: JSON.stringify(res.updatedEnv, null, 2)
+              }
+              const historyItem: FlowNodeExecutionHistoryEntry = {
+                id: `${bNode.id}_iter_${iter}_${Date.now()}`,
+                timestamp: Date.now(),
+                status: 'OK',
+                durationMs: bDuration,
+                logs: iterLogs,
+                responseText: bNode.lastRun.responseText
+              }
+              bNode.history = [historyItem, ...(bNode.history || []).slice(0, 4)]
+            } else {
+              bNode.status = 'error'
+              const iterLogs =
+                res.logs.length > 0
+                  ? res.logs.map((l) => `[Iter #${iter + 1}] ${l}`)
+                  : []
+              iterLogs.push(`[Iter #${iter + 1}] [ERROR] ${res.error}`)
+              const cumLogs = bodyNodeLogs.get(bNode.id)!
+              cumLogs.push(...iterLogs)
+
+              bNode.lastRun = {
+                durationMs: bDuration,
+                status: 'ERROR',
+                error: res.error,
+                outputSummary: `Iter ${iter + 1}/${processed.length} failed: ${res.error}`,
+                timestamp: Date.now(),
+                logs: [...cumLogs]
+              }
+              const historyItem: FlowNodeExecutionHistoryEntry = {
+                id: `${bNode.id}_iter_${iter}_${Date.now()}`,
+                timestamp: Date.now(),
+                status: 'ERROR',
+                durationMs: bDuration,
+                error: res.error,
+                logs: iterLogs
+              }
+              bNode.history = [historyItem, ...(bNode.history || []).slice(0, 4)]
+            }
+          } else if (bNode.type === 'rest' && bNode.restData) {
+            const rest = bNode.restData
+            const resolvedUrl = resolveVariables(rest.url, currentEnv, globalEnvironment).resolved
+            const headersStr = rest.headerRows ? rowsToHeadersText(rest.headerRows) : rest.headers
+            const resolvedHeaders = resolveVariables(headersStr, currentEnv, globalEnvironment).resolved
+            const resolvedBody = resolveVariables(rest.body, currentEnv, globalEnvironment).resolved
+
+            let proxyToUse = globalProxy
+            if (rest.proxyMode === 'direct') proxyToUse = ''
+            else if (rest.proxyMode === 'corsproxy') proxyToUse = 'https://corsproxy.io/?url={url}'
+            else if (rest.proxyMode === 'allorigins')
+              proxyToUse = 'https://api.allorigins.win/raw?url={url}'
+            else if (rest.proxyMode === 'custom' && rest.customProxyUrl)
+              proxyToUse = rest.customProxyUrl
+
+            const hasBody = rest.bodyType !== 'none' && !['GET', 'HEAD'].includes(rest.method)
+            const bodyPayload = hasBody ? resolvedBody : undefined
+            const contentType = rest.bodyType === 'text' ? 'text/plain' : 'application/json'
+
+            const headersObj = withContentType(
+              parseHeadersText(resolvedHeaders),
+              bodyPayload,
+              contentType
+            )
+
+            const { res, viaProxy } = await fetchWithProxy(
+              resolvedUrl,
+              { method: rest.method, headers: headersObj, body: bodyPayload },
+              proxyToUse
+            )
+            const text = await res.text()
+            const bDuration = Math.round(performance.now() - bStart)
+            const sizeBytes = new Blob([text]).size
+
+            const capturedNames: string[] = []
+            if (rest.captures && rest.captures.length > 0) {
+              try {
+                const jsonRes: unknown = JSON.parse(text)
+                for (const rule of rest.captures) {
+                  if (!rule.enabled || !rule.path.trim()) continue
+                  const val = extractValueByPath(jsonRes, rule.path.trim())
+                  if (val !== undefined && rule.name.trim()) {
+                    currentEnv[rule.name.trim()] = String(val)
+                    capturedNames.push(`${rule.name}=${String(val).slice(0, 15)}`)
+                  }
+                }
+              } catch {
+                // Non-JSON
+              }
+            }
+
+            if (activeEnvName) {
+              environments[activeEnvName] = { ...currentEnv }
+              environments = { ...environments }
+            }
+
+            const iterLog = `[Iter #${iter + 1}] ${rest.method} ${resolvedUrl} -> HTTP ${res.status} (${bDuration}ms)`
+            const cumLogs = bodyNodeLogs.get(bNode.id)!
+            cumLogs.push(iterLog)
+            if (capturedNames.length > 0) {
+              cumLogs.push(`  Capturou: ${capturedNames.join(', ')}`)
+            }
+
+            bNode.status = res.status < 400 ? 'success' : 'error'
+            bNode.lastRun = {
+              durationMs: bDuration,
+              status: res.status,
+              outputSummary: `Iter ${iter + 1}/${processed.length}: HTTP ${res.status}`,
+              timestamp: Date.now(),
+              responseText: text,
+              sizeBytes,
+              viaProxy,
+              logs: [...cumLogs]
+            }
+
+            const historyItem: FlowNodeExecutionHistoryEntry = {
+              id: `${bNode.id}_iter_${iter}_${Date.now()}`,
+              timestamp: Date.now(),
+              status: res.status,
+              durationMs: bDuration,
+              responseText: text,
+              sizeBytes,
+              viaProxy,
+              logs: [iterLog]
+            }
+            bNode.history = [historyItem, ...(bNode.history || []).slice(0, 4)]
+          } else if (bNode.type === 'transform') {
+            const mapped = applyMappings(currentItem || {}, bNode.transformData?.mappings || [])
+            const responseText = JSON.stringify(mapped, null, 2)
+            if (bNode.transformData?.saveToEnvVar) {
+              currentEnv[bNode.transformData.saveToEnvVar] = responseText
+              if (activeEnvName) {
+                environments[activeEnvName] = { ...currentEnv }
+                environments = { ...environments }
+              }
+            }
+            const bDuration = Math.round(performance.now() - bStart)
+            bNode.status = 'success'
+            const iterLog = `[Iter #${iter + 1}] ${(bNode.transformData?.mappings || []).length} fields mapped`
+            const cumLogs = bodyNodeLogs.get(bNode.id)!
+            cumLogs.push(iterLog)
+
+            bNode.lastRun = {
+              durationMs: bDuration,
+              status: 200,
+              outputSummary: `Iter ${iter + 1}/${processed.length}: ${(bNode.transformData?.mappings || []).length} fields mapped`,
+              timestamp: Date.now(),
+              responseText,
+              logs: [...cumLogs]
+            }
+            const historyItem: FlowNodeExecutionHistoryEntry = {
+              id: `${bNode.id}_iter_${iter}_${Date.now()}`,
+              timestamp: Date.now(),
+              status: 200,
+              durationMs: bDuration,
+              responseText,
+              logs: [iterLog]
+            }
+            bNode.history = [historyItem, ...(bNode.history || []).slice(0, 4)]
+          } else if (bNode.type === 'delay') {
+            const bDelay = Math.min(bNode.delayData?.delayMs || 1000, 3000)
+            await new Promise((r) => setTimeout(r, bDelay))
+            const bDuration = Math.round(performance.now() - bStart)
+            bNode.status = 'success'
+            const iterLog = `[Iter #${iter + 1}] Paused for ${bDelay}ms`
+            const cumLogs = bodyNodeLogs.get(bNode.id)!
+            cumLogs.push(iterLog)
+            bNode.lastRun = {
+              durationMs: bDuration,
+              status: 'DELAY_DONE',
+              outputSummary: `Iter ${iter + 1}/${processed.length}: Paused ${bDelay}ms`,
+              timestamp: Date.now(),
+              responseText: JSON.stringify({ delayedMs: bDelay }, null, 2),
+              logs: [...cumLogs]
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          bNode.status = 'error'
+          bNode.lastRun = {
+            durationMs: Math.round(performance.now() - bStart),
+            status: 'ERROR',
+            error: msg,
+            outputSummary: `Iter ${iter + 1}/${processed.length} failed: ${msg}`,
+            timestamp: Date.now(),
+            logs: [...(bodyNodeLogs.get(bNode.id) || []), `[Iter #${iter + 1}] Exception: ${msg}`]
+          }
+        }
+      }
+
+      await new Promise((r) => setTimeout(r, 10))
+      flowGraph = { ...flowGraph }
+    }
+
+    // Set cumulative summaries on body nodes
+    for (const bNode of bodyNodes) {
+      const cumLogs = bodyNodeLogs.get(bNode.id) || []
+      if (bNode.lastRun) {
+        bNode.lastRun.outputSummary = `Loop finished: ${processed.length} iterations executed (${cumLogs.length} logs)`
+        bNode.lastRun.logs = cumLogs
+      }
+      if (bNode.status !== 'error') {
+        bNode.status = 'success'
+      }
+    }
+
+    const durationMs = Math.round(performance.now() - started)
+    const loopResult = {
+      mode,
+      arrayPath,
+      totalItems: items.length,
+      processedCount: processed.length,
+      items: processed,
+      bodyBlocks: bodyNodes.length
+    }
+    const responseText = JSON.stringify(loopResult, null, 2)
+    node.status = 'success'
+    node.lastRun = {
+      durationMs,
+      status: 'LOOP_DONE',
+      outputSummary:
+        mode === 'count'
+          ? `Repeated ${processed.length} times (${bodyNodes.length} body block${bodyNodes.length === 1 ? '' : 's'})`
+          : `Iterated ${processed.length} items of "${arrayPath || '[ ] Root'}" (${bodyNodes.length} body block${bodyNodes.length === 1 ? '' : 's'})`,
+      timestamp: Date.now(),
+      logs: loopLogs,
+      responseText
+    }
+    const historyItem: FlowNodeExecutionHistoryEntry = {
+      id: String(Date.now()),
+      timestamp: Date.now(),
+      status: 'LOOP_DONE',
+      durationMs,
+      logs: loopLogs,
+      responseText
+    }
+    node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+
+    if (isPartOfFlow) {
+      if (completedNodes) {
+        completedNodes.add(node.id)
+        bodyNodes.forEach((bn) => completedNodes.add(bn.id))
+      }
+      if (activeNodePorts) {
+        activeNodePorts.set(node.id, new Set(['done']))
+      }
+    }
+
+    flowGraph = { ...flowGraph }
+    notifyChange()
+    return currentEnv
+  }
+
   // --- SINGLE NODE EXECUTION (Max 5 history items) ---
   async function executeSingleNode(node: FlowNode) {
     if (node.status === 'running') return
@@ -1747,7 +2423,22 @@
 
         showToast(`Block finished with status ${res.status} (${durationMs}ms)`)
       } else if (node.type === 'js' && node.jsData) {
-        const res = executeJsSandbox(node.jsData.code, currentEnv, globalEnvironment)
+        const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+        let upstreamPayload: unknown = null
+        if (upConns.length > 0) {
+          const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+          if (upNode?.lastRun?.responseText) {
+            try {
+              upstreamPayload = JSON.parse(upNode.lastRun.responseText)
+            } catch {
+              upstreamPayload = upNode.lastRun.responseText
+            }
+          }
+        }
+        const res = executeJsSandbox(node.jsData.code, currentEnv, globalEnvironment, {
+          ports: node.jsData.ports,
+          payload: upstreamPayload
+        })
         const durationMs = Math.round(performance.now() - started)
 
         if (res.success) {
@@ -1872,15 +2563,78 @@
         }
         showToast('Terminate block executed!')
       } else if (node.type === 'event-throw') {
-        const ev = node.eventData?.eventName || 'valida total'
-        node.status = 'success'
-        node.lastRun = {
-          durationMs: 0,
-          status: 'EVENT_THROWN',
-          outputSummary: `Triggered: "${ev}"`,
-          timestamp: Date.now()
+        const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
+        let upstreamPayload: unknown = null
+        if (upConns.length > 0) {
+          const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+          if (upNode?.lastRun?.responseText) {
+            try {
+              upstreamPayload = JSON.parse(upNode.lastRun.responseText)
+            } catch {
+              upstreamPayload = upNode.lastRun.responseText
+            }
+          }
         }
-        showToast(`Event triggered: "${ev}"`)
+
+        const ev = node.eventData?.eventName || ''
+        if (node.eventData?.targetFlowId) {
+          const targetName = node.eventData.targetFlowName || 'Sub-Flow'
+          showToast(`Executing sub-flow "${targetName}"...`)
+          const subRes = await runSubFlow(
+            node.eventData.targetFlowId,
+            targetName,
+            ev,
+            currentEnv,
+            upstreamPayload
+          )
+          currentEnv = { ...currentEnv, ...subRes.updatedEnv }
+          if (activeEnvName) {
+            environments[activeEnvName] = { ...currentEnv }
+            environments = { ...environments }
+          }
+          node.status = subRes.success ? 'success' : 'error'
+          node.lastRun = {
+            durationMs: subRes.durationMs,
+            status: subRes.success ? 'SUBFLOW_OK' : 'SUBFLOW_ERROR',
+            outputSummary: `Sub-flow "${targetName}" executed (${subRes.durationMs}ms)`,
+            responseText: subRes.responseText,
+            logs: subRes.logs,
+            timestamp: Date.now()
+          }
+          const historyItem: FlowNodeExecutionHistoryEntry = {
+            id: `sub-${Date.now()}`,
+            timestamp: Date.now(),
+            status: subRes.success ? 200 : 500,
+            durationMs: subRes.durationMs,
+            responseText: subRes.responseText,
+            logs: subRes.logs
+          }
+          node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+          showToast(`Sub-flow "${targetName}" finished (${subRes.durationMs}ms)`)
+        } else {
+          node.status = 'success'
+          const respText = upstreamPayload
+            ? typeof upstreamPayload === 'string'
+              ? upstreamPayload
+              : JSON.stringify(upstreamPayload, null, 2)
+            : ''
+          node.lastRun = {
+            durationMs: 0,
+            status: 'EVENT_THROWN',
+            outputSummary: `Triggered: "${ev || 'event'}"`,
+            timestamp: Date.now(),
+            responseText: respText
+          }
+          const historyItem: FlowNodeExecutionHistoryEntry = {
+            id: String(Date.now()),
+            timestamp: Date.now(),
+            status: 'EVENT_THROWN',
+            durationMs: 0,
+            responseText: respText
+          }
+          node.history = [historyItem, ...(node.history || []).slice(0, 4)]
+          showToast(`Event triggered: "${ev || 'event'}"`)
+        }
       } else if (node.type === 'event-catch') {
         const ev = node.eventData?.eventName || 'valida total'
         node.status = 'success'
@@ -1913,10 +2667,12 @@
         }
         const mapped = applyMappings(inputPayload || {}, node.transformData?.mappings || [])
         const responseText = JSON.stringify(mapped, null, 2)
-        if (node.transformData?.saveToEnvVar && activeEnvName) {
+        if (node.transformData?.saveToEnvVar) {
           currentEnv[node.transformData.saveToEnvVar] = responseText
-          environments[activeEnvName] = { ...currentEnv }
-          environments = { ...environments }
+          if (activeEnvName) {
+            environments[activeEnvName] = { ...currentEnv }
+            environments = { ...environments }
+          }
         }
         const durationMs = Math.round(performance.now() - started)
         node.status = 'success'
@@ -1937,71 +2693,8 @@
         node.history = [historyItem, ...(node.history || []).slice(0, 4)]
         showToast(`Mapping completed (${(node.transformData?.mappings || []).length} fields)`)
       } else if (node.type === 'loop') {
-        const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
-        let inputPayload: unknown = null
-        if (upConns.length > 0) {
-          const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
-          if (upNode?.lastRun?.responseText) {
-            try {
-              inputPayload = JSON.parse(upNode.lastRun.responseText)
-            } catch {
-              inputPayload = upNode.lastRun.responseText
-            }
-          }
-        }
-        const mode = node.loopData?.mode || 'for-each'
-        let items: unknown[] = []
-        let arrayPath = node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
-
-        if (mode === 'count') {
-          const count = Math.min(Math.max(1, Number(node.loopData?.repeatCount) || 5), node.loopData?.maxIterations || 1000)
-          items = Array.from({ length: count }, (_, i) => ({ index: i, count: i + 1 }))
-          arrayPath = `[Counter 0..${count - 1}]`
-        } else {
-          const arr = extractValueByPath(inputPayload || {}, arrayPath)
-          items = Array.isArray(arr) ? arr : (arr !== undefined ? [arr] : [inputPayload])
-        }
-
-        const max = node.loopData?.maxIterations || 1000
-        const processed = items.slice(0, max)
-
-        const itemVar = node.loopData?.itemVar || 'item'
-        const indexVar = node.loopData?.indexVar || 'index'
-        if (processed.length > 0 && activeEnvName) {
-          currentEnv[itemVar] =
-            typeof processed[0] === 'object' ? JSON.stringify(processed[0]) : String(processed[0])
-          currentEnv[indexVar] = '0'
-          currentEnv['loop_total'] = String(processed.length)
-          environments[activeEnvName] = { ...currentEnv }
-          environments = { ...environments }
-        }
-
-        const loopResult = {
-          mode,
-          arrayPath,
-          totalItems: items.length,
-          processedCount: processed.length,
-          items: processed
-        }
-        const responseText = JSON.stringify(loopResult, null, 2)
-        const durationMs = Math.round(performance.now() - started)
-        node.status = 'success'
-        node.lastRun = {
-          durationMs,
-          status: 'LOOP_DONE',
-          outputSummary: mode === 'count' ? `Repeated ${processed.length} times` : `Iterated ${processed.length} items of "${arrayPath || '[ ] Root'}"`,
-          timestamp: Date.now(),
-          responseText
-        }
-        const historyItem: FlowNodeExecutionHistoryEntry = {
-          id: String(Date.now()),
-          timestamp: Date.now(),
-          status: 'LOOP_DONE',
-          durationMs,
-          responseText
-        }
-        node.history = [historyItem, ...(node.history || []).slice(0, 4)]
-        showToast(`Loop: ${processed.length} items iterated`)
+        currentEnv = await executeLoopNode(node, currentEnv, false)
+        showToast(`Loop: ${node.lastRun?.outputSummary || 'Completed'}`)
       } else if (node.type === 'delay') {
         const delayMs = Math.min(node.delayData?.delayMs || 1000, 3000)
         await new Promise((r) => setTimeout(r, delayMs))
@@ -2108,12 +2801,29 @@
     let currentEnv = { ...activeEnv }
     const completedNodes = new Set<string>()
     const failedNodes = new Set<string>()
+    const skippedNodes = new Set<string>()
     const activeEvents = new Set<string>()
+    const activeEventPayloads = new Map<string, string>()
     const activeNodePorts = new Map<string, Set<string>>()
     let flowTerminated = false
     const hasStartNodes = flowGraph.nodes.some((n) => n.type === 'start')
 
+    const isConnPermanentlyInactive = (c: FlowConnection): boolean => {
+      if (isLoopFeedbackConnection(c)) return false
+      if (skippedNodes.has(c.fromId) || failedNodes.has(c.fromId)) return true
+      if (completedNodes.has(c.fromId)) {
+        const fromNode = flowGraph.nodes.find((n) => n.id === c.fromId)
+        if (fromNode && isMultiPortNode(fromNode) && c.fromPort) {
+          const ports = activeNodePorts.get(c.fromId)
+          return !ports || !ports.has(c.fromPort)
+        }
+      }
+      return false
+    }
+
     const isConnActive = (c: FlowConnection): boolean => {
+      if (isLoopFeedbackConnection(c)) return false
+      if (isConnPermanentlyInactive(c)) return false
       const fromNode = flowGraph.nodes.find((n) => n.id === c.fromId)
       if (!fromNode) return false
       if (isMultiPortNode(fromNode) && c.fromPort) {
@@ -2127,45 +2837,68 @@
 
     const getSolidPrereqs = (nodeId: string): string[] => {
       return flowGraph.connections
-        .filter((c) => c.toId === nodeId && c.kind === 'solid')
-        .filter(isConnActive)
+        .filter((c) => c.toId === nodeId && c.kind === 'solid' && !isLoopFeedbackConnection(c))
+        .filter((c) => !isConnPermanentlyInactive(c))
         .map((c) => c.fromId)
     }
 
     const getDottedPrereqs = (nodeId: string): string[] => {
       return flowGraph.connections
-        .filter((c) => c.toId === nodeId && c.kind === 'dotted')
-        .filter(isConnActive)
+        .filter((c) => c.toId === nodeId && c.kind === 'dotted' && !isLoopFeedbackConnection(c))
+        .filter((c) => !isConnPermanentlyInactive(c))
         .map((c) => c.fromId)
+    }
+
+    const updateSkippedNodes = () => {
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const node of flowGraph.nodes) {
+          if (
+            completedNodes.has(node.id) ||
+            failedNodes.has(node.id) ||
+            skippedNodes.has(node.id) ||
+            node.status === 'running'
+          ) {
+            continue
+          }
+
+          if (node.type === 'event-catch' || node.type === 'start') {
+            continue
+          }
+
+          const incomingConns = flowGraph.connections.filter(
+            (c) => c.toId === node.id && !isLoopFeedbackConnection(c)
+          )
+
+          if (incomingConns.length > 0 && incomingConns.every(isConnPermanentlyInactive)) {
+            skippedNodes.add(node.id)
+            node.status = 'skipped'
+            node.lastRun = {
+              durationMs: 0,
+              status: 'SKIPPED',
+              outputSummary: 'Branch skipped by router / condition',
+              timestamp: Date.now()
+            }
+            changed = true
+          }
+        }
+      }
     }
 
     const isReadyToRun = (node: FlowNode): boolean => {
       if (flowTerminated) return false
-      if (completedNodes.has(node.id) || failedNodes.has(node.id) || node.status === 'running')
+      if (
+        completedNodes.has(node.id) ||
+        failedNodes.has(node.id) ||
+        skippedNodes.has(node.id) ||
+        node.status === 'running'
+      )
         return false
 
       if (node.type === 'event-catch') {
         const evName = (node.eventData?.eventName || '').trim().toLowerCase()
         if (!evName || !activeEvents.has(evName)) {
-          return false
-        }
-      }
-
-      // Check if all incoming connections originate from un-routed / inactive ports
-      const incomingConns = flowGraph.connections.filter((c) => c.toId === node.id)
-      if (incomingConns.length > 0) {
-        const allParentsFinished = incomingConns.every(
-          (c) => completedNodes.has(c.fromId) || failedNodes.has(c.fromId)
-        )
-        const allConnsInactive = incomingConns.every((c) => {
-          const fn = flowGraph.nodes.find((n) => n.id === c.fromId)
-          if (fn && isMultiPortNode(fn) && c.fromPort) {
-            const ports = activeNodePorts.get(c.fromId)
-            return !ports || !ports.has(c.fromPort)
-          }
-          return false
-        })
-        if (allParentsFinished && allConnsInactive) {
           return false
         }
       }
@@ -2180,6 +2913,25 @@
         return true
       }
 
+      // Check merge node join strategies
+      if (node.type === 'merge') {
+        const strategy: string = (node.mergeData?.strategy as string) || 'wait-all'
+        const isFirst =
+          strategy === 'first-complete' ||
+          strategy === 'first-completed' ||
+          strategy === 'wait-any' ||
+          strategy === 'first'
+
+        if (isFirst) {
+          const hasAnySolidDone = solidPre.some((p) => completedNodes.has(p))
+          const hasAnyDottedDone = dottedPre.some((p) => completedNodes.has(p))
+          if (hasAnySolidDone || hasAnyDottedDone) {
+            return true
+          }
+          return false
+        }
+      }
+
       const allSolidDone = solidPre.length === 0 || solidPre.every((p) => completedNodes.has(p))
       if (!allSolidDone) return false
 
@@ -2189,9 +2941,14 @@
     }
 
     try {
-      while (!flowTerminated && completedNodes.size + failedNodes.size < flowGraph.nodes.length) {
+      while (
+        !flowTerminated &&
+        completedNodes.size + failedNodes.size + skippedNodes.size < flowGraph.nodes.length
+      ) {
+        updateSkippedNodes()
         const readyNodes = flowGraph.nodes.filter(isReadyToRun)
         if (readyNodes.length === 0) {
+          updateSkippedNodes()
           break
         }
 
@@ -2225,137 +2982,52 @@
                 flowTerminated = true
                 showToast('Flow terminated by Terminate block!')
               } else if (node.type === 'event-throw') {
-                const evName = (node.eventData?.eventName || '').trim().toLowerCase()
-                if (evName) activeEvents.add(evName)
-
-                if (node.eventData?.targetFlowId) {
-                  const targetId = node.eventData.targetFlowId
-                  const targetInfo = availableFlows.find((f) => f.id === targetId)
-                  const targetName = targetInfo?.name || node.eventData.targetFlowName || 'Sub-Flow'
-
-                  showToast(
-                    `⚡ [Sub-Flow Beta] Executing "${targetName}"...`
-                  )
-
-                  const subStart = Date.now()
-                  let subSuccess = true
-                  let subLogs: string[] = [`Sub-flow started: ${targetName}`]
-                  let subLastResp = ''
-
-                  if (targetInfo?.graph && targetInfo.graph.nodes?.length) {
+                const upConns = flowGraph.connections.filter(
+                  (c) => c.toId === node.id && !isLoopFeedbackConnection(c)
+                )
+                let upstreamPayload: unknown = null
+                if (upConns.length > 0) {
+                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+                  if (upNode?.lastRun?.responseText) {
                     try {
-                      // Find receptor nodes (event-catch) matching this event name in target flow
-                      const matchingReceptors = targetInfo.graph.nodes.filter(
-                        (sn) =>
-                          sn.type === 'event-catch' &&
-                          (sn.eventData?.eventName || '').trim().toLowerCase() === evName
-                      )
-
-                      let nodesToExecute = targetInfo.graph.nodes
-                      if (matchingReceptors.length > 0) {
-                        subLogs.push(
-                          `Found ${matchingReceptors.length} receiver(s) (Catch) for event "${evName}" in "${targetName}".`
-                        )
-                        // Find all nodes reachable from these matching receptors
-                        const reachable = new Set<string>()
-                        const queue = matchingReceptors.map((r) => r.id)
-                        while (queue.length > 0) {
-                          const curId = queue.shift()!
-                          const outConns = (targetInfo.graph.connections || []).filter(
-                            (c) => c.fromId === curId
-                          )
-                          for (const c of outConns) {
-                            if (!reachable.has(c.toId)) {
-                              reachable.add(c.toId)
-                              queue.push(c.toId)
-                            }
-                          }
-                        }
-                        if (reachable.size > 0) {
-                          nodesToExecute = targetInfo.graph.nodes.filter((n) => reachable.has(n.id))
-                        }
-                      } else if (evName) {
-                        subLogs.push(
-                          `No receiver with event "${evName}" in "${targetName}". Executing default flow.`
-                        )
-                      }
-
-                      for (const subNode of nodesToExecute) {
-                        if (subNode.type === 'rest' && subNode.restData) {
-                          const resUrl = resolveVariables(
-                            subNode.restData.url,
-                            currentEnv,
-                            globalEnvironment
-                          ).resolved
-                          if (resUrl) {
-                            try {
-                              let subProxyToUse = globalProxy
-                              if (subNode.restData.proxyMode === 'direct') subProxyToUse = ''
-                              else if (subNode.restData.proxyMode === 'corsproxy')
-                                subProxyToUse = 'https://corsproxy.io/?url={url}'
-                              else if (subNode.restData.proxyMode === 'allorigins')
-                                subProxyToUse = 'https://api.allorigins.win/raw?url={url}'
-                              else if (
-                                subNode.restData.proxyMode === 'custom' &&
-                                subNode.restData.customProxyUrl
-                              )
-                                subProxyToUse = subNode.restData.customProxyUrl
-
-                              const { res } = await fetchWithProxy(
-                                resUrl,
-                                {
-                                  method: subNode.restData.method || 'GET',
-                                  headers: parseHeadersText(
-                                    resolveVariables(
-                                      subNode.restData.headers || '',
-                                      currentEnv,
-                                      globalEnvironment
-                                    ).resolved
-                                  ),
-                                  body:
-                                    subNode.restData.bodyType !== 'none'
-                                      ? resolveVariables(
-                                          subNode.restData.body || '',
-                                          currentEnv,
-                                          globalEnvironment
-                                        ).resolved
-                                      : undefined
-                                },
-                                subProxyToUse
-                              )
-                              subLastResp = await res.text()
-                              subLogs.push(
-                                `REST ${subNode.restData.method} ${resUrl}: HTTP ${res.status}`
-                              )
-                            } catch (e) {
-                              subLogs.push(`REST error: ${(e as Error).message}`)
-                            }
-                          }
-                        } else if (subNode.type === 'js' && subNode.jsData) {
-                          const jsRes = executeJsSandbox(
-                            subNode.jsData.code,
-                            currentEnv,
-                            globalEnvironment
-                          )
-                          if (jsRes.logs?.length) subLogs.push(...jsRes.logs)
-                        }
-                      }
-                    } catch (err) {
-                      subSuccess = false
-                      subLogs.push(`Error executing sub-flow: ${(err as Error).message}`)
+                      upstreamPayload = JSON.parse(upNode.lastRun.responseText)
+                    } catch {
+                      upstreamPayload = upNode.lastRun.responseText
                     }
                   }
+                }
 
-                  const subDuration = Date.now() - subStart
-                  node.status = subSuccess ? 'success' : 'error'
+                const evName = (node.eventData?.eventName || '').trim().toLowerCase()
+                if (evName) {
+                  activeEvents.add(evName)
+                  if (upstreamPayload) {
+                    activeEventPayloads.set(
+                      evName,
+                      typeof upstreamPayload === 'string'
+                        ? upstreamPayload
+                        : JSON.stringify(upstreamPayload, null, 2)
+                    )
+                  }
+                }
+
+                if (node.eventData?.targetFlowId) {
+                  const targetName = node.eventData.targetFlowName || 'Sub-Flow'
+                  showToast(`⚡ [Sub-Flow] Executing "${targetName}"...`)
+                  const subRes = await runSubFlow(
+                    node.eventData.targetFlowId,
+                    targetName,
+                    evName,
+                    currentEnv,
+                    upstreamPayload
+                  )
+                  currentEnv = { ...currentEnv, ...subRes.updatedEnv }
+                  node.status = subRes.success ? 'success' : 'error'
                   node.lastRun = {
-                    durationMs: subDuration,
-                    status: subSuccess ? 'SUBFLOW_OK' : 'SUBFLOW_ERROR',
-                    outputSummary: `Sub-flow "${targetName}" executed in ${subDuration}ms. Unloaded from memory.`,
-                    responseText:
-                      subLastResp ||
-                      JSON.stringify({ subFlow: targetName, durationMs: subDuration }, null, 2),
-                    logs: subLogs,
+                    durationMs: subRes.durationMs,
+                    status: subRes.success ? 'SUBFLOW_OK' : 'SUBFLOW_ERROR',
+                    outputSummary: `Sub-flow "${targetName}" executed in ${subRes.durationMs}ms.`,
+                    responseText: subRes.responseText,
+                    logs: subRes.logs,
                     timestamp: Date.now()
                   }
                   if (!node.history) node.history = []
@@ -2363,10 +3035,10 @@
                     {
                       id: `sub-${Date.now()}`,
                       timestamp: Date.now(),
-                      status: subSuccess ? 200 : 500,
-                      durationMs: subDuration,
+                      status: subRes.success ? 200 : 500,
+                      durationMs: subRes.durationMs,
                       responseText: node.lastRun.responseText,
-                      logs: subLogs
+                      logs: subRes.logs
                     },
                     ...node.history
                   ].slice(0, 5)
@@ -2374,22 +3046,31 @@
                   showToast(`Sub-flow "${targetName}" finished and released from memory!`)
                 } else {
                   node.status = 'success'
+                  const respText = upstreamPayload
+                    ? typeof upstreamPayload === 'string'
+                      ? upstreamPayload
+                      : JSON.stringify(upstreamPayload, null, 2)
+                    : ''
                   node.lastRun = {
                     durationMs: 0,
                     status: 'EVENT_THROWN',
                     outputSummary: `Triggered: "${node.eventData?.eventName || ''}"`,
-                    timestamp: Date.now()
+                    timestamp: Date.now(),
+                    responseText: respText
                   }
                   showToast(`Event triggered: "${node.eventData?.eventName || ''}"`)
                 }
                 completedNodes.add(node.id)
               } else if (node.type === 'event-catch') {
+                const evName = (node.eventData?.eventName || '').trim().toLowerCase()
+                const caughtPayload = activeEventPayloads.get(evName) || ''
                 node.status = 'success'
                 node.lastRun = {
                   durationMs: 0,
                   status: 'EVENT_CAUGHT',
                   outputSummary: `Received: "${node.eventData?.eventName || ''}"`,
-                  timestamp: Date.now()
+                  timestamp: Date.now(),
+                  responseText: caughtPayload
                 }
                 completedNodes.add(node.id)
                 showToast(`Event received: "${node.eventData?.eventName || ''}"`)
@@ -2491,7 +3172,24 @@
                   failedNodes.add(node.id)
                 }
               } else if (node.type === 'js' && node.jsData) {
-                const res = executeJsSandbox(node.jsData.code, currentEnv, globalEnvironment)
+                const upConns = flowGraph.connections.filter(
+                  (c) => c.toId === node.id && !isLoopFeedbackConnection(c)
+                )
+                let upstreamPayload: unknown = null
+                if (upConns.length > 0) {
+                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+                  if (upNode?.lastRun?.responseText) {
+                    try {
+                      upstreamPayload = JSON.parse(upNode.lastRun.responseText)
+                    } catch {
+                      upstreamPayload = upNode.lastRun.responseText
+                    }
+                  }
+                }
+                const res = executeJsSandbox(node.jsData.code, currentEnv, globalEnvironment, {
+                  ports: node.jsData.ports,
+                  payload: upstreamPayload
+                })
                 const durationMs = Math.round(performance.now() - started)
 
                 if (res.success) {
@@ -2627,10 +3325,12 @@
                 }
                 const mapped = applyMappings(inputPayload || {}, node.transformData?.mappings || [])
                 const responseText = JSON.stringify(mapped, null, 2)
-                if (node.transformData?.saveToEnvVar && activeEnvName) {
+                if (node.transformData?.saveToEnvVar) {
                   currentEnv[node.transformData.saveToEnvVar] = responseText
-                  environments[activeEnvName] = { ...currentEnv }
-                  environments = { ...environments }
+                  if (activeEnvName) {
+                    environments[activeEnvName] = { ...currentEnv }
+                    environments = { ...environments }
+                  }
                 }
                 const durationMs = Math.round(performance.now() - started)
                 node.status = 'success'
@@ -2651,72 +3351,13 @@
                 node.history = [historyItem, ...(node.history || []).slice(0, 4)]
                 completedNodes.add(node.id)
               } else if (node.type === 'loop') {
-                const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
-                let inputPayload: unknown = null
-                if (upConns.length > 0) {
-                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
-                  if (upNode?.lastRun?.responseText) {
-                    try {
-                      inputPayload = JSON.parse(upNode.lastRun.responseText)
-                    } catch {
-                      inputPayload = upNode.lastRun.responseText
-                    }
-                  }
-                }
-                const mode = node.loopData?.mode || 'for-each'
-                let items: unknown[] = []
-                let arrayPath = node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
-
-                if (mode === 'count') {
-                  const count = Math.min(Math.max(1, Number(node.loopData?.repeatCount) || 5), node.loopData?.maxIterations || 1000)
-                  items = Array.from({ length: count }, (_, i) => ({ index: i, count: i + 1 }))
-                  arrayPath = `[Counter 0..${count - 1}]`
-                } else {
-                  const arr = extractValueByPath(inputPayload || {}, arrayPath)
-                  items = Array.isArray(arr) ? arr : (arr !== undefined ? [arr] : [inputPayload])
-                }
-
-                const max = node.loopData?.maxIterations || 1000
-                const processed = items.slice(0, max)
-
-                const itemVar = node.loopData?.itemVar || 'item'
-                const indexVar = node.loopData?.indexVar || 'index'
-                if (processed.length > 0 && activeEnvName) {
-                  currentEnv[itemVar] =
-                    typeof processed[0] === 'object' ? JSON.stringify(processed[0]) : String(processed[0])
-                  currentEnv[indexVar] = '0'
-                  currentEnv['loop_total'] = String(processed.length)
-                  environments[activeEnvName] = { ...currentEnv }
-                  environments = { ...environments }
-                }
-
-                const loopResult = {
-                  mode,
-                  arrayPath,
-                  totalItems: items.length,
-                  processedCount: processed.length,
-                  items: processed
-                }
-                const responseText = JSON.stringify(loopResult, null, 2)
-                const durationMs = Math.round(performance.now() - started)
-                node.status = 'success'
-                activeNodePorts.set(node.id, new Set(['item', 'done']))
-                node.lastRun = {
-                  durationMs,
-                  status: 'LOOP_DONE',
-                  outputSummary: mode === 'count' ? `Repeated ${processed.length} times` : `Iterated ${processed.length} items of "${arrayPath || '[ ] Root'}"`,
-                  timestamp: Date.now(),
-                  responseText
-                }
-                const historyItem: FlowNodeExecutionHistoryEntry = {
-                  id: String(Date.now()),
-                  timestamp: Date.now(),
-                  status: 'LOOP_DONE',
-                  durationMs,
-                  responseText
-                }
-                node.history = [historyItem, ...(node.history || []).slice(0, 4)]
-                completedNodes.add(node.id)
+                currentEnv = await executeLoopNode(
+                  node,
+                  currentEnv,
+                  true,
+                  completedNodes,
+                  activeNodePorts
+                )
               } else if (node.type === 'delay') {
                 const delayMs = Math.min(node.delayData?.delayMs || 1000, 4000)
                 await new Promise((r) => setTimeout(r, delayMs))
@@ -3183,9 +3824,7 @@
         on:click={onCanvasClick}
         on:dragover={onCanvasDragOver}
         on:drop={onCanvasDrop}
-        on:mousemove={(e) => {
-          if (connectingFromId) updateMousePos(e)
-        }}
+        on:mousemove={updateMousePos}
       >
         <div
           class="flow-zoom-container"
@@ -3279,6 +3918,23 @@
             {/if}
           </svg>
 
+          <!-- Remote Collaborators Cursors Layer -->
+          {#each remotePresences as presence (presence.peerId)}
+            {#if presence.cursor}
+              <div
+                class="remote-collaborator-cursor"
+                style="left: {presence.cursor.x}px; top: {presence.cursor.y}px;"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill={presence.color}>
+                  <path d="M3 3l7 18 3-7 7-3L3 3z" />
+                </svg>
+                <span class="remote-cursor-label" style="background: {presence.color};">
+                  {presence.userName}
+                </span>
+              </div>
+            {/if}
+          {/each}
+
           <!-- HTML Nodes Layer -->
           {#each flowGraph.nodes as node (node.id)}
             {#if isCircleNode(node.type)}
@@ -3295,6 +3951,7 @@
                 class:status-running={node.status === 'running'}
                 class:status-success={node.status === 'success'}
                 class:status-error={node.status === 'error'}
+                class:status-skipped={node.status === 'skipped'}
                 style="left: {node.x}px; top: {node.y}px;"
                 on:pointerdown={(e) => onNodePointerDown(e, node)}
                 on:mousedown={(e) => onNodePointerDown(e, node)}
@@ -3461,6 +4118,7 @@
                 class:status-running={node.status === 'running'}
                 class:status-success={node.status === 'success'}
                 class:status-error={node.status === 'error'}
+                class:status-skipped={node.status === 'skipped'}
                 style="left: {node.x}px; top: {node.y}px;"
                 on:pointerdown={(e) => onNodePointerDown(e, node)}
                 on:mousedown={(e) => onNodePointerDown(e, node)}
@@ -3668,6 +4326,7 @@
                       class="last-run-meta"
                       class:run-ok={node.status === 'success'}
                       class:run-bad={node.status === 'error'}
+                      class:run-skipped={node.status === 'skipped'}
                     >
                       <span class="status-code">{node.lastRun.status}</span>
                       <span class="duration">{node.lastRun.durationMs}ms</span>
@@ -4711,6 +5370,15 @@
 
                     {#if selectedNode.lastRun.outputSummary}
                       <div class="res-summary-text">{selectedNode.lastRun.outputSummary}</div>
+                    {/if}
+
+                    {#if selectedNode.lastRun.logs && selectedNode.lastRun.logs.length > 0}
+                      <div class="res-summary-logs" style="margin-top: 10px;">
+                        <div class="console-head" style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-bottom: 4px;">
+                          Execution Logs ({selectedNode.lastRun.logs.length}):
+                        </div>
+                        <pre class="console-logs" style="max-height: 180px; overflow-y: auto;">{selectedNode.lastRun.logs.join('\n')}</pre>
+                      </div>
                     {/if}
 
                     {#if selectedNode.lastRun.responseText && onOpenInEditor}
@@ -6192,7 +6860,16 @@
                       <div>Details: {selectedNode.lastRun.outputSummary}</div>
                       <div>Time: {relativeTime(selectedNode.lastRun.timestamp)}</div>
                     </div>
+                    {#if selectedNode.lastRun.logs && selectedNode.lastRun.logs.length > 0}
+                      <div class="console-head-row" style="margin-top: 10px;">
+                        <span class="console-head">Iteration Trace ({selectedNode.lastRun.logs.length}):</span>
+                      </div>
+                      <pre class="console-logs" style="max-height: 160px; overflow-y: auto;">{selectedNode.lastRun.logs.join('\n')}</pre>
+                    {/if}
                     {#if selectedNode.lastRun.responseText}
+                      <div class="console-head-row" style="margin-top: 10px;">
+                        <span class="console-head">Loop Output:</span>
+                      </div>
                       <pre class="console-logs">{selectedNode.lastRun.responseText}</pre>
                     {/if}
                   {:else}
@@ -7184,6 +7861,11 @@
   }
   .flow-node.status-error {
     border-color: #ef4444;
+  }
+  .flow-node.status-skipped {
+    border-color: #64748b;
+    opacity: 0.55;
+    filter: grayscale(0.6);
   }
 
   /* Circular BPMN Diagram Nodes */
@@ -9390,6 +10072,9 @@
   .run-bad .status-code {
     color: var(--theme-danger-text, #b91c1c);
   }
+  .run-skipped .status-code {
+    color: #64748b;
+  }
   .duration {
     color: var(--theme-t-muted, #94a3b8);
   }
@@ -10563,5 +11248,28 @@
   .side-flow-select {
     width: 100%;
     margin-top: 4px;
+  }
+
+  .remote-collaborator-cursor {
+    position: absolute;
+    pointer-events: none;
+    z-index: 1000;
+    transition: left 0.05s linear, top 0.05s linear;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .remote-cursor-label {
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    margin-left: 12px;
+    margin-top: -6px;
+    letter-spacing: 0.3px;
   }
 </style>

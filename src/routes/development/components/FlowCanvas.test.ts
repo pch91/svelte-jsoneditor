@@ -825,5 +825,530 @@ describe('FlowCanvas', () => {
     expect(editorBtn).toBeTruthy()
     expect(editorBtn.textContent).toContain('↗ Editor')
   })
+
+  it('executes Loop block and iterates its body node N times saving logs and history', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: 'loop_1',
+          type: 'loop' as const,
+          title: 'Counter Loop',
+          x: 100,
+          y: 100,
+          status: 'idle' as const,
+          loopData: {
+            mode: 'count',
+            repeatCount: 3,
+            indexVar: 'i',
+            itemVar: 'item',
+            arrayPath: ''
+          }
+        },
+        {
+          id: 'js_body',
+          type: 'js' as const,
+          title: 'Body Worker',
+          x: 350,
+          y: 100,
+          status: 'idle' as const,
+          jsData: {
+            code: 'console.log("Worker running for iteration " + pm.environment.get("i"))\npm.environment.set("last_i", pm.environment.get("i"))'
+          }
+        }
+      ],
+      connections: [
+        {
+          id: 'c1',
+          fromId: 'loop_1',
+          toId: 'js_body',
+          fromPort: 'item',
+          kind: 'solid'
+        }
+      ]
+    }
+
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    const loopEl = target.querySelector('.flow-node-loop') as HTMLElement
+    expect(loopEl).toBeTruthy()
+
+    // Click [▶] on the Loop block
+    const loopPlayBtn = loopEl.querySelector('.node-tool-btn') as HTMLButtonElement
+    expect(loopPlayBtn).toBeTruthy()
+    await fireEvent.click(loopPlayBtn)
+
+    // Wait for the iterations to execute
+    await new Promise((r) => setTimeout(r, 100))
+    await tick()
+
+    // Loop node status should be success
+    expect(graph.nodes[0].status).toBe('success')
+    expect(graph.nodes[0].lastRun?.status).toBe('LOOP_DONE')
+    expect(graph.nodes[0].lastRun?.outputSummary).toContain('Repeated 3 times')
+
+    // Body node should be executed 3 times and save all iteration logs
+    const bodyNode = graph.nodes[1]
+    expect(bodyNode.status).toBe('success')
+    expect(bodyNode.lastRun).toBeTruthy()
+    expect(bodyNode.lastRun?.logs).toBeDefined()
+    expect(bodyNode.lastRun?.logs?.length).toBe(3)
+    expect(bodyNode.lastRun?.logs?.[0]).toContain('[Iter #1] Worker running for iteration 0')
+    expect(bodyNode.lastRun?.logs?.[1]).toContain('[Iter #2] Worker running for iteration 1')
+    expect(bodyNode.lastRun?.logs?.[2]).toContain('[Iter #3] Worker running for iteration 2')
+    expect(bodyNode.history?.length).toBe(3)
+  })
+
+  it('runs full flow with Loop, body node and post-loop Done node without deadlock', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: 'loop_1',
+          type: 'loop' as const,
+          title: 'Loop 2x',
+          x: 100,
+          y: 100,
+          status: 'idle' as const,
+          loopData: {
+            mode: 'count',
+            repeatCount: 2,
+            indexVar: 'idx',
+            itemVar: 'item',
+            arrayPath: ''
+          }
+        },
+        {
+          id: 'js_body',
+          type: 'js' as const,
+          title: 'Body Worker',
+          x: 350,
+          y: 100,
+          status: 'idle' as const,
+          jsData: {
+            code: 'console.log("Count " + pm.environment.get("idx"))'
+          }
+        },
+        {
+          id: 'js_done',
+          type: 'js' as const,
+          title: 'Done Handler',
+          x: 600,
+          y: 100,
+          status: 'idle' as const,
+          jsData: {
+            code: 'console.log("Loop finished successfully")'
+          }
+        }
+      ],
+      connections: [
+        {
+          id: 'c_body',
+          fromId: 'loop_1',
+          toId: 'js_body',
+          fromPort: 'item',
+          kind: 'solid'
+        },
+        {
+          id: 'c_loopback',
+          fromId: 'js_body',
+          toId: 'loop_1',
+          toPort: 'in',
+          kind: 'solid'
+        },
+        {
+          id: 'c_done',
+          fromId: 'loop_1',
+          toId: 'js_done',
+          fromPort: 'done',
+          kind: 'solid'
+        }
+      ]
+    }
+
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    // Click "Run Flow" button in toolbar
+    const runFlowBtn = getByText(target, 'Run Flow')
+    expect(runFlowBtn).toBeTruthy()
+    await fireEvent.click(runFlowBtn)
+
+    // Wait for flow execution
+    await new Promise((r) => setTimeout(r, 700))
+    await tick()
+
+    // Loop should complete
+    expect(graph.nodes[0].status).toBe('success')
+    // Body node should be executed 2 times with logs
+    expect(graph.nodes[1].status).toBe('success')
+    expect(graph.nodes[1].lastRun?.logs?.length).toBe(2)
+    expect(graph.nodes[1].lastRun?.logs?.[0]).toContain('[Iter #1] Count 0')
+    expect(graph.nodes[1].lastRun?.logs?.[1]).toContain('[Iter #2] Count 1')
+
+    // Done node should be executed after loop finishes
+    expect(graph.nodes[2].status).toBe('success')
+    expect(graph.nodes[2].lastRun?.logs).toContain('Loop finished successfully')
+  })
+
+  it('runs flow with router branching into merge without deadlock, marking inactive branch as skipped', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: 'js_init',
+          type: 'js' as const,
+          title: 'Init Data',
+          x: 50,
+          y: 100,
+          status: 'idle' as const,
+          jsData: {
+            code: 'pm.environment.set("role", "admin")\nconsole.log("Initialized role")'
+          }
+        },
+        {
+          id: 'router_1',
+          type: 'router' as const,
+          title: 'Role Router',
+          x: 250,
+          y: 100,
+          status: 'idle' as const,
+          routerData: {
+            mode: 'first-match',
+            ports: [
+              { id: 'port_admin', label: 'Admin Route', slot: 'middle' },
+              { id: 'port_user', label: 'User Route', slot: 'bottom' }
+            ],
+            rules: [
+              {
+                id: 'rule_admin',
+                label: 'Admin Check',
+                portId: 'port_admin',
+                type: 'jsonpath',
+                path: 'role',
+                operator: '==',
+                value: 'admin'
+              },
+              {
+                id: 'rule_user',
+                label: 'User Check',
+                portId: 'port_user',
+                type: 'otherwise'
+              }
+            ]
+          }
+        },
+        {
+          id: 'js_admin_branch',
+          type: 'js' as const,
+          title: 'Admin Branch',
+          x: 450,
+          y: 50,
+          status: 'idle' as const,
+          jsData: {
+            code: 'console.log("Admin branch executed")'
+          }
+        },
+        {
+          id: 'js_user_branch',
+          type: 'js' as const,
+          title: 'User Branch',
+          x: 450,
+          y: 200,
+          status: 'idle' as const,
+          jsData: {
+            code: 'console.log("User branch executed")'
+          }
+        },
+        {
+          id: 'merge_1',
+          type: 'merge' as const,
+          title: 'Join Branches',
+          x: 650,
+          y: 100,
+          status: 'idle' as const,
+          mergeData: {
+            strategy: 'wait-all'
+          }
+        },
+        {
+          id: 'js_final',
+          type: 'js' as const,
+          title: 'Final Step',
+          x: 850,
+          y: 100,
+          status: 'idle' as const,
+          jsData: {
+            code: 'console.log("Final step reached successfully")'
+          }
+        }
+      ],
+      connections: [
+        { id: 'c1', fromId: 'js_init', toId: 'router_1', kind: 'solid' },
+        { id: 'c2', fromId: 'router_1', toId: 'js_admin_branch', fromPort: 'port_admin', kind: 'solid' },
+        { id: 'c3', fromId: 'router_1', toId: 'js_user_branch', fromPort: 'port_user', kind: 'solid' },
+        { id: 'c4', fromId: 'js_admin_branch', toId: 'merge_1', toPort: 'in_admin', kind: 'solid' },
+        { id: 'c5', fromId: 'js_user_branch', toId: 'merge_1', toPort: 'in_user', kind: 'solid' },
+        { id: 'c6', fromId: 'merge_1', toId: 'js_final', fromPort: 'joined', kind: 'solid' }
+      ]
+    }
+
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    const runFlowBtn = getByText(target, 'Run Flow')
+    await fireEvent.click(runFlowBtn)
+
+    await new Promise((r) => setTimeout(r, 1300))
+    await tick()
+
+    // Init & Router should succeed
+    expect(graph.nodes[0].status).toBe('success')
+    expect(graph.nodes[1].status).toBe('success')
+    // Admin branch should succeed
+    expect(graph.nodes[2].status).toBe('success')
+    expect(graph.nodes[2].lastRun?.logs).toContain('Admin branch executed')
+    // User branch should be marked as skipped!
+    expect(graph.nodes[3].status).toBe('skipped')
+    // Merge node should NOT deadlock: it must succeed!
+    expect(graph.nodes[4].status).toBe('success')
+    expect(graph.nodes[4].lastRun?.status).toBe('MERGED')
+    // Final step node after merge must also execute!
+    expect(graph.nodes[5].status).toBe('success')
+    expect(graph.nodes[5].lastRun?.logs).toContain('Final step reached successfully')
+  })
+
+  it('passes upstream payload directly into downstream JS block sandbox options', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: 'js_producer',
+          type: 'js' as const,
+          title: 'Payload Producer',
+          x: 100,
+          y: 100,
+          status: 'idle' as const,
+          jsData: {
+            code: 'pm.environment.set("msg", "hello_world")\nconsole.log("produced")'
+          }
+        },
+        {
+          id: 'js_consumer',
+          type: 'js' as const,
+          title: 'Payload Consumer',
+          x: 350,
+          y: 100,
+          status: 'idle' as const,
+          jsData: {
+            code: 'console.log("Received payload: " + (payload ? payload.msg : "null"))'
+          }
+        }
+      ],
+      connections: [
+        { id: 'c_pipe', fromId: 'js_producer', toId: 'js_consumer', kind: 'solid' }
+      ]
+    }
+
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    const runFlowBtn = getByText(target, 'Run Flow')
+    await fireEvent.click(runFlowBtn)
+
+    await new Promise((r) => setTimeout(r, 500))
+    await tick()
+
+    expect(graph.nodes[0].status).toBe('success')
+    expect(graph.nodes[1].status).toBe('success')
+    // Consumer received the upstream payload object directly in `payload`
+    expect(graph.nodes[1].lastRun?.logs).toContain('Received payload: hello_world')
+  })
+
+  it('saves transform mapped output to currentEnv even when activeEnvName is empty', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: 'tr_1',
+          type: 'transform' as const,
+          title: 'Mapper',
+          x: 100,
+          y: 100,
+          status: 'idle' as const,
+          transformData: {
+            sampleInput: JSON.stringify({ user: { firstName: 'Alice' } }),
+            mappings: [
+              { id: 'm1', sourcePath: 'user.firstName', targetPath: 'name' }
+            ],
+            saveToEnvVar: 'mappedName'
+          }
+        },
+        {
+          id: 'js_reader',
+          type: 'js' as const,
+          title: 'Env Reader',
+          x: 350,
+          y: 100,
+          status: 'idle' as const,
+          jsData: {
+            code: 'console.log("Read env: " + pm.environment.get("mappedName"))'
+          }
+        }
+      ],
+      connections: [
+        { id: 'c_tr', fromId: 'tr_1', toId: 'js_reader', kind: 'solid' }
+      ]
+    }
+
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '', // Notice: empty activeEnvName!
+        globalProxy: ''
+      }
+    })
+
+    const runFlowBtn = getByText(target, 'Run Flow')
+    await fireEvent.click(runFlowBtn)
+
+    await new Promise((r) => setTimeout(r, 500))
+    await tick()
+
+    expect(graph.nodes[0].status).toBe('success')
+    expect(graph.nodes[1].status).toBe('success')
+    // Downstream JS successfully reads the variable saved by transform
+    expect(graph.nodes[1].lastRun?.logs?.[0]).toContain('Read env:')
+    expect(graph.nodes[1].lastRun?.logs?.[0]).toContain('Alice')
+  })
+
+  it('runs sub-flow in event-throw and passes payload to event-catch', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const subGraph: FlowGraph = {
+      nodes: [
+        {
+          id: 'sub_js_1',
+          type: 'js' as const,
+          title: 'Subflow Worker',
+          x: 50,
+          y: 50,
+          status: 'idle' as const,
+          jsData: {
+            code: 'console.log("Worker inside subflow executed")'
+          }
+        }
+      ],
+      connections: []
+    }
+
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: 'throw_sub',
+          type: 'event-throw' as const,
+          title: 'Throw Subflow',
+          x: 100,
+          y: 100,
+          status: 'idle' as const,
+          eventData: {
+            eventName: 'order-processed',
+            targetFlowId: 'flow-sub-1',
+            targetFlowName: 'Order Subflow'
+          }
+        },
+        {
+          id: 'catch_ev',
+          type: 'event-catch' as const,
+          title: 'Catch Event',
+          x: 350,
+          y: 100,
+          status: 'idle' as const,
+          eventData: {
+            eventName: 'order-processed'
+          }
+        }
+      ],
+      connections: [
+        { id: 'c_ev', fromId: 'throw_sub', toId: 'catch_ev', kind: 'solid' }
+      ]
+    }
+
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        availableFlows: [
+          {
+            id: 'flow-sub-1',
+            name: 'Order Subflow',
+            groupName: 'Subflows',
+            graph: subGraph
+          }
+        ],
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    const runFlowBtn = getByText(target, 'Run Flow')
+    await fireEvent.click(runFlowBtn)
+
+    await new Promise((r) => setTimeout(r, 600))
+    await tick()
+
+    // Event-throw should have executed the sub-flow and captured logs!
+    expect(graph.nodes[0].status).toBe('success')
+    expect(graph.nodes[0].lastRun?.status).toBe('SUBFLOW_OK')
+    expect(graph.nodes[0].lastRun?.logs).toContain('Worker inside subflow executed')
+
+    // Event-catch should have triggered
+    expect(graph.nodes[1].status).toBe('success')
+    expect(graph.nodes[1].lastRun?.status).toBe('EVENT_CAUGHT')
+  })
 })
+
 
