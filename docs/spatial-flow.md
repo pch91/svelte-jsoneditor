@@ -1,4 +1,5 @@
 # Spatial Flow Engine — Planejamento Técnico
+
 ## Categorias ⚙️ Logic & Code e 🔀 Flow Control · Portas Dinâmicas · Branching por Portas
 
 > Documento de planejamento. Nenhum código foi alterado ainda.
@@ -8,24 +9,24 @@
 
 ## 0. Sumário
 
-| # | Seção |
-|---|---|
-| 1 | Escopo e regras invioláveis |
-| 2 | Diagnóstico do estado atual do código |
-| 3 | Modelo de categorias e variantes (Node Registry) |
-| 4 | Switcher de tipo — comportamento idêntico ao Events |
-| 5 | Anatomia do card e **zona reservada** do canto superior esquerdo |
-| 6 | Geometria de portas (Top / Right / Bottom / Input) |
-| 7 | Design de cada bloco |
-| 8 | Modelo de dados (`flowTypes.ts`) |
-| 9 | Execution Engine: payloads, portas e dead-path |
-| 10 | Inspector (menu lateral) por variante |
-| 11 | Toolbar |
-| 12 | Persistência e compatibilidade |
-| 13 | Fases, entregáveis e critérios de aceite |
-| 14 | Estratégia de testes |
-| 15 | Riscos |
-| 16 | Decisões em aberto |
+| #   | Seção                                                            |
+| --- | ---------------------------------------------------------------- |
+| 1   | Escopo e regras invioláveis                                      |
+| 2   | Diagnóstico do estado atual do código                            |
+| 3   | Modelo de categorias e variantes (Node Registry)                 |
+| 4   | Switcher de tipo — comportamento idêntico ao Events              |
+| 5   | Anatomia do card e **zona reservada** do canto superior esquerdo |
+| 6   | Geometria de portas (Top / Right / Bottom / Input)               |
+| 7   | Design de cada bloco                                             |
+| 8   | Modelo de dados (`flowTypes.ts`)                                 |
+| 9   | Execution Engine: payloads, portas e dead-path                   |
+| 10  | Inspector (menu lateral) por variante                            |
+| 11  | Toolbar                                                          |
+| 12  | Persistência e compatibilidade                                   |
+| 13  | Fases, entregáveis e critérios de aceite                         |
+| 14  | Estratégia de testes                                             |
+| 15  | Riscos                                                           |
+| 16  | Decisões em aberto                                               |
 
 ---
 
@@ -33,15 +34,15 @@
 
 **Dentro do escopo**
 
-| Categoria | Bloco | Situação | Entrega |
-|---|---|---|---|
-| ⚙️ Logic & Code | ⚡ JS Block | existe | melhorar: portas dinâmicas (até 10), `route()` / `out()`, Inspector |
-| ⚙️ Logic & Code | 🔄 Transform / JSON Mapper | novo | completo |
-| 🔀 Flow Control | 🔀 Router | novo | completo |
-| 🔀 Flow Control | 🔁 Loop / Iterator | novo | estrutura base (Future) |
-| 🔀 Flow Control | ⏳ Delay / Throttle | novo | estrutura base (Future) |
-| 🔀 Flow Control | 🔗 Merge / Join | novo | estrutura base (Future) |
-| Engine | `FlowConnection` + branching | existe parcialmente | `fromPort`/`toPort` + execução só nos ramos ativos |
+| Categoria       | Bloco                        | Situação            | Entrega                                                             |
+| --------------- | ---------------------------- | ------------------- | ------------------------------------------------------------------- |
+| ⚙️ Logic & Code | ⚡ JS Block                  | existe              | melhorar: portas dinâmicas (até 10), `route()` / `out()`, Inspector |
+| ⚙️ Logic & Code | 🔄 Transform / JSON Mapper   | novo                | completo                                                            |
+| 🔀 Flow Control | 🔀 Router                    | novo                | completo                                                            |
+| 🔀 Flow Control | 🔁 Loop / Iterator           | novo                | estrutura base (Future)                                             |
+| 🔀 Flow Control | ⏳ Delay / Throttle          | novo                | estrutura base (Future)                                             |
+| 🔀 Flow Control | 🔗 Merge / Join              | novo                | estrutura base (Future)                                             |
+| Engine          | `FlowConnection` + branching | existe parcialmente | `fromPort`/`toPort` + execução só nos ramos ativos                  |
 
 **Regras invioláveis**
 
@@ -57,19 +58,19 @@
 
 Uma sessão anterior começou Router e portas no `FlowCanvas.svelte` mas **não completou o `flowTypes.ts`**. Resultado: o projeto hoje **não passa no type-check**.
 
-| Problema | Onde | Impacto |
-|---|---|---|
-| `svelte-check`: **123 erros** | `FlowCanvas.svelte` | `routerData`, `FlowNodePort`, `PortSlot`, `FlowNodeRouterRule`, `FlowNodeRouterData` não existem em `flowTypes.ts` |
-| Funções importadas que não existem | `FlowCanvas.svelte` L14-24 | `createDefaultRouterPorts`, `createDefaultRouterRules`, `evaluateRouterRules`, `matchStatusPattern` |
-| `FlowNodeType` sem `'router'` | `flowTypes.ts` L4 | comparações `type === 'router'` acusam "no overlap" |
-| `FlowConnection` sem `fromPort` | `flowTypes.ts` L94 | o canvas já grava `fromPort`, mas o tipo não conhece |
-| `executeJsSandbox` não retorna `activePorts` | `flowTypes.ts` L112 | o engine lê `res.activePorts` que nunca existe; `route()`/`out()` não estão implementados |
-| `parseFlowFile` descarta `fromPort` | `flowTypes.ts` L533-538 | ao abrir um arquivo salvo, todas as conexões de portas perdem a porta |
-| `VALID_FLOW_NODE_TYPES` sem novos tipos | `flowTypes.ts` L485 | abrir um fluxo com Router gera "Invalid node in flow file" |
-| Erro de sintaxe no teste | `FlowCanvas.test.ts` L611 | `})` extra; a suíte não compila |
-| Portas multi ficam todas na direita | `FlowCanvas.svelte` L2754, CSS L5807 | não atende o layout Top / Right / Bottom |
-| Bézier só horizontal | `getBezierPath` L2093 | fio que sai do topo/base sai "de lado" |
-| Bloqueio no dead-path | `isReadyToRun` L1516 | nó com entrada *solid* vinda de um nó **pulado** espera para sempre (ver 9.4) |
+| Problema                                     | Onde                                 | Impacto                                                                                                            |
+| -------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `svelte-check`: **123 erros**                | `FlowCanvas.svelte`                  | `routerData`, `FlowNodePort`, `PortSlot`, `FlowNodeRouterRule`, `FlowNodeRouterData` não existem em `flowTypes.ts` |
+| Funções importadas que não existem           | `FlowCanvas.svelte` L14-24           | `createDefaultRouterPorts`, `createDefaultRouterRules`, `evaluateRouterRules`, `matchStatusPattern`                |
+| `FlowNodeType` sem `'router'`                | `flowTypes.ts` L4                    | comparações `type === 'router'` acusam "no overlap"                                                                |
+| `FlowConnection` sem `fromPort`              | `flowTypes.ts` L94                   | o canvas já grava `fromPort`, mas o tipo não conhece                                                               |
+| `executeJsSandbox` não retorna `activePorts` | `flowTypes.ts` L112                  | o engine lê `res.activePorts` que nunca existe; `route()`/`out()` não estão implementados                          |
+| `parseFlowFile` descarta `fromPort`          | `flowTypes.ts` L533-538              | ao abrir um arquivo salvo, todas as conexões de portas perdem a porta                                              |
+| `VALID_FLOW_NODE_TYPES` sem novos tipos      | `flowTypes.ts` L485                  | abrir um fluxo com Router gera "Invalid node in flow file"                                                         |
+| Erro de sintaxe no teste                     | `FlowCanvas.test.ts` L611            | `})` extra; a suíte não compila                                                                                    |
+| Portas multi ficam todas na direita          | `FlowCanvas.svelte` L2754, CSS L5807 | não atende o layout Top / Right / Bottom                                                                           |
+| Bézier só horizontal                         | `getBezierPath` L2093                | fio que sai do topo/base sai "de lado"                                                                             |
+| Bloqueio no dead-path                        | `isReadyToRun` L1516                 | nó com entrada _solid_ vinda de um nó **pulado** espera para sempre (ver 9.4)                                      |
 
 **Conclusão:** a primeira fase é **estabilizar** (fazer compilar e testar) antes de qualquer feature nova.
 
@@ -81,12 +82,12 @@ Uma sessão anterior começou Router e portas no `FlowCanvas.svelte` mas **não 
 
 Igual ao Events: **uma categoria = uma família**. Você adiciona um bloco da família e escolhe/troca a variante pelo switcher.
 
-| Categoria | Formato | Variantes | Variante padrão ao criar |
-|---|---|---|---|
-| 🌐 API & Network | card | REST | — (não tem switcher) |
-| ⭕ Events | círculo | Start · Terminate · Jump · Receiver | Jump (comportamento atual) |
-| ⚙️ Logic & Code | card | JS · Mapper | JS |
-| 🔀 Flow Control | card | Router · Loop · Delay · Merge | Router |
+| Categoria        | Formato | Variantes                           | Variante padrão ao criar   |
+| ---------------- | ------- | ----------------------------------- | -------------------------- |
+| 🌐 API & Network | card    | REST                                | — (não tem switcher)       |
+| ⭕ Events        | círculo | Start · Terminate · Jump · Receiver | Jump (comportamento atual) |
+| ⚙️ Logic & Code  | card    | JS · Mapper                         | JS                         |
+| 🔀 Flow Control  | card    | Router · Loop · Delay · Merge       | Router                     |
 
 ### 3.2 Registry como fonte única da verdade
 
@@ -98,16 +99,16 @@ export type FlowCategory = 'network' | 'events' | 'logic' | 'control'
 export interface FlowNodeVariantDef {
   type: FlowNodeType
   category: FlowCategory
-  label: string            // "JS Script"
-  icon: string             // "⚡"
-  accent: string           // "#a855f7"
-  defaultTitle: string     // "New JS Script"
+  label: string // "JS Script"
+  icon: string // "⚡"
+  accent: string // "#a855f7"
+  defaultTitle: string // "New JS Script"
   status: 'stable' | 'future'
-  height: number           // altura fixa do card (px) — necessária para portas Bottom
+  height: number // altura fixa do card (px) — necessária para portas Bottom
   inspectorTabs: SidePanelTab[]
-  createData(): Partial<FlowNode>               // jsData / transformData / routerData ...
+  createData(): Partial<FlowNode> // jsData / transformData / routerData ...
   getOutputPorts(node: FlowNode): FlowNodePort[] // portas fixas ou dinâmicas
-  getInputPorts(node: FlowNode): FlowNodePort[]  // 1 padrão; Merge = várias
+  getInputPorts(node: FlowNode): FlowNodePort[] // 1 padrão; Merge = várias
 }
 
 export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef>
@@ -125,32 +126,32 @@ Quem passa a consumir o registry: toolbar, switcher, `addNodeAt`, Inspector (aba
 
 ### 4.1 Como o Events funciona hoje (referência exata)
 
-| Aspecto | Implementação atual |
-|---|---|
-| Estado | `activeCircleSwitcherId: string \| null` — **só um switcher aberto por vez** |
-| Botão | `.circle-switch-btn`, 18×18px, `top:-6px; left:-6px`, ícone ↻ (SVG) |
-| Visibilidade do botão | aparece em `:hover`, `.is-selected` e com switcher aberto |
-| Abrir/fechar | clique no botão → `toggleCircleSwitcher(id)` |
-| Painel | `.circle-type-control`: pílula flutuante **acima** do nó, seta (`::after`) apontando para o nó |
-| Opções | botões com disco colorido + nome; o tipo atual fica `.active` |
-| Posicionamento adaptativo | `.align-left` quando `x < 150`; `.align-bottom` (abre embaixo) quando `y < 55` |
-| Fecha quando | escolhe uma opção · clica de novo no botão · clica no canvas vazio · seleciona outro nó |
-| Ao criar pela toolbar | o switcher **já abre** (`activeCircleSwitcherId = newNode.id`) |
-| Ao trocar | mesmo `id`, mesma posição, **conexões preservadas**, título atualizado |
+| Aspecto                   | Implementação atual                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------------------- |
+| Estado                    | `activeCircleSwitcherId: string \| null` — **só um switcher aberto por vez**                   |
+| Botão                     | `.circle-switch-btn`, 18×18px, `top:-6px; left:-6px`, ícone ↻ (SVG)                            |
+| Visibilidade do botão     | aparece em `:hover`, `.is-selected` e com switcher aberto                                      |
+| Abrir/fechar              | clique no botão → `toggleCircleSwitcher(id)`                                                   |
+| Painel                    | `.circle-type-control`: pílula flutuante **acima** do nó, seta (`::after`) apontando para o nó |
+| Opções                    | botões com disco colorido + nome; o tipo atual fica `.active`                                  |
+| Posicionamento adaptativo | `.align-left` quando `x < 150`; `.align-bottom` (abre embaixo) quando `y < 55`                 |
+| Fecha quando              | escolhe uma opção · clica de novo no botão · clica no canvas vazio · seleciona outro nó        |
+| Ao criar pela toolbar     | o switcher **já abre** (`activeCircleSwitcherId = newNode.id`)                                 |
+| Ao trocar                 | mesmo `id`, mesma posição, **conexões preservadas**, título atualizado                         |
 
 ### 4.2 Especificação para Logic & Code e Flow Control
 
 Todos os itens da tabela 4.1 valem **sem exceção**, com estas definições:
 
-| Item | Regra |
-|---|---|
-| Estado | **reutiliza o mesmo** `activeCircleSwitcherId` → abrir o switcher de um card fecha o de um círculo e vice-versa |
-| Botão | mesmo tamanho, mesmo ícone ↻, mesmo hover/selected; posição `top:-6px; left:-6px` do card (zona reservada) |
-| Painel | mesma pílula, mesma seta, mesmo `align-left` / `align-bottom` |
-| Opções Logic & Code | `⚡ JS Script` · `🔄 JSON Mapper` |
-| Opções Flow Control | `🔀 Router` · `🔁 Loop` · `⏳ Delay` · `🔗 Merge` |
-| Variante Future | aparece no switcher com tag discreta `soon`; é selecionável (cria o card base) |
-| Implementação | novo componente `NodeTypeSwitcher.svelte` com classes próprias que **copiam** o visual do `.circle-type-control`. O CSS do Events não é tocado |
+| Item                | Regra                                                                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Estado              | **reutiliza o mesmo** `activeCircleSwitcherId` → abrir o switcher de um card fecha o de um círculo e vice-versa                                |
+| Botão               | mesmo tamanho, mesmo ícone ↻, mesmo hover/selected; posição `top:-6px; left:-6px` do card (zona reservada)                                     |
+| Painel              | mesma pílula, mesma seta, mesmo `align-left` / `align-bottom`                                                                                  |
+| Opções Logic & Code | `⚡ JS Script` · `🔄 JSON Mapper`                                                                                                              |
+| Opções Flow Control | `🔀 Router` · `🔁 Loop` · `⏳ Delay` · `🔗 Merge`                                                                                              |
+| Variante Future     | aparece no switcher com tag discreta `soon`; é selecionável (cria o card base)                                                                 |
+| Implementação       | novo componente `NodeTypeSwitcher.svelte` com classes próprias que **copiam** o visual do `.circle-type-control`. O CSS do Events não é tocado |
 
 ### 4.3 O que acontece com os dados ao trocar de variante
 
@@ -161,7 +162,7 @@ O Events não precisa disso porque seus tipos não têm configuração pesada. C
 3. **Conexões de entrada:** sempre preservadas.
 4. **Conexões de saída:**
    - porta com o mesmo `id` existe na nova variante → preservada;
-   - porta não existe → conexão removida, com toast: *"2 conexões removidas (portas inexistentes em JSON Mapper)"*.
+   - porta não existe → conexão removida, com toast: _"2 conexões removidas (portas inexistentes em JSON Mapper)"_.
 5. `status`, `lastRun` e `history` são zerados (o resultado anterior não vale para o novo tipo).
 
 ---
@@ -170,11 +171,11 @@ O Events não precisa disso porque seus tipos não têm configuração pesada. C
 
 ### 5.1 Medidas atuais (CSS)
 
-| Elemento | Valor |
-|---|---|
-| Largura | 280px |
-| Header | `padding: 7px 10px` → ~36px de altura |
-| Porta de entrada | `left:-8px; top:40px`, 14×14 → centro em **y = 47** |
+| Elemento                 | Valor                                                   |
+| ------------------------ | ------------------------------------------------------- |
+| Largura                  | 280px                                                   |
+| Header                   | `padding: 7px 10px` → ~36px de altura                   |
+| Porta de entrada         | `left:-8px; top:40px`, 14×14 → centro em **y = 47**     |
 | Botão switcher (círculo) | 18×18 em `top:-6; left:-6` → ocupa x∈[-6,12], y∈[-6,12] |
 
 ### 5.2 Zona reservada (canto superior esquerdo)
@@ -187,13 +188,13 @@ y=-10 ┌──────────────────┐
 y=36  └──────────────────┘   (= fim do header)
 ```
 
-| Regra | Valor |
-|---|---|
-| Área reservada | x ∈ [-10, 120], y ∈ [-10, 36] |
-| Portas **Top** | só a partir de x ≥ 150 (metade direita) |
-| Porta de **entrada** (lado esquerdo) | y ≥ 40 (abaixo do header) — já é assim hoje |
-| Entradas do **Merge** | distribuídas em y ∈ [48, H-24]; nunca acima de 40 |
-| Ícone do tipo no header | mantém `padding-left` ≥ 20px para não ficar embaixo do botão ↻ |
+| Regra                                | Valor                                                          |
+| ------------------------------------ | -------------------------------------------------------------- |
+| Área reservada                       | x ∈ [-10, 120], y ∈ [-10, 36]                                  |
+| Portas **Top**                       | só a partir de x ≥ 150 (metade direita)                        |
+| Porta de **entrada** (lado esquerdo) | y ≥ 40 (abaixo do header) — já é assim hoje                    |
+| Entradas do **Merge**                | distribuídas em y ∈ [48, H-24]; nunca acima de 40              |
+| Ícone do tipo no header              | mantém `padding-left` ≥ 20px para não ficar embaixo do botão ↻ |
 
 ### 5.3 Anatomia final do card
 
@@ -239,45 +240,48 @@ O posicionamento das portas segue rigorosamente a distribuição física especif
 
 Conforme a convenção desenhada pelo usuário, a numeração/ordem das 10 portas possíveis é distribuída alternando entre as bordas de forma equilibrada:
 
-| Porta # | Borda Física | Slot no Modelo | Posição Relativa | Semântica Típica |
-|:---:|:---:|:---:|:---:|:---|
-| **1** | Direita | `middle` | Centro vertical (`y ≈ 50%`) | Saída principal / Default |
-| **2** | Topo | `top` | Topo-direito (`x ≈ 230`) | Sucesso / 2xx / Caminho Feliz |
-| **3** | Base | `bottom` | Base-direita (`x ≈ 230`) | Erro / 4xx/5xx / Fallback |
-| **4** | Direita | `middle` | Centro-baixo (`y ≈ 65%`) | Regra Secundária |
-| **5** | Topo | `top` | Topo-centro (`x ≈ 190`) | Rota Alternativa Superior |
-| **6** | Base | `bottom` | Base-centro (`x ≈ 190`) | Rota de Exceção |
-| **7** | Direita | `middle` | Direita-cima (`y ≈ 35%`) | Regra de Negócio 1 |
-| **8** | Direita | `middle` | Direita-baixo (`y ≈ 80%`) | Regra de Negócio 2 |
-| **9** | Topo | `top` | Topo-esquerda (`x ≈ 150`, limite da zona reservada) | Sucesso Especial / Bypass |
-| **10** | Base | `bottom` | Base-esquerda (`x ≈ 150`) | Descarte / Dead-letter |
+| Porta # | Borda Física | Slot no Modelo |                  Posição Relativa                   | Semântica Típica              |
+| :-----: | :----------: | :------------: | :-------------------------------------------------: | :---------------------------- |
+|  **1**  |   Direita    |    `middle`    |             Centro vertical (`y ≈ 50%`)             | Saída principal / Default     |
+|  **2**  |     Topo     |     `top`      |              Topo-direito (`x ≈ 230`)               | Sucesso / 2xx / Caminho Feliz |
+|  **3**  |     Base     |    `bottom`    |              Base-direita (`x ≈ 230`)               | Erro / 4xx/5xx / Fallback     |
+|  **4**  |   Direita    |    `middle`    |              Centro-baixo (`y ≈ 65%`)               | Regra Secundária              |
+|  **5**  |     Topo     |     `top`      |               Topo-centro (`x ≈ 190`)               | Rota Alternativa Superior     |
+|  **6**  |     Base     |    `bottom`    |               Base-centro (`x ≈ 190`)               | Rota de Exceção               |
+|  **7**  |   Direita    |    `middle`    |              Direita-cima (`y ≈ 35%`)               | Regra de Negócio 1            |
+|  **8**  |   Direita    |    `middle`    |              Direita-baixo (`y ≈ 80%`)              | Regra de Negócio 2            |
+|  **9**  |     Topo     |     `top`      | Topo-esquerda (`x ≈ 150`, limite da zona reservada) | Sucesso Especial / Bypass     |
+| **10**  |     Base     |    `bottom`    |              Base-esquerda (`x ≈ 150`)              | Descarte / Dead-letter        |
 
 ### 6.3 Slots e Limites Físicos
 
-| Slot | Borda | Máx. Portas | Cor Padrão | Vetor do Fio (Bézier) |
-|---|---|:---:|---|---|
-| `top` | Superior | 3 | `#10b981` (verde) | Sai para **CIMA** `(x, y - k)` |
-| `middle` | Direita | 4 | `#f59e0b` (âmbar) | Sai para a **DIREITA** `(x + k, y)` |
-| `bottom` | Inferior | 3 | `#ef4444` (vermelho) | Sai para **BAIXO** `(x, y + k)` |
-| **Total Saídas** | | **10** | | |
-| `input` | Esquerda | 1 (ou 2..5 no Merge) | `#3883fa` (azul) | Entra pela **ESQUERDA** `(x - k, y)` |
+| Slot             | Borda    |     Máx. Portas      | Cor Padrão           | Vetor do Fio (Bézier)                |
+| ---------------- | -------- | :------------------: | -------------------- | ------------------------------------ |
+| `top`            | Superior |          3           | `#10b981` (verde)    | Sai para **CIMA** `(x, y - k)`       |
+| `middle`         | Direita  |          4           | `#f59e0b` (âmbar)    | Sai para a **DIREITA** `(x + k, y)`  |
+| `bottom`         | Inferior |          3           | `#ef4444` (vermelho) | Sai para **BAIXO** `(x, y + k)`      |
+| **Total Saídas** |          |        **10**        |                      |                                      |
+| `input`          | Esquerda | 1 (ou 2..5 no Merge) | `#3883fa` (azul)     | Entra pela **ESQUERDA** `(x - k, y)` |
 
 ### 6.4 Fórmulas Exatas e Tabela de Coordenadas Fixas (W = 280px, H = 140px)
 
 Conforme o esboço original (`media_1791882218707.png`), as 10 portas possuem posições físicas e fixas nas bordas do card (altura padronizada de 140px):
 
 ```ts
-export const FIXED_PORT_SLOTS: Record<number, { slot: PortSlot; relX: number; relY: number; direction: Direction }> = {
-  1: { slot: 'middle', relX: 280, relY: 72,  direction: 'right'  }, // Direita (centro)
-  2: { slot: 'top',    relX: 225, relY: 0,   direction: 'top'    }, // Topo (direita, espaço livre dos botões ▶ e ×)
+export const FIXED_PORT_SLOTS: Record<
+  number,
+  { slot: PortSlot; relX: number; relY: number; direction: Direction }
+> = {
+  1: { slot: 'middle', relX: 280, relY: 72, direction: 'right' }, // Direita (centro)
+  2: { slot: 'top', relX: 225, relY: 0, direction: 'top' }, // Topo (direita, espaço livre dos botões ▶ e ×)
   3: { slot: 'bottom', relX: 225, relY: 140, direction: 'bottom' }, // Base (direita, 55px livre do canto e da porta 8)
-  4: { slot: 'middle', relX: 280, relY: 96,  direction: 'right'  }, // Direita (baixo)
-  5: { slot: 'top',    relX: 185, relY: 0,   direction: 'top'    }, // Topo (centro)
+  4: { slot: 'middle', relX: 280, relY: 96, direction: 'right' }, // Direita (baixo)
+  5: { slot: 'top', relX: 185, relY: 0, direction: 'top' }, // Topo (centro)
   6: { slot: 'bottom', relX: 185, relY: 140, direction: 'bottom' }, // Base (centro, colado na borda inferior)
-  7: { slot: 'middle', relX: 280, relY: 48,  direction: 'right'  }, // Direita (topo)
-  8: { slot: 'middle', relX: 280, relY: 120, direction: 'right'  }, // Direita (fundo)
-  9: { slot: 'top',    relX: 150, relY: 0,   direction: 'top'    }, // Topo (esquerda, limite da zona reservada)
-  10:{ slot: 'bottom', relX: 150, relY: 140, direction: 'bottom' }  // Base (esquerda, colado na borda inferior)
+  7: { slot: 'middle', relX: 280, relY: 48, direction: 'right' }, // Direita (topo)
+  8: { slot: 'middle', relX: 280, relY: 120, direction: 'right' }, // Direita (fundo)
+  9: { slot: 'top', relX: 150, relY: 0, direction: 'top' }, // Topo (esquerda, limite da zona reservada)
+  10: { slot: 'bottom', relX: 150, relY: 140, direction: 'bottom' } // Base (esquerda, colado na borda inferior)
 }
 ```
 
@@ -292,18 +296,19 @@ Para que as portas da base inferior (`bottom`) tenham ancoragem determinística:
 
 Seguindo o feedback do usuário, **nenhum bloco deve ter card grande ou verticalmente esticado**. O corpo do card permanece enxuto, minimalista e diagramático (1 a 2 linhas curtas, exatamente no padrão do JS Block existente):
 
-| Variante | Altura Base | Com Multi-Portas | Conteúdo Central |
-|---|:---:|:---:|---|
-| **⚡ JS Block** | 140px | 160px | 1ª linha do código + chip `🔀 N portas` |
-| **🔄 JSON Mapper** | 140px | 160px | 1 linha de mapeamento + chip `🔄 N campos` |
-| **🔀 Router Block** | 140px | 160px | 1 linha com rotas + chip `[ First Match ] · N regras` |
-| **🔁 Loop Block** | 140px | 160px | 1 linha com array path + chip `🔁 item / done` |
-| **⏳ Delay Block** | 140px | 160px | 1 linha com tempo + chip `⏳ buffer: N` |
-| **🔗 Merge Block** | — | 160px | 1 linha de sincronização + chip `🔗 N entradas` |
+| Variante            | Altura Base | Com Multi-Portas | Conteúdo Central                                      |
+| ------------------- | :---------: | :--------------: | ----------------------------------------------------- |
+| **⚡ JS Block**     |    140px    |      160px       | 1ª linha do código + chip `🔀 N portas`               |
+| **🔄 JSON Mapper**  |    140px    |      160px       | 1 linha de mapeamento + chip `🔄 N campos`            |
+| **🔀 Router Block** |    140px    |      160px       | 1 linha com rotas + chip `[ First Match ] · N regras` |
+| **🔁 Loop Block**   |    140px    |      160px       | 1 linha com array path + chip `🔁 item / done`        |
+| **⏳ Delay Block**  |    140px    |      160px       | 1 linha com tempo + chip `⏳ buffer: N`               |
+| **🔗 Merge Block**  |      —      |      160px       | 1 linha de sincronização + chip `🔗 N entradas`       |
 
 ### 6.6 Curvatura Bézier Específica por Borda
 
 A curva do fio conecta a origem ao destino respeitando o ângulo de saída de cada borda:
+
 - Origem no **Top**: vetor de controle tangencial para cima `(x1, y1 - max(40, dy * 0.5))`.
 - Origem no **Right**: vetor de controle tangencial para a direita `(x1 + max(40, dx * 0.5), y1)`.
 - Origem no **Bottom**: vetor de controle tangencial para baixo `(x1, y1 + max(40, dy * 0.5))`.
@@ -319,14 +324,14 @@ Todos os cards retangulares possuem largura de **280px**, altura compacta de **1
 
 ### 7.1 ⚡ JS Block — Logic & Code (Referência de Design)
 
-| Item | Definição |
-|---|---|
-| Accent | `#a855f7` (roxo) |
-| Altura | 140px (sem portas) ou 160px (com portas) |
-| Entrada | 1 (esquerda, `y = 47`) |
-| Saídas | 1 saída padrão à direita **ou** até 10 portas em Top / Right / Bottom |
-| Corpo (Centro) | 1ª linha de código (código monospace truncado) + chip `🔀 4 portas` |
-| Rodapé | status · tempo de execução · porta ativada · link `[↗ Editor]` |
+| Item           | Definição                                                             |
+| -------------- | --------------------------------------------------------------------- |
+| Accent         | `#a855f7` (roxo)                                                      |
+| Altura         | 140px (sem portas) ou 160px (com portas)                              |
+| Entrada        | 1 (esquerda, `y = 47`)                                                |
+| Saídas         | 1 saída padrão à direita **ou** até 10 portas em Top / Right / Bottom |
+| Corpo (Centro) | 1ª linha de código (código monospace truncado) + chip `🔀 4 portas`   |
+| Rodapé         | status · tempo de execução · porta ativada · link `[↗ Editor]`        |
 
 ```
          (↻)                         (ok)     (vip)
@@ -345,13 +350,13 @@ Todos os cards retangulares possuem largura de **280px**, altura compacta de **1
 
 ### 7.2 🔄 JSON Mapper — Logic & Code (Slim)
 
-| Item | Definição |
-|---|---|
-| Accent | `#06b6d4` (ciano) |
-| Altura | 160px |
-| Entrada / Saída | 1 entrada (esquerda) / 1 saída (direita) |
-| Corpo (Centro) | Linha curta de resumo `user ➔ billing` + chip `🔄 4 campos · ✓ válido` |
-| Rodapé | status · tempo · link `[↗ Editor]` |
+| Item            | Definição                                                              |
+| --------------- | ---------------------------------------------------------------------- |
+| Accent          | `#06b6d4` (ciano)                                                      |
+| Altura          | 160px                                                                  |
+| Entrada / Saída | 1 entrada (esquerda) / 1 saída (direita)                               |
+| Corpo (Centro)  | Linha curta de resumo `user ➔ billing` + chip `🔄 4 campos · ✓ válido` |
+| Rodapé          | status · tempo · link `[↗ Editor]`                                     |
 
 ```
          (↻)
@@ -369,14 +374,14 @@ Todos os cards retangulares possuem largura de **280px**, altura compacta de **1
 
 ### 7.3 🔀 Router Block — Flow Control (Slim — Sem Textão no Centro!)
 
-| Item | Definição |
-|---|---|
-| Accent | `#f59e0b` (âmbar) |
-| Altura | **160px** (enxuto, mesma altura do JS Block!) |
-| Entrada | 1 (esquerda, `y = 47`) |
-| Saídas | até 10 portas em Top / Right / Bottom (distribuídas nas bordas físicas) |
+| Item           | Definição                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------- |
+| Accent         | `#f59e0b` (âmbar)                                                                             |
+| Altura         | **160px** (enxuto, mesma altura do JS Block!)                                                 |
+| Entrada        | 1 (esquerda, `y = 47`)                                                                        |
+| Saídas         | até 10 portas em Top / Right / Bottom (distribuídas nas bordas físicas)                       |
 | Corpo (Centro) | Resumo das rotas em 1 linha `2xx, admin, erro, otherwise` + chip `[ First Match ] · 4 regras` |
-| Rodapé | `ROUTED → 2xx` ou `NO_ROUTE` · link `[↗ Editor]` |
+| Rodapé         | `ROUTED → 2xx` ou `NO_ROUTE` · link `[↗ Editor]`                                              |
 
 ```
          (↻)                         (2xx)
@@ -397,14 +402,14 @@ Todos os cards retangulares possuem largura de **280px**, altura compacta de **1
 
 ### 7.4 🔁 Loop / Iterator — Flow Control (Slim)
 
-| Item | Definição |
-|---|---|
-| Accent | `#6366f1` (índigo) |
-| Altura | **160px** |
-| Entrada | 1 (esquerda, `y = 47`) |
-| Saídas | `item` (Right), `done` (Bottom), `error` (Top) |
+| Item           | Definição                                                                |
+| -------------- | ------------------------------------------------------------------------ |
+| Accent         | `#6366f1` (índigo)                                                       |
+| Altura         | **160px**                                                                |
+| Entrada        | 1 (esquerda, `y = 47`)                                                   |
+| Saídas         | `item` (Right), `done` (Bottom), `error` (Top)                           |
 | Corpo (Centro) | 1 linha com array path `data.items[*]` + chip `🔁 lote: 1 · item / done` |
-| Rodapé | status · contagem de itens · link `[↗ Editor]` |
+| Rodapé         | status · contagem de itens · link `[↗ Editor]`                           |
 
 ```
          (↻)                         (error)
@@ -424,14 +429,14 @@ Todos os cards retangulares possuem largura de **280px**, altura compacta de **1
 
 ### 7.5 ⏳ Delay / Throttle — Flow Control (Slim)
 
-| Item | Definição |
-|---|---|
-| Accent | `#10b981` (verde) |
-| Altura | **160px** |
-| Entrada | 1 (esquerda, `y = 47`) |
-| Saídas | `out` (Right), `dropped` (Bottom), `bypass` (Top) |
+| Item           | Definição                                                         |
+| -------------- | ----------------------------------------------------------------- |
+| Accent         | `#10b981` (verde)                                                 |
+| Altura         | **160px**                                                         |
+| Entrada        | 1 (esquerda, `y = 47`)                                            |
+| Saídas         | `out` (Right), `dropped` (Bottom), `bypass` (Top)                 |
 | Corpo (Centro) | 1 linha com duração `pause: 1500 ms` + chip `⏳ buffer fila: 100` |
-| Rodapé | status · tempo restante · link `[↗ Editor]` |
+| Rodapé         | status · tempo restante · link `[↗ Editor]`                       |
 
 ```
          (↻)                         (bypass)
@@ -450,14 +455,14 @@ Todos os cards retangulares possuem largura de **280px**, altura compacta de **1
 
 ### 7.6 🔗 Merge / Join — Flow Control (Slim · Multi-Input)
 
-| Item | Definição |
-|---|---|
-| Accent | `#8b5cf6` (violeta) |
-| Altura | **160px** |
-| Entradas | 2 a 5 entradas na esquerda (`in_1`, `in_2`...), **iniciadas estritamente em y ≥ 48px** |
-| Saídas | `joined` (Right), `timeout` (Bottom), `partial` (Top) |
-| Corpo (Centro) | 1 linha de estratégia `wait-all (3 branches)` + chip `🔗 unificar objetos` |
-| Rodapé | status · sincronização (ex: `2/3 prontos`) · link `[↗ Editor]` |
+| Item           | Definição                                                                              |
+| -------------- | -------------------------------------------------------------------------------------- |
+| Accent         | `#8b5cf6` (violeta)                                                                    |
+| Altura         | **160px**                                                                              |
+| Entradas       | 2 a 5 entradas na esquerda (`in_1`, `in_2`...), **iniciadas estritamente em y ≥ 48px** |
+| Saídas         | `joined` (Right), `timeout` (Bottom), `partial` (Top)                                  |
+| Corpo (Centro) | 1 linha de estratégia `wait-all (3 branches)` + chip `🔗 unificar objetos`             |
+| Rodapé         | status · sincronização (ex: `2/3 prontos`) · link `[↗ Editor]`                         |
 
 ```
          (↻)                         (partial)
@@ -477,16 +482,16 @@ Todos os cards retangulares possuem largura de **280px**, altura compacta de **1
 
 ### 7.7 Tabela Comparativa de Todos os Blocos
 
-| Bloco | Categoria | Ícone | Accent | Altura | Entradas | Saídas | Centro do Card (Slim) |
-|---|---|:---:|:---:|:---:|:---:|:---:|---|
-| **REST Block** | 🌐 API & Network | 🌐 | `#3883fa` | ~140px | 1 | 1 | Método HTTP + URL + captures |
-| **Events** | ⭕ Events | ⭕ | Radial | 50px | 0–1 | 0–1 | Círculo BPMN com símbolo |
-| **JS Block** | ⚙️ Logic & Code | ⚡ | `#a855f7` | 140–160px | 1 | 1 a 10 | 1ª linha do código + chip de portas |
-| **JSON Mapper** | ⚙️ Logic & Code | 🔄 | `#06b6d4` | 160px | 1 | 1 | Resumo do schema + chip de campos |
-| **Router Block** | 🔀 Flow Control | 🔀 | `#f59e0b` | **160px** | 1 | até 10 | 1 linha com rotas + chip de regras |
-| **Loop / Iterator** | 🔀 Flow Control | 🔁 | `#6366f1` | 160px | 1 | 2 a 3 | Array path + chip item/done |
-| **Delay / Throttle** | 🔀 Flow Control | ⏳ | `#10b981` | 160px | 1 | 1 a 3 | Duração / taxa + chip de fila |
-| **Merge / Join** | 🔀 Flow Control | 🔗 | `#8b5cf6` | 160px | 2 a 5 | 1 a 3 | Estratégia join + chip de entradas |
+| Bloco                | Categoria        | Ícone |  Accent   |  Altura   | Entradas | Saídas | Centro do Card (Slim)               |
+| -------------------- | ---------------- | :---: | :-------: | :-------: | :------: | :----: | ----------------------------------- |
+| **REST Block**       | 🌐 API & Network |  🌐   | `#3883fa` |  ~140px   |    1     |   1    | Método HTTP + URL + captures        |
+| **Events**           | ⭕ Events        |  ⭕   |  Radial   |   50px    |   0–1    |  0–1   | Círculo BPMN com símbolo            |
+| **JS Block**         | ⚙️ Logic & Code  |  ⚡   | `#a855f7` | 140–160px |    1     | 1 a 10 | 1ª linha do código + chip de portas |
+| **JSON Mapper**      | ⚙️ Logic & Code  |  🔄   | `#06b6d4` |   160px   |    1     |   1    | Resumo do schema + chip de campos   |
+| **Router Block**     | 🔀 Flow Control  |  🔀   | `#f59e0b` | **160px** |    1     | até 10 | 1 linha com rotas + chip de regras  |
+| **Loop / Iterator**  | 🔀 Flow Control  |  🔁   | `#6366f1` |   160px   |    1     | 2 a 3  | Array path + chip item/done         |
+| **Delay / Throttle** | 🔀 Flow Control  |  ⏳   | `#10b981` |   160px   |    1     | 1 a 3  | Duração / taxa + chip de fila       |
+| **Merge / Join**     | 🔀 Flow Control  |  🔗   | `#8b5cf6` |   160px   |  2 a 5   | 1 a 3  | Estratégia join + chip de entradas  |
 
 ---
 
@@ -494,14 +499,22 @@ Todos os cards retangulares possuem largura de **280px**, altura compacta de **1
 
 ```ts
 export type FlowNodeType =
-  | 'rest' | 'start' | 'terminate' | 'event-throw' | 'event-catch' // existentes
-  | 'js' | 'transform'                                              // Logic & Code
-  | 'router' | 'loop' | 'delay' | 'merge'                           // Flow Control
+  | 'rest'
+  | 'start'
+  | 'terminate'
+  | 'event-throw'
+  | 'event-catch' // existentes
+  | 'js'
+  | 'transform' // Logic & Code
+  | 'router'
+  | 'loop'
+  | 'delay'
+  | 'merge' // Flow Control
 
 export type PortSlot = 'top' | 'middle' | 'bottom'
 
 export interface FlowNodePort {
-  id: string          // estável; usado em route()/out() e em FlowConnection.fromPort
+  id: string // estável; usado em route()/out() e em FlowConnection.fromPort
   label: string
   slot: PortSlot
   color?: string
@@ -510,35 +523,51 @@ export interface FlowNodePort {
 // ---------- Logic & Code ----------
 export interface FlowNodeJsData {
   code: string
-  ports?: FlowNodePort[]          // ausente/vazio = saída única (compatível)
+  ports?: FlowNodePort[] // ausente/vazio = saída única (compatível)
 }
 
-export type MapperModifier = 'direct' | 'uppercase' | 'lowercase' | 'trim' | 'number' | 'string' | 'boolean'
+export type MapperModifier =
+  | 'direct'
+  | 'uppercase'
+  | 'lowercase'
+  | 'trim'
+  | 'number'
+  | 'string'
+  | 'boolean'
 
 export interface FlowNodeTransformMapping {
   id: string
-  sourcePath: string              // "user.address.city"
-  targetPath: string              // "billing.city"
+  sourcePath: string // "user.address.city"
+  targetPath: string // "billing.city"
   modifier: MapperModifier
-  defaultValue?: string           // usado se a origem for undefined/null
+  defaultValue?: string // usado se a origem for undefined/null
 }
 
 export interface FlowNodeTransformData {
-  sampleInput: string             // JSON de exemplo (preenchido da última execução ou colado)
+  sampleInput: string // JSON de exemplo (preenchido da última execução ou colado)
   mappings: FlowNodeTransformMapping[]
-  saveToEnvVar?: string           // opcional: também grava o resultado numa variável
+  saveToEnvVar?: string // opcional: também grava o resultado numa variável
 }
 
 // ---------- Flow Control ----------
 export type RouterRuleType = 'status' | 'jsonpath' | 'otherwise'
-export type RouterOperator = '==' | '!=' | '>' | '<' | '>=' | '<=' | 'contains' | 'exists' | 'not-exists'
+export type RouterOperator =
+  | '=='
+  | '!='
+  | '>'
+  | '<'
+  | '>='
+  | '<='
+  | 'contains'
+  | 'exists'
+  | 'not-exists'
 
 export interface FlowNodeRouterRule {
   id: string
   portId: string
   label: string
   type: RouterRuleType
-  statusPattern?: string          // "200" | "200-299" | "2xx" | "200,201"
+  statusPattern?: string // "200" | "200-299" | "2xx" | "200,201"
   path?: string
   operator?: RouterOperator
   value?: string
@@ -547,12 +576,23 @@ export interface FlowNodeRouterRule {
 export interface FlowNodeRouterData {
   mode: 'first-match' | 'all-matches'
   ports: FlowNodePort[]
-  rules: FlowNodeRouterRule[]     // ordem importa em first-match
+  rules: FlowNodeRouterRule[] // ordem importa em first-match
 }
 
-export interface FlowNodeLoopData  { arrayPath: string; itemVar: string; maxIterations: number }
-export interface FlowNodeDelayData { mode: 'delay' | 'throttle'; delayMs: number; ratePerSecond?: number }
-export interface FlowNodeMergeData { strategy: 'wait-all' | 'first-completed' | 'combine'; inputs: FlowNodePort[] }
+export interface FlowNodeLoopData {
+  arrayPath: string
+  itemVar: string
+  maxIterations: number
+}
+export interface FlowNodeDelayData {
+  mode: 'delay' | 'throttle'
+  delayMs: number
+  ratePerSecond?: number
+}
+export interface FlowNodeMergeData {
+  strategy: 'wait-all' | 'first-completed' | 'combine'
+  inputs: FlowNodePort[]
+}
 
 export interface FlowNode {
   /* campos existentes … */
@@ -567,22 +607,22 @@ export interface FlowConnection {
   id: string
   fromId: string
   toId: string
-  fromPort?: string               // ausente = saída padrão
-  toPort?: string                 // ausente = entrada padrão
+  fromPort?: string // ausente = saída padrão
+  toPort?: string // ausente = entrada padrão
   kind: ConnectionKind
 }
 ```
 
 **Funções puras novas (todas testáveis, sem DOM):**
 
-| Arquivo | Função |
-|---|---|
-| `flowTypes.ts` | `executeJsSandbox(code, env, globals, { payload, ports })` → retorna também `activePorts` e `portPayloads` |
-| `flowRouter.ts` | `matchStatusPattern`, `evaluateRouterRules(rules, mode, payload, status)`, `createDefaultRouterPorts`, `createDefaultRouterRules` |
-| `flowMapper.ts` | `flattenJsonPaths(sample)`, `applyMappings(input, mappings)`, `validateMappings(sample, mappings)` |
-| `flowGeometry.ts` | `getOutputPortPoint`, `getInputPortPoint`, `getBezierPath(p1, dir1, p2, dir2)` |
-| `flowEngine.ts` | `isConnActive`, `isReadyToRun`, `resolveInputPayload` (extraídos do componente) |
-| `flowNodeRegistry.ts` | registry (seção 3.2) |
+| Arquivo               | Função                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `flowTypes.ts`        | `executeJsSandbox(code, env, globals, { payload, ports })` → retorna também `activePorts` e `portPayloads`                        |
+| `flowRouter.ts`       | `matchStatusPattern`, `evaluateRouterRules(rules, mode, payload, status)`, `createDefaultRouterPorts`, `createDefaultRouterRules` |
+| `flowMapper.ts`       | `flattenJsonPaths(sample)`, `applyMappings(input, mappings)`, `validateMappings(sample, mappings)`                                |
+| `flowGeometry.ts`     | `getOutputPortPoint`, `getInputPortPoint`, `getBezierPath(p1, dir1, p2, dir2)`                                                    |
+| `flowEngine.ts`       | `isConnActive`, `isReadyToRun`, `resolveInputPayload` (extraídos do componente)                                                   |
+| `flowNodeRegistry.ts` | registry (seção 3.2)                                                                                                              |
 
 ---
 
@@ -597,14 +637,14 @@ nodeOutputs: Map<nodeId, Map<portKey, { payload: unknown; status?: number }>>
 // portKey = id da porta, ou 'out' para a saída padrão
 ```
 
-| Bloco | Payload de saída |
-|---|---|
-| REST | JSON da resposta (ou texto), `status` = HTTP status |
-| JS sem portas | payload de entrada (inalterado), porta `out` |
-| JS com portas | por porta: valor de `out(port, data)`; com `route(port)` sem dado → payload de entrada |
-| Mapper | `applyMappings(entrada)` |
-| Router | payload de entrada repassado para cada porta casada |
-| Start / Receiver | `null` |
+| Bloco            | Payload de saída                                                                       |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| REST             | JSON da resposta (ou texto), `status` = HTTP status                                    |
+| JS sem portas    | payload de entrada (inalterado), porta `out`                                           |
+| JS com portas    | por porta: valor de `out(port, data)`; com `route(port)` sem dado → payload de entrada |
+| Mapper           | `applyMappings(entrada)`                                                               |
+| Router           | payload de entrada repassado para cada porta casada                                    |
+| Start / Receiver | `null`                                                                                 |
 
 **Payload de entrada** de um nó = payload da porta de origem da conexão ativa que o alcançou. Com várias entradas ativas: a da última conexão concluída (Merge terá estratégia própria).
 
@@ -612,27 +652,28 @@ nodeOutputs: Map<nodeId, Map<portKey, { payload: unknown; status?: number }>>
 
 ```js
 // disponíveis no script, além de pm / env / globals / console
-payload               // somente leitura: payload de entrada
-route('ok')           // ativa a porta 'ok'
-route(0)              // ativa a 1ª porta (ordem: top → middle → bottom)
+payload // somente leitura: payload de entrada
+route('ok') // ativa a porta 'ok'
+route(0) // ativa a 1ª porta (ordem: top → middle → bottom)
 out('vip', { id: 1 }) // ativa 'vip' e define o payload dela
 ```
 
-| Situação | Resultado |
-|---|---|
-| Porta inexistente em `route`/`out` | erro de script: *"Porta 'xyz' não existe neste bloco"* |
+| Situação                           | Resultado                                                                          |
+| ---------------------------------- | ---------------------------------------------------------------------------------- |
+| Porta inexistente em `route`/`out` | erro de script: _"Porta 'xyz' não existe neste bloco"_                             |
 | Bloco com portas e nenhuma ativada | sucesso + log `[WARN] Nenhuma porta ativada; ramos seguintes não serão executados` |
-| Bloco sem portas | `route`/`out` são ignorados com aviso; saída padrão sempre ativa (compatível) |
+| Bloco sem portas                   | `route`/`out` são ignorados com aviso; saída padrão sempre ativa (compatível)      |
 
 ### 9.3 Conexão ativa
 
 Uma conexão `c` está **ativa** quando o nó de origem terminou com sucesso **e**:
+
 - origem sem portas → sempre;
 - origem com portas → `c.fromPort ∈ activePorts(origem)`.
 
 ### 9.4 Dead-path elimination (correção necessária)
 
-Hoje um nó cujo único caminho vem de porta inativa simplesmente nunca fica pronto. Isso funciona para o próprio nó, mas **trava** o nó seguinte se ele tiver outra entrada *solid* esperando por ele.
+Hoje um nó cujo único caminho vem de porta inativa simplesmente nunca fica pronto. Isso funciona para o próprio nó, mas **trava** o nó seguinte se ele tiver outra entrada _solid_ esperando por ele.
 
 Correção: novo conjunto `skippedNodes`.
 
@@ -651,7 +692,7 @@ graph LR
 ```
 
 Antes: `B` nunca roda → `C` espera `B` para sempre.
-Depois: `B` vira *skipped* → a conexão `B→C` fica inativa → `C` roda só com `A`.
+Depois: `B` vira _skipped_ → a conexão `B→C` fica inativa → `C` roda só com `A`.
 
 Visual: nó pulado fica com opacidade 0.45 e rodapé `SKIPPED`; fio de porta inativa fica tracejado cinza durante/depois da execução.
 
@@ -662,12 +703,12 @@ Visual: nó pulado fica com opacidade 0.45 e rodapé `SKIPPED`; fio de porta ina
 3. `all-matches`: todas as verdadeiras ativam suas portas; `otherwise` só se nenhuma casar.
 4. Sem casamento e sem `otherwise` → status `error`, `NO_ROUTE` (comportamento já existente).
 
-| Padrão de status | Exemplos aceitos |
-|---|---|
-| exato | `200` |
-| lista | `200,201,204` |
-| faixa | `200-299` |
-| curinga | `2xx`, `4xx`, `5xx` |
+| Padrão de status | Exemplos aceitos    |
+| ---------------- | ------------------- |
+| exato            | `200`               |
+| lista            | `200,201,204`       |
+| faixa            | `200-299`           |
+| curinga          | `2xx`, `4xx`, `5xx` |
 
 ---
 
@@ -679,12 +720,12 @@ Mesma faixa de seleção do switcher do canvas, em formato de chips: `[⚡ JS] [
 
 ### 10.2 Abas
 
-| Variante | Abas |
-|---|---|
-| JS | Script & Snippets · Ports (x/10) · Console & Output · Env |
-| Mapper | Mapping · Preview · Output |
-| Router | Rules · Ports (x/10) · History & Routing |
-| Loop / Delay / Merge | Config · Output (com aviso *Future*) |
+| Variante             | Abas                                                      |
+| -------------------- | --------------------------------------------------------- |
+| JS                   | Script & Snippets · Ports (x/10) · Console & Output · Env |
+| Mapper               | Mapping · Preview · Output                                |
+| Router               | Rules · Ports (x/10) · History & Routing                  |
+| Loop / Delay / Merge | Config · Output (com aviso _Future_)                      |
 
 ### 10.3 Aba Ports (JS e Router — mesmo componente)
 
@@ -699,6 +740,7 @@ Mesma faixa de seleção do switcher do canvas, em formato de chips: `[⚡ JS] [
 │   ● erro      #ef4444  id: erro         [🗑]    │
 └─────────────────────────────────────────────────┘
 ```
+
 - Botão desabilitado quando o slot ou o total (10) estoura.
 - Remover porta remove as conexões dela (com toast) e, no Router, reatribui regras órfãs para a primeira porta.
 - Snippets no editor JS: `route('<id>')` e `out('<id>', payload)` gerados a partir das portas existentes.
@@ -724,6 +766,7 @@ Mesma faixa de seleção do switcher do canvas, em formato de chips: `[⚡ JS] [
 │ [ ＋ Adicionar Regra ]        [ ⚡ Testar com Última Resposta ] │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
 - Lista ordenável (↑ ↓) — ordem define a prioridade no modo `first-match`.
 - Cada regra: tipo (`Status` / `JSON Path` / `Otherwise`) · campos do tipo · porta de destino (dropdown com indicador visual do slot: `▲ top`, `▶ right`, `▼ bottom`).
 - **Testar com última resposta**: avalia as regras contra o payload/status do nó anterior e destaca em verde a regra casada.
@@ -750,15 +793,15 @@ Mesma faixa de seleção do switcher do canvas, em formato de chips: `[⚡ JS] [
 └────────────────────────────────────────────────────────────────┘
 ```
 
-| Interação | Como |
-|---|---|
-| Origem | árvore gerada de `sampleInput`; botão **"Usar última resposta"** puxa do nó anterior |
-| Ligar campos | arrastar ● da origem até um campo do destino **ou** clicar origem → clicar destino |
-| Criar destino | soltar uma origem em "＋ novo campo" cria o destino com o mesmo nome |
-| Fios | SVG entre as colunas, recalculado com `ResizeObserver` e no scroll |
-| Modificador | ícone ⚙ no destino abre opções: Direto, MAIÚSCULO, minúsculo, Trim, Número, Texto, Booleano, Valor padrão |
-| Validação | ⚠ âmbar: origem não existe no exemplo · ⛔ vermelho: destino duplicado · ⚠ número não convertível |
-| Preview | `applyMappings(sampleInput)` a cada alteração com JSON formatado e syntax highlight |
+| Interação     | Como                                                                                                      |
+| ------------- | --------------------------------------------------------------------------------------------------------- |
+| Origem        | árvore gerada de `sampleInput`; botão **"Usar última resposta"** puxa do nó anterior                      |
+| Ligar campos  | arrastar ● da origem até um campo do destino **ou** clicar origem → clicar destino                        |
+| Criar destino | soltar uma origem em "＋ novo campo" cria o destino com o mesmo nome                                      |
+| Fios          | SVG entre as colunas, recalculado com `ResizeObserver` e no scroll                                        |
+| Modificador   | ícone ⚙ no destino abre opções: Direto, MAIÚSCULO, minúsculo, Trim, Número, Texto, Booleano, Valor padrão |
+| Validação     | ⚠ âmbar: origem não existe no exemplo · ⛔ vermelho: destino duplicado · ⚠ número não convertível         |
+| Preview       | `applyMappings(sampleInput)` a cada alteração com JSON formatado e syntax highlight                       |
 
 ### 10.6 Aba Inspector — 🔁 Loop / Iterator
 
@@ -844,14 +887,15 @@ A Toolbar organiza os blocos em exatamente 4 botões de família (idêntico ao m
 
 ### 11.1 Mapeamento da Toolbar
 
-| Categoria | Botão na Barra | Cor / Borda | Ação ao Clicar / Arrastar |
-|---|---|---|---|
-| **🌐 API & Network** | `[ ＋ REST Block ]` | `#3883fa` | Insere o card REST Block (sem switcher) |
-| **⚙️ Logic & Code** | `[ ＋ Logic & Code ]` | `#a855f7` | Insere o card JS Script (padrão). O card possui o botão `(↻)` no canto superior esquerdo para alternar para JSON Mapper |
-| **🔀 Flow Control** | `[ ＋ Flow Control ]` | `#f59e0b` | Insere o card Router (padrão). O card possui o botão `(↻)` no canto superior esquerdo para alternar entre Router, Loop, Delay e Merge |
-| **⭕ Events** | `[ ＋ Event ]` | `#ec4899` | Insere o nó circular (Jump por padrão) com o switcher `(↻)` tradicional para Start, Terminate e Receiver |
+| Categoria            | Botão na Barra        | Cor / Borda | Ação ao Clicar / Arrastar                                                                                                             |
+| -------------------- | --------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **🌐 API & Network** | `[ ＋ REST Block ]`   | `#3883fa`   | Insere o card REST Block (sem switcher)                                                                                               |
+| **⚙️ Logic & Code**  | `[ ＋ Logic & Code ]` | `#a855f7`   | Insere o card JS Script (padrão). O card possui o botão `(↻)` no canto superior esquerdo para alternar para JSON Mapper               |
+| **🔀 Flow Control**  | `[ ＋ Flow Control ]` | `#f59e0b`   | Insere o card Router (padrão). O card possui o botão `(↻)` no canto superior esquerdo para alternar entre Router, Loop, Delay e Merge |
+| **⭕ Events**        | `[ ＋ Event ]`        | `#ec4899`   | Insere o nó circular (Jump por padrão) com o switcher `(↻)` tradicional para Start, Terminate e Receiver                              |
 
 ### 11.2 Comportamento Unificado do Switcher `(↻)`
+
 - O botão `(↻)` fica fixo em `top: -6px; left: -6px` (dentro da **zona reservada** `x ∈ [-10, 120], y ∈ [-10, 36]`).
 - Ao clicar no botão `(↻)` de qualquer card de **Logic & Code**, abre o popup suspenso para alternar entre `[ ⚡ JS Block ]` e `[ 🔄 JSON Mapper ]`.
 - Ao clicar no botão `(↻)` de qualquer card de **Flow Control**, abre o popup suspenso para alternar entre `[ 🔀 Router ]`, `[ 🔁 Loop ]`, `[ ⏳ Delay ]` e `[ 🔗 Merge ]`.
@@ -861,14 +905,14 @@ A Toolbar organiza os blocos em exatamente 4 botões de família (idêntico ao m
 
 ## 12. Persistência e compatibilidade
 
-| Caso | Comportamento |
-|---|---|
-| Fluxo antigo sem `fromPort` | conexões usam a saída padrão; nada muda |
-| JS antigo sem `ports` | saída única, `route()`/`out()` ignorados |
-| `parseFlowFile` | passa a preservar `fromPort`/`toPort` e aceitar os novos tipos |
-| `serializeFlowFile` | sem mudança de formato; `FLOW_FILE_VERSION` continua `1` (campos novos são opcionais) |
-| Porta referenciada que não existe mais | conexão descartada no `parseFlowFile` com aviso no console |
-| `remapFlowGraphIds` (import) | já preserva campos extras via spread; adicionar teste |
+| Caso                                   | Comportamento                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------- |
+| Fluxo antigo sem `fromPort`            | conexões usam a saída padrão; nada muda                                               |
+| JS antigo sem `ports`                  | saída única, `route()`/`out()` ignorados                                              |
+| `parseFlowFile`                        | passa a preservar `fromPort`/`toPort` e aceitar os novos tipos                        |
+| `serializeFlowFile`                    | sem mudança de formato; `FLOW_FILE_VERSION` continua `1` (campos novos são opcionais) |
+| Porta referenciada que não existe mais | conexão descartada no `parseFlowFile` com aviso no console                            |
+| `remapFlowGraphIds` (import)           | já preserva campos extras via spread; adicionar teste                                 |
 
 ---
 
@@ -877,6 +921,7 @@ A Toolbar organiza os blocos em exatamente 4 botões de família (idêntico ao m
 Cada fase termina com `npm run check` limpo e testes verdes. Nada passa para a fase seguinte quebrado.
 
 ### Fase 0 — Estabilização
+
 - Tipos e funções faltantes em `flowTypes.ts` / `flowRouter.ts` (seção 2).
 - `parseFlowFile` preserva `fromPort`/`toPort` e aceita novos tipos.
 - Corrigir sintaxe de `FlowCanvas.test.ts` L611.
@@ -884,83 +929,92 @@ Cada fase termina com `npm run check` limpo e testes verdes. Nada passa para a f
 **Aceite:** `svelte-check` 0 erros · suíte atual passa · abrir/salvar fluxo com Router preserva portas.
 
 ### Fase 1 — Registry
+
 - `flowNodeRegistry.ts`; `addNodeAt`, títulos padrão, ícones, `VALID_*` e alturas passam a ler dele.
 
 **Aceite:** nenhuma mudança visual · REST e Events idênticos (comparação por screenshot).
 
 ### Fase 2 — Geometria de portas
+
 - `flowGeometry.ts`; portas Top/Right/Bottom; zona reservada; Bézier direcional; tooltips por borda; altura fixa por variante.
 
 **Aceite:** nenhuma porta em x∈[-10,120], y∈[-10,36] · fios saem perpendiculares à borda · portas Bottom acompanham a altura do card.
 
 ### Fase 3 — Switcher e Toolbar
+
 - `NodeTypeSwitcher.svelte`; regras da seção 4 (incluindo 4.3); toolbar da seção 11.
 
 **Aceite:** checklist 4.1 inteiro validado em card e círculo · só um switcher aberto por vez · trocar JS→Mapper→JS mantém o script · conexões órfãs removidas com toast.
 
 ### Fase 4 — Engine (payload + portas + dead-path)
+
 - `nodeOutputs`; `route()`/`out()`/`payload` no sandbox; `skippedNodes`; extração para `flowEngine.ts`; visual de skipped.
 
 **Aceite:** cenário 9.4 não trava · JS com 3 portas executa só o ramo escolhido · fluxo antigo de exemplo executa igual.
 
 ### Fase 5 — JS Block completo
+
 - Aba Ports, snippets, corpo/rodapé do card (7.1).
 
 ### Fase 6 — Router completo
+
 - Regras (status/lista/faixa/curinga/JSON Path/otherwise), modos, ordenação, "Testar com última resposta", card (7.3).
 
 **Aceite:** tabela de casos da seção 14 passa.
 
 ### Fase 7 — JSON Mapper completo
+
 - `flowMapper.ts`, aba Mapping com árvores, drag + clique, fios, modificadores, validação, preview, execução.
 
 **Aceite:** usuário mapeia 3 campos sem digitar nenhum caminho · preview atualiza a cada ação.
 
 ### Fase 8 — Blocos base (Loop, Delay, Merge)
-- Cards, Inspector *Future*, comportamento pass-through (7.4–7.6), entradas múltiplas do Merge respeitando a zona reservada.
+
+- Cards, Inspector _Future_, comportamento pass-through (7.4–7.6), entradas múltiplas do Merge respeitando a zona reservada.
 
 ### Fase 9 — Fechamento
+
 - Testes de regressão, revisão visual em tema claro e escuro, atualização deste documento.
 
 ---
 
 ## 14. Estratégia de testes
 
-| Camada | O que testar | Arquivo |
-|---|---|---|
-| Unitário | `matchStatusPattern`, `evaluateRouterRules` (todos os modos e operadores) | `flowRouter.test.ts` |
-| Unitário | `applyMappings`, `validateMappings`, `flattenJsonPaths` | `flowMapper.test.ts` |
-| Unitário | coordenadas por slot, zona reservada, Bézier direcional | `flowGeometry.test.ts` |
-| Unitário | sandbox: `route` por id/índice, `out`, porta inválida, nenhuma porta | `flowTypes.test.ts` |
-| Unitário | `isConnActive`, `isReadyToRun`, dead-path (cenário 9.4) | `flowEngine.test.ts` |
-| Unitário | `parseFlowFile` preserva portas; troca de variante preserva dados | `flowTypes.test.ts` |
-| Componente | switcher: abre, fecha (4 formas), troca, só um aberto | `FlowCanvas.test.ts` |
-| Componente | toolbar cria e abre switcher; drag & drop | `FlowCanvas.test.ts` |
-| Regressão | REST e Events: criação, execução, switcher do Events | `FlowCanvas.test.ts` |
+| Camada     | O que testar                                                              | Arquivo                |
+| ---------- | ------------------------------------------------------------------------- | ---------------------- |
+| Unitário   | `matchStatusPattern`, `evaluateRouterRules` (todos os modos e operadores) | `flowRouter.test.ts`   |
+| Unitário   | `applyMappings`, `validateMappings`, `flattenJsonPaths`                   | `flowMapper.test.ts`   |
+| Unitário   | coordenadas por slot, zona reservada, Bézier direcional                   | `flowGeometry.test.ts` |
+| Unitário   | sandbox: `route` por id/índice, `out`, porta inválida, nenhuma porta      | `flowTypes.test.ts`    |
+| Unitário   | `isConnActive`, `isReadyToRun`, dead-path (cenário 9.4)                   | `flowEngine.test.ts`   |
+| Unitário   | `parseFlowFile` preserva portas; troca de variante preserva dados         | `flowTypes.test.ts`    |
+| Componente | switcher: abre, fecha (4 formas), troca, só um aberto                     | `FlowCanvas.test.ts`   |
+| Componente | toolbar cria e abre switcher; drag & drop                                 | `FlowCanvas.test.ts`   |
+| Regressão  | REST e Events: criação, execução, switcher do Events                      | `FlowCanvas.test.ts`   |
 
 Casos mínimos do Router:
 
-| Regras | Status / payload | Modo | Portas ativadas |
-|---|---|---|---|
-| `2xx→ok`, `otherwise→fb` | 204 | first | ok |
-| `2xx→ok`, `otherwise→fb` | 404 | first | fb |
-| `2xx→a`, `role==admin→b` | 200, `{role:'admin'}` | first | a |
-| `2xx→a`, `role==admin→b` | 200, `{role:'admin'}` | all | a, b |
-| `200,201→a` | 201 | first | a |
-| `role exists→a` | `{}` | first | — (NO_ROUTE) |
+| Regras                   | Status / payload      | Modo  | Portas ativadas |
+| ------------------------ | --------------------- | ----- | --------------- |
+| `2xx→ok`, `otherwise→fb` | 204                   | first | ok              |
+| `2xx→ok`, `otherwise→fb` | 404                   | first | fb              |
+| `2xx→a`, `role==admin→b` | 200, `{role:'admin'}` | first | a               |
+| `2xx→a`, `role==admin→b` | 200, `{role:'admin'}` | all   | a, b            |
+| `200,201→a`              | 201                   | first | a               |
+| `role exists→a`          | `{}`                  | first | — (NO_ROUTE)    |
 
 ---
 
 ## 15. Riscos
 
-| Risco | Mitigação |
-|---|---|
+| Risco                                                | Mitigação                                                                                                                              |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `FlowCanvas.svelte` com 7.6k linhas fica ainda maior | extrair lógica pura (registry, geometria, router, mapper, engine) e componentes (`NodeTypeSwitcher`, `PortsEditor`, `MapperInspector`) |
-| Alterar Events sem querer ao generalizar o switcher | componente novo com CSS próprio; teste de regressão do switcher do Events |
-| Fios do Mapper desalinhados com scroll/resize | `ResizeObserver` + recálculo no scroll; fallback: chip `◀ origem` no destino já mostra o vínculo |
-| Altura fixa corta conteúdo do card | corpo com `overflow:hidden` e conteúdo resumido; detalhes ficam no Inspector |
-| Fluxos salvos antigos quebrarem | campos novos opcionais; testes com o fluxo de exemplo atual |
-| `new Function` no sandbox | já existe hoje; fora do escopo deste plano (registrar como débito) |
+| Alterar Events sem querer ao generalizar o switcher  | componente novo com CSS próprio; teste de regressão do switcher do Events                                                              |
+| Fios do Mapper desalinhados com scroll/resize        | `ResizeObserver` + recálculo no scroll; fallback: chip `◀ origem` no destino já mostra o vínculo                                       |
+| Altura fixa corta conteúdo do card                   | corpo com `overflow:hidden` e conteúdo resumido; detalhes ficam no Inspector                                                           |
+| Fluxos salvos antigos quebrarem                      | campos novos opcionais; testes com o fluxo de exemplo atual                                                                            |
+| `new Function` no sandbox                            | já existe hoje; fora do escopo deste plano (registrar como débito)                                                                     |
 
 ---
 
@@ -968,11 +1022,10 @@ Casos mínimos do Router:
 
 Precisam de resposta antes da fase indicada.
 
-| # | Decisão | Proposta deste plano | Fase |
-|---|---|---|---|
-| 1 | Toolbar com **1 botão por categoria** (como Events) ou 1 botão por bloco | 1 por categoria + switcher abre ao criar | 3 |
-| 2 | Conexões órfãs ao trocar de variante: remover com toast ou pedir confirmação | remover com toast | 3 |
-| 3 | JS com portas sem nenhuma `route()`: nenhum ramo ou primeira porta por padrão | nenhum ramo + aviso | 4 |
-| 4 | Loop: `done` na base ou as duas saídas na direita | `item` direita, `done` base | 8 |
-| 5 | Router sem casamento e sem otherwise: `error` (atual) ou sucesso sem rota | manter `error` | 6 |
-
+| #   | Decisão                                                                       | Proposta deste plano                     | Fase |
+| --- | ----------------------------------------------------------------------------- | ---------------------------------------- | ---- |
+| 1   | Toolbar com **1 botão por categoria** (como Events) ou 1 botão por bloco      | 1 por categoria + switcher abre ao criar | 3    |
+| 2   | Conexões órfãs ao trocar de variante: remover com toast ou pedir confirmação  | remover com toast                        | 3    |
+| 3   | JS com portas sem nenhuma `route()`: nenhum ramo ou primeira porta por padrão | nenhum ramo + aviso                      | 4    |
+| 4   | Loop: `done` na base ou as duas saídas na direita                             | `item` direita, `done` base              | 8    |
+| 5   | Router sem casamento e sem otherwise: `error` (atual) ou sucesso sem rota     | manter `error`                           | 6    |

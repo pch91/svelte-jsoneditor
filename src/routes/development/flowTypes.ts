@@ -142,13 +142,22 @@ export interface FlowNodeDelayData {
   status?: 'future'
 }
 
+export type MergePayloadMode = 'pass-active' | 'combine' | 'append' | 'structured'
+
 export interface FlowNodeMergeData {
   strategy: 'wait-all' | 'first-completed' | 'combine'
+  payloadMode?: MergePayloadMode
   inputs?: FlowNodePort[]
   status?: 'future'
 }
 
-export type FlowNodeExecutionStatus = 'idle' | 'waiting' | 'running' | 'success' | 'error' | 'skipped'
+export type FlowNodeExecutionStatus =
+  | 'idle'
+  | 'waiting'
+  | 'running'
+  | 'success'
+  | 'error'
+  | 'skipped'
 
 export interface FlowNodeExecutionHistoryEntry {
   id: string
@@ -232,6 +241,7 @@ export function executeJsSandbox(
   logs: string[]
   activePorts: string[]
   portPayloads: Record<string, unknown>
+  returnValue?: unknown
   error?: string
 } {
   const currentEnv = { ...initialEnv }
@@ -314,13 +324,13 @@ export function executeJsSandbox(
     warn(...args: unknown[]): void {
       logs.push(
         '[WARN] ' +
-        args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
+          args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
       )
     },
     error(...args: unknown[]): void {
       logs.push(
         '[ERROR] ' +
-        args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
+          args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
       )
     }
   }
@@ -361,14 +371,23 @@ export function executeJsSandbox(
       'payload',
       `"use strict";\n${code}`
     )
-    fn(pm, envHelper, globalsHelper, mockConsole, routeHelper, outHelper, options?.payload ?? null)
+    const ret = fn(
+      pm,
+      envHelper,
+      globalsHelper,
+      mockConsole,
+      routeHelper,
+      outHelper,
+      options?.payload ?? null
+    )
     return {
       success: true,
       updatedEnv: currentEnv,
       updatedGlobalEnv: currentGlobals,
       logs,
       activePorts,
-      portPayloads
+      portPayloads,
+      returnValue: ret
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -463,7 +482,10 @@ function extractJsonValue(obj: unknown, path: string): unknown {
     : path.startsWith('$')
       ? path.slice(1)
       : path
-  const parts = cleanPath.split('.').map((p) => p.trim()).filter(Boolean)
+  const parts = cleanPath
+    .split('.')
+    .map((p) => p.trim())
+    .filter(Boolean)
   let cur: unknown = obj
   for (const part of parts) {
     if (cur === null || cur === undefined || typeof cur !== 'object') return undefined
@@ -484,9 +506,19 @@ function extractJsonValue(obj: unknown, path: string): unknown {
   return cur
 }
 
-function evaluateJsonPathRule(rule: FlowNodeRouterRule, payload: unknown): boolean {
+function evaluateJsonPathRule(
+  rule: FlowNodeRouterRule,
+  payload: unknown,
+  env?: Record<string, unknown>
+): boolean {
   if (!rule.path) return false
-  const actual = extractJsonValue(payload, rule.path)
+  let actual = extractJsonValue(payload, rule.path)
+  if (actual === undefined && env && typeof env === 'object') {
+    actual = extractJsonValue(env, rule.path)
+    if (actual === undefined && rule.path in env) {
+      actual = env[rule.path]
+    }
+  }
   const op = rule.operator || '=='
   const expectedStr = (rule.value ?? '').trim()
 
@@ -549,7 +581,8 @@ export function evaluateRouterRules(
   rules: FlowNodeRouterRule[],
   mode: 'first-match' | 'all-matches' = 'first-match',
   payload: unknown = null,
-  status: number = 200
+  status: number = 200,
+  env?: Record<string, unknown>
 ): { matchedPortIds: string[]; matchedRules: FlowNodeRouterRule[] } {
   if (!Array.isArray(rules) || rules.length === 0) {
     return { matchedPortIds: [], matchedRules: [] }
@@ -568,7 +601,7 @@ export function evaluateRouterRules(
     if (rule.type === 'status') {
       isMatch = matchStatusPattern(status, rule.statusPattern)
     } else if (rule.type === 'jsonpath') {
-      isMatch = evaluateJsonPathRule(rule, payload)
+      isMatch = evaluateJsonPathRule(rule, payload, env)
     }
 
     if (isMatch) {
@@ -586,7 +619,6 @@ export function evaluateRouterRules(
   const matchedPortIds = Array.from(new Set(matchedRules.map((r) => r.portId).filter(Boolean)))
   return { matchedPortIds, matchedRules }
 }
-
 
 /**
  * Convert legacy chain items to a visual spatial FlowGraph
@@ -832,53 +864,146 @@ console.log("Environment variables updated successfully!");`
  *
  * Change the environment variable charId (e.g. 8 = Dead, 7 = unknown) to exercise the other branches.
  */
+/**
+ * Advanced Rick & Morty batch processing workflow utilizing ALL 11 node components:
+ *
+ * 1. Start Flow initializes execution.
+ * 2. REST "Fetch Characters Batch" queries /character?page=1 and extracts results array.
+ * 3. Loop "Iterate Characters" runs for-each on the results array (max 3 items),
+ *    injecting character, charIdx, and loop stats on every iteration.
+ * 4. Loop Body (item port):
+ *    - Delay "Rate Throttle" pauses 300ms to respect API rate limits.
+ *    - JS Script "Process & Accumulate" reads pm.environment.get('character') & pm.environment.get('charIdx'),
+ *      logs progress, accumulates into processedHeroes JSON array, and updates lastHeroStatus.
+ * 5. Loop Completion (done port):
+ *    - Gateway Router evaluates lastHeroStatus:
+ *      * Alive -> Maps Hero Profile via JSON Mapper (transform).
+ *      * Dead/Other -> Logs incident via JS Script (audit).
+ * 6. Merge Synchronizer joins both branches cleanly using dead-path elimination.
+ * 7. Event Throw dispatches 'pipeline_complete' telemetry.
+ * 8. Event Catch receives 'pipeline_complete' in parallel swimlane.
+ * 9. Terminate successfully closes the workflow.
+ */
 export function createAdvancedFlowGraph(): FlowGraph {
   return {
     nodes: [
       {
         id: 'node_start',
         type: 'start',
-        title: 'Start Flow',
+        title: 'Start Pipeline',
         x: 60,
-        y: 260,
+        y: 155,
         status: 'idle'
       },
       {
-        id: 'node_fetch_char',
+        id: 'node_fetch_batch',
         type: 'rest',
-        title: '1. Fetch Character',
+        title: '1. Fetch Characters Batch',
         x: 180,
-        y: 220,
+        y: 120,
         restData: {
           method: 'GET',
-          url: '{{baseUrl}}/character/{{charId}}',
+          url: '{{baseUrl}}/character?page=1',
           headers: '',
           body: '',
-          bodyType: 'json',
+          bodyType: 'none',
           proxyMode: 'inherit',
           authType: 'inherit',
           captures: [
-            { path: 'name', name: 'charName', enabled: true },
-            { path: 'status', name: 'charStatus', enabled: true },
-            { path: 'species', name: 'charSpecies', enabled: true },
-            { path: 'origin.url', name: 'originUrl', enabled: true },
-            { path: 'episode[0]', name: 'firstEpisodeUrl', enabled: true }
+            { path: 'info.count', name: 'totalCharacters', enabled: true },
+            { path: 'results[0].name', name: 'leadHeroName', enabled: true }
           ]
         },
         status: 'idle'
       },
       {
+        id: 'node_loop',
+        type: 'loop',
+        title: '2. Iterate Characters',
+        x: 530,
+        y: 155,
+        loopData: {
+          mode: 'for-each',
+          arrayPath: 'results',
+          itemVar: 'character',
+          indexVar: 'charIdx',
+          maxIterations: 3,
+          delayMs: 250
+        },
+        status: 'idle'
+      },
+
+      // --- LOOP BODY: THROTTLE & PER-ITERATION ACCUMULATION ---
+      {
+        id: 'node_loop_delay',
+        type: 'delay',
+        title: '3a. Rate Throttle (300ms)',
+        x: 760,
+        y: 40,
+        delayData: {
+          mode: 'delay',
+          delayMs: 300,
+          ratePerSecond: 10
+        },
+        status: 'idle'
+      },
+      {
+        id: 'node_loop_process',
+        type: 'js',
+        title: '3b. Process & Accumulate',
+        x: 980,
+        y: 20,
+        jsData: {
+          code: `// Access loop iteration variables: character (JSON string), charIdx, loop_total
+const rawChar = pm.environment.get('character');
+const char = typeof rawChar === 'string' && rawChar.startsWith('{') ? JSON.parse(rawChar) : {};
+const idx = Number(pm.environment.get('charIdx') || 0);
+const total = pm.environment.get('loop_total') || '3';
+
+console.log(\`[Batch #\${idx + 1}/\${total}] Character: \${char.name || 'Unknown'} (\${char.species || 'Human'}) - \${char.status || 'Alive'}\`);
+
+// Accumulate character into environment array for downstream reporting
+let processed = [];
+try {
+  processed = JSON.parse(pm.environment.get('processedHeroes') || '[]');
+} catch (e) {
+  processed = [];
+}
+processed.push({ id: char.id, name: char.name, status: char.status, species: char.species });
+pm.environment.set('processedHeroes', JSON.stringify(processed));
+
+// Forward latest processed character info to environment
+pm.environment.set('lastHeroName', char.name || '');
+pm.environment.set('lastHeroStatus', char.status || 'Alive');
+pm.environment.set('lastHeroSpecies', char.species || 'Human');`
+        },
+        status: 'idle'
+      },
+
+      // --- POST-LOOP: ROUTE BY STATUS ---
+      {
         id: 'node_router',
         type: 'router',
-        title: '2. Route by Status',
-        x: 520,
-        y: 200,
+        title: '4. Route by Status',
+        x: 760,
+        y: 220,
         routerData: {
           mode: 'first-match',
           ports: [
-            { id: 'port_alive', label: 'Alive Character', slot: 'top', slotIndex: 1, color: '#10b981' },
-            { id: 'port_dead', label: 'Dead Character', slot: 'middle', slotIndex: 2, color: '#ef4444' },
-            { id: 'port_unknown', label: 'Unknown / Fallback', slot: 'bottom', slotIndex: 3, color: '#f59e0b' }
+            {
+              id: 'port_alive',
+              label: 'Alive Character',
+              slot: 'top',
+              slotIndex: 1,
+              color: '#10b981'
+            },
+            {
+              id: 'port_dead',
+              label: 'Dead / Other',
+              slot: 'bottom',
+              slotIndex: 3,
+              color: '#ef4444'
+            }
           ],
           rules: [
             {
@@ -886,23 +1011,14 @@ export function createAdvancedFlowGraph(): FlowGraph {
               portId: 'port_alive',
               label: 'Status is Alive',
               type: 'jsonpath',
-              path: 'status',
+              path: 'lastHeroStatus',
               operator: '==',
               value: 'Alive'
             },
             {
-              id: 'rule_dead',
-              portId: 'port_dead',
-              label: 'Status is Dead',
-              type: 'jsonpath',
-              path: 'status',
-              operator: '==',
-              value: 'Dead'
-            },
-            {
               id: 'rule_fallback',
-              portId: 'port_unknown',
-              label: 'Any other status (Fallback)',
+              portId: 'port_dead',
+              label: 'Other / Fallback',
               type: 'otherwise'
             }
           ]
@@ -910,203 +1026,175 @@ export function createAdvancedFlowGraph(): FlowGraph {
         status: 'idle'
       },
 
-      // --- ALIVE BRANCH: profile -> origin lookup -> danger rating ---
+      // --- ALIVE BRANCH: JSON SCHEMA MAPPER ---
       {
-        id: 'node_transform_alive',
+        id: 'node_transform',
         type: 'transform',
-        title: '3a. Build Hero Profile',
-        x: 880,
-        y: 60,
+        title: '5a. Map Hero Profile',
+        x: 980,
+        y: 200,
         transformData: {
           mappings: [
-            { id: 'm1', sourcePath: 'name', targetPath: 'hero.name', modifier: 'uppercase' },
-            { id: 'm2', sourcePath: 'species', targetPath: 'hero.species', modifier: 'trim' },
-            { id: 'm3', sourcePath: 'status', targetPath: 'hero.status', modifier: 'lowercase' }
+            {
+              id: 'm1',
+              sourcePath: 'lastHeroName',
+              targetPath: 'hero.name',
+              modifier: 'uppercase'
+            },
+            {
+              id: 'm2',
+              sourcePath: 'lastHeroStatus',
+              targetPath: 'hero.status',
+              modifier: 'lowercase'
+            },
+            {
+              id: 'm3',
+              sourcePath: 'lastHeroSpecies',
+              targetPath: 'hero.species',
+              modifier: 'trim'
+            }
           ],
           saveToEnvVar: 'heroProfile'
         },
         status: 'idle'
       },
+
+      // --- FALLBACK / DEAD BRANCH: AUDIT RECORD ---
       {
-        id: 'node_fetch_origin',
-        type: 'rest',
-        title: '4a. Fetch Origin Location',
-        x: 1220,
-        y: 60,
-        restData: {
-          method: 'GET',
-          url: '{{originUrl}}',
-          headers: '',
-          body: '',
-          bodyType: 'json',
-          proxyMode: 'inherit',
-          authType: 'inherit',
-          captures: [
-            { path: 'dimension', name: 'charDimension', enabled: true },
-            { path: 'residents.length', name: 'residentCount', enabled: true }
+        id: 'node_js_audit',
+        type: 'js',
+        title: '5b. Archive & Audit Log',
+        x: 980,
+        y: 310,
+        jsData: {
+          code: `// Audit fallback / deceased branch
+const name = pm.environment.get('lastHeroName') || 'Unknown';
+const status = pm.environment.get('lastHeroStatus') || 'Dead';
+console.warn(\`[AUDIT] Hero \${name} has status: \${status}. Recording incident log.\`);
+pm.environment.set('incidentReport', \`Hero \${name} flagged as \${status}\`);`
+        },
+        status: 'idle'
+      },
+
+      // --- BRANCH CONVERGENCE: SYNCHRONIZER / MERGE ---
+      {
+        id: 'node_merge',
+        type: 'merge',
+        title: '6. Synchronize Branches',
+        x: 1330,
+        y: 240,
+        mergeData: {
+          strategy: 'wait-all',
+          payloadMode: 'pass-active',
+          inputs: [
+            { id: 'in_1', label: 'Alive Stream', slot: 'top', color: '#10b981' },
+            { id: 'in_2', label: 'Incident Stream', slot: 'bottom', color: '#ef4444' }
           ]
         },
         status: 'idle'
       },
+
+      // --- TELEMETRY DISPATCH (EVENT THROW) ---
       {
-        id: 'node_js_alive',
-        type: 'js',
-        title: '5a. Rate Danger Level',
+        id: 'node_throw',
+        type: 'event-throw',
+        title: '7. Dispatch Telemetry',
         x: 1560,
-        y: 60,
-        jsData: {
-          code: `// Combine the mapped hero profile with the origin location data
-const hero = JSON.parse(pm.environment.get('heroProfile') || '{}').hero || {};
-const dimension = pm.environment.get('charDimension') || 'unknown dimension';
-const residents = Number(pm.environment.get('residentCount')) || 0;
-const danger = residents > 50 ? 'HIGH' : residents > 20 ? 'MEDIUM' : 'LOW';
-console.log(hero.name + ' (' + hero.species + ', ' + hero.status + ') originates from ' + dimension + ' with ' + residents + ' known residents. Danger level: ' + danger);
-pm.environment.set('dangerLevel', danger);
-pm.environment.set('flowOutcome', 'Hero active - ' + dimension + ' - danger ' + danger);`
-        },
-        status: 'idle'
-      },
-      {
-        id: 'node_jump_alive',
-        type: 'event-throw',
-        title: 'Jump: Finish',
-        x: 1900,
-        y: 84,
-        eventData: { eventName: 'finish_telemetry' },
+        y: 245,
+        eventData: { eventName: 'pipeline_complete' },
         status: 'idle'
       },
 
-      // --- DEAD BRANCH: first appearance lookup -> archive record ---
+      // --- PARALLEL SWIMLANE: TELEMETRY RECEIVER -> TERMINATE ---
       {
-        id: 'node_fetch_episode',
-        type: 'rest',
-        title: '3b. Fetch First Episode',
-        x: 880,
-        y: 240,
-        restData: {
-          method: 'GET',
-          url: '{{firstEpisodeUrl}}',
-          headers: '',
-          body: '',
-          bodyType: 'json',
-          proxyMode: 'inherit',
-          authType: 'inherit',
-          captures: [
-            { path: 'name', name: 'episodeTitle', enabled: true },
-            { path: 'air_date', name: 'episodeAirDate', enabled: true }
-          ]
-        },
-        status: 'idle'
-      },
-      {
-        id: 'node_js_dead',
-        type: 'js',
-        title: '4b. Archive Record',
-        x: 1220,
-        y: 240,
-        jsData: {
-          code: `// Archive the deceased character together with their first appearance
-const name = pm.environment.get('charName') || 'Unknown';
-const episode = pm.environment.get('episodeTitle') || 'unknown episode';
-const aired = pm.environment.get('episodeAirDate') || 'unknown date';
-console.warn(name + ' is deceased. First appearance: ' + episode + ' (' + aired + '). Record archived.');
-pm.environment.set('archiveRecord', name + ' | ' + episode + ' | ' + aired);
-pm.environment.set('flowOutcome', 'Deceased - archived');`
-        },
-        status: 'idle'
-      },
-      {
-        id: 'node_jump_dead',
-        type: 'event-throw',
-        title: 'Jump: Finish',
-        x: 1560,
-        y: 264,
-        eventData: { eventName: 'finish_telemetry' },
-        status: 'idle'
-      },
-
-      // --- UNKNOWN BRANCH: flag for manual review ---
-      {
-        id: 'node_js_unknown',
-        type: 'js',
-        title: '3c. Flag for Review',
-        x: 880,
-        y: 420,
-        jsData: {
-          code: `// Fallback: the status is neither Alive nor Dead
-const name = pm.environment.get('charName') || 'Unknown';
-const species = pm.environment.get('charSpecies') || 'unknown species';
-const status = pm.environment.get('charStatus') || 'unknown';
-console.info(name + ' (' + species + ') has status "' + status + '". Manual review required.');
-pm.environment.set('flowOutcome', 'Unverified - manual review required');`
-        },
-        status: 'idle'
-      },
-      {
-        id: 'node_jump_unknown',
-        type: 'event-throw',
-        title: 'Jump: Finish',
-        x: 1220,
-        y: 444,
-        eventData: { eventName: 'finish_telemetry' },
-        status: 'idle'
-      },
-
-      // --- CONVERGENCE: EVENT RECEIVER -> TERMINATE ---
-      {
-        id: 'node_recv_finish',
+        id: 'node_catch',
         type: 'event-catch',
-        title: 'Receiver: Finish',
-        x: 180,
-        y: 480,
-        eventData: { eventName: 'finish_telemetry' },
+        title: '8. Telemetry Receiver',
+        x: 60,
+        y: 460,
+        eventData: { eventName: 'pipeline_complete' },
         status: 'idle'
       },
       {
         id: 'node_terminate',
         type: 'terminate',
-        title: 'End of Flow',
-        x: 340,
-        y: 480,
+        title: '9. Workflow Complete',
+        x: 190,
+        y: 460,
         status: 'idle'
       }
     ],
     connections: [
-      { id: 'c_start_fetch', fromId: 'node_start', toId: 'node_fetch_char', kind: 'solid' },
-      { id: 'c_fetch_router', fromId: 'node_fetch_char', toId: 'node_router', kind: 'solid' },
+      { id: 'c_start_fetch', fromId: 'node_start', toId: 'node_fetch_batch', kind: 'solid' },
+      { id: 'c_fetch_loop', fromId: 'node_fetch_batch', toId: 'node_loop', kind: 'solid' },
 
-      // Router port connectors:
+      // Loop body connections (item port -> throttle -> process):
+      {
+        id: 'c_loop_delay',
+        fromId: 'node_loop',
+        toId: 'node_loop_delay',
+        fromPort: 'item',
+        kind: 'solid'
+      },
+      {
+        id: 'c_delay_js',
+        fromId: 'node_loop_delay',
+        toId: 'node_loop_process',
+        kind: 'solid'
+      },
+
+      // Loop completion connection (done port -> router):
+      {
+        id: 'c_loop_router',
+        fromId: 'node_loop',
+        toId: 'node_router',
+        fromPort: 'done',
+        kind: 'solid'
+      },
+
+      // Router branch connections:
       {
         id: 'c_router_alive',
         fromId: 'node_router',
-        toId: 'node_transform_alive',
+        toId: 'node_transform',
         fromPort: 'port_alive',
         kind: 'solid'
       },
-      { id: 'c_trans_origin', fromId: 'node_transform_alive', toId: 'node_fetch_origin', kind: 'solid' },
-      { id: 'c_origin_js', fromId: 'node_fetch_origin', toId: 'node_js_alive', kind: 'solid' },
-      { id: 'c_js_jump_alive', fromId: 'node_js_alive', toId: 'node_jump_alive', kind: 'solid' },
-
       {
         id: 'c_router_dead',
         fromId: 'node_router',
-        toId: 'node_fetch_episode',
+        toId: 'node_js_audit',
         fromPort: 'port_dead',
         kind: 'solid'
       },
-      { id: 'c_episode_js', fromId: 'node_fetch_episode', toId: 'node_js_dead', kind: 'solid' },
-      { id: 'c_js_jump_dead', fromId: 'node_js_dead', toId: 'node_jump_dead', kind: 'solid' },
 
+      // Convergence connections to Merge inputs:
       {
-        id: 'c_router_unk',
-        fromId: 'node_router',
-        toId: 'node_js_unknown',
-        fromPort: 'port_unknown',
+        id: 'c_alive_merge',
+        fromId: 'node_transform',
+        toId: 'node_merge',
+        toPort: 'in_1',
         kind: 'solid'
       },
-      { id: 'c_unk_jump', fromId: 'node_js_unknown', toId: 'node_jump_unknown', kind: 'solid' },
+      {
+        id: 'c_dead_merge',
+        fromId: 'node_js_audit',
+        toId: 'node_merge',
+        toPort: 'in_2',
+        kind: 'solid'
+      },
 
-      { id: 'c_recv_term', fromId: 'node_recv_finish', toId: 'node_terminate', kind: 'solid' }
+      // Merge output to Event Throw:
+      {
+        id: 'c_merge_throw',
+        fromId: 'node_merge',
+        toId: 'node_throw',
+        fromPort: 'joined',
+        kind: 'solid'
+      },
+
+      // Receiver to Terminate in parallel swimlane:
+      { id: 'c_catch_term', fromId: 'node_catch', toId: 'node_terminate', kind: 'solid' }
     ]
   }
 }

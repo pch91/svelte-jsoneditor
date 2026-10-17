@@ -1,54 +1,52 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>P2P Relay Swarm</title>
-  <link rel="stylesheet" href="popup.css">
-</head>
-<body class="jse-theme-dark">
-  <div class="popup-container">
-    <!-- Header Padrão Svelte-Jsoneditor -->
-    <header class="popup-header">
-      <div class="header-title-box">
-        <span class="header-icon">🌐</span>
-        <span class="header-title">P2P Swarm Relay</span>
-      </div>
-      <span class="header-badge" id="status-badge">🟢 Ativo</span>
-    </header>
-
-    <!-- Master Global Pause Switch -->
-    <section class="master-control-section">
-      <div class="master-info">
-        <span class="master-label">Sincronismo Geral</span>
-        <span class="master-sub" id="master-sub">Retransmitindo dados em 2º plano</span>
-      </div>
-      <button type="button" class="btn-toggle" id="btn-toggle-global">
-        ⏸ Pausar Tudo
-      </button>
-    </section>
-
-    <!-- Groups Section -->
-    <section class="groups-section">
-      <div class="groups-header">
-        <span class="section-title">Grupos Registrados</span>
-        <span class="group-count-badge" id="group-count-badge">0 grupos</span>
-      </div>
-
-      <div class="groups-list" id="groups-list">
-        <div class="empty-state" id="empty-state">
-          Nenhum grupo registrado ainda.<br>
-          Crie ou entre em um grupo no site para sincronizar.
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>P2P Relay Swarm</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body class="jse-theme-dark">
+    <div class="popup-container">
+      <!-- Header Padrão Svelte-Jsoneditor -->
+      <header class="popup-header">
+        <div class="header-title-box">
+          <span class="header-icon">🌐</span>
+          <span class="header-title">P2P Swarm Relay</span>
         </div>
-      </div>
-    </section>
+        <span class="header-badge" id="status-badge">🟢 Ativo</span>
+      </header>
 
-    <!-- Footer -->
-    <footer class="popup-footer">
-      <span class="footer-note">⚡ Funciona mesmo com o site fechado</span>
-    </footer>
-  </div>
+      <!-- Master Global Pause Switch -->
+      <section class="master-control-section">
+        <div class="master-info">
+          <span class="master-label">Sincronismo Geral</span>
+          <span class="master-sub" id="master-sub">Retransmitindo dados em 2º plano</span>
+        </div>
+        <button type="button" class="btn-toggle" id="btn-toggle-global">⏸ Pausar Tudo</button>
+      </section>
 
-  <script src="popup.js" type="module"></script>
-</body>
+      <!-- Groups Section -->
+      <section class="groups-section">
+        <div class="groups-header">
+          <span class="section-title">Grupos Registrados</span>
+          <span class="group-count-badge" id="group-count-badge">0 grupos</span>
+        </div>
+
+        <div class="groups-list" id="groups-list">
+          <div class="empty-state" id="empty-state">
+            Nenhum grupo registrado ainda.<br />
+            Crie ou entre em um grupo no site para sincronizar.
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer class="popup-footer">
+        <span class="footer-note">⚡ Funciona mesmo com o site fechado</span>
+      </footer>
+    </div>
+
+    <script src="popup.js" type="module"></script>
+  </body>
 </html>

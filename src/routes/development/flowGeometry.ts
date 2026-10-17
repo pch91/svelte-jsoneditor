@@ -14,11 +14,19 @@ export interface Point {
 }
 
 export function isCircleNode(type: string): boolean {
-  return type === 'start' || type === 'terminate' || type === 'event-throw' || type === 'event-catch'
+  return (
+    type === 'start' || type === 'terminate' || type === 'event-throw' || type === 'event-catch'
+  )
 }
 
 export function isCompactNode(type: string): boolean {
-  return type === 'delay' || type === 'merge' || type === 'router' || type === 'loop' || type === 'transform'
+  return (
+    type === 'delay' ||
+    type === 'merge' ||
+    type === 'router' ||
+    type === 'loop' ||
+    type === 'transform'
+  )
 }
 
 export function getNodeWidth(type: string): number {
@@ -186,7 +194,10 @@ export function getOutputPortPoint(node: FlowNode, portId?: string): Point {
   // Diamond Switch Router (130x130): Strictly bound to geometric diamond perimeter equation
   if (node.type === 'router') {
     const slotPorts = ports.filter((p) => (p.slot ?? 'middle') === slot)
-    const idx = Math.max(0, slotPorts.findIndex((p) => p.id === targetPort?.id))
+    const idx = Math.max(
+      0,
+      slotPorts.findIndex((p) => p.id === targetPort?.id)
+    )
     const total = Math.max(1, slotPorts.length)
     const pt = getRouterPortPointOnLine(slot, idx, total)
     return {
@@ -203,7 +214,8 @@ export function getOutputPortPoint(node: FlowNode, portId?: string): Point {
   if (targetPort?.slotIndex && FIXED_PORT_SLOTS[targetPort.slotIndex]) {
     const s = FIXED_PORT_SLOTS[targetPort.slotIndex]
     const relX = s.direction === 'right' ? w : Math.round((s.relX / 280) * w)
-    const relY = s.direction === 'bottom' ? h : s.direction === 'top' ? 0 : Math.round((s.relY / 140) * h)
+    const relY =
+      s.direction === 'bottom' ? h : s.direction === 'top' ? 0 : Math.round((s.relY / 140) * h)
     return {
       x: node.x + relX,
       y: node.y + relY,
@@ -212,7 +224,10 @@ export function getOutputPortPoint(node: FlowNode, portId?: string): Point {
   }
 
   const slotPorts = ports.filter((p) => (p.slot ?? 'middle') === slot)
-  const idx = Math.max(0, slotPorts.findIndex((p) => p.id === targetPort?.id))
+  const idx = Math.max(
+    0,
+    slotPorts.findIndex((p) => p.id === targetPort?.id)
+  )
 
   if (slot === 'top') {
     return { x: node.x + Math.round(w * 0.75), y: node.y, direction: 'top' }
@@ -251,10 +266,14 @@ export function getInputPortPoint(node: FlowNode, portId?: string): Point {
   }
 
   if (node.type === 'merge') {
-    const inputs = node.mergeData?.inputs && node.mergeData.inputs.length > 0
-      ? node.mergeData.inputs
-      : [{ id: 'in_1' }, { id: 'in_2' }]
-    const idx = Math.max(0, inputs.findIndex((p) => p.id === portId))
+    const inputs =
+      node.mergeData?.inputs && node.mergeData.inputs.length > 0
+        ? node.mergeData.inputs
+        : [{ id: 'in_1' }, { id: 'in_2' }]
+    const idx = Math.max(
+      0,
+      inputs.findIndex((p) => p.id === portId)
+    )
     const yOffsets = inputs.length === 2 ? [20, 40] : [15, 30, 45]
     return {
       x: node.x,
@@ -376,15 +395,9 @@ export function getBezierMidpoint(
   const t = 0.5
   const mt = 1 - t
   const midX =
-    mt * mt * mt * p1.x +
-    3 * mt * mt * t * cp1x +
-    3 * mt * t * t * cp2x +
-    t * t * t * p2.x
+    mt * mt * mt * p1.x + 3 * mt * mt * t * cp1x + 3 * mt * t * t * cp2x + t * t * t * p2.x
   const midY =
-    mt * mt * mt * p1.y +
-    3 * mt * mt * t * cp1y +
-    3 * mt * t * t * cp2y +
-    t * t * t * p2.y
+    mt * mt * mt * p1.y + 3 * mt * mt * t * cp1y + 3 * mt * t * t * cp2y + t * t * t * p2.y
 
   return { x: midX, y: midY }
 }

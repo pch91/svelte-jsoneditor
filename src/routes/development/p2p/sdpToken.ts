@@ -22,7 +22,6 @@ export interface SignalingPayload {
   sasFingerprint?: string
 }
 
-
 /**
  * Converts a Uint8Array to a URL-safe Base64 string without padding.
  */
@@ -106,7 +105,7 @@ export async function decompressPayload(token: string): Promise<SignalingPayload
     if (typeof DecompressionStream !== 'undefined') {
       const ds = new DecompressionStream('deflate')
       const writer = ds.writable.getWriter()
-      writer.write(compressedBytes as any)
+      writer.write(compressedBytes as unknown as BufferSource)
       writer.close()
 
       const reader = ds.readable.getReader()

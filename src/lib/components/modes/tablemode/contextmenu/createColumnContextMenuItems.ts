@@ -40,8 +40,7 @@ export default function createColumnContextMenuItems({
               title: isExpanded
                 ? 'Collapse sub-columns back to original column'
                 : 'Expand objects or arrays in this column into sub-columns to compare in table',
-              onClick: () =>
-                onToggleExpand(isExpandable ? columnPath : (parentPath ?? columnPath))
+              onClick: () => onToggleExpand(isExpandable ? columnPath : (parentPath ?? columnPath))
             }
           ]
         }

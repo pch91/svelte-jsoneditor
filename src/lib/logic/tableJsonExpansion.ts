@@ -575,6 +575,7 @@ export function createVisualCellPatch(
 
     const relPath = visualColumn.fullPath.slice(stringParentPath.length)
     if (relPath.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let target = cloned as any
       if (visualColumn.isArrayElement && Array.isArray(target)) {
         while (target.length <= visualRow.subRowIndex) {

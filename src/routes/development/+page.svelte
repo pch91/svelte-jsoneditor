@@ -1,5 +1,4 @@
 <script lang="ts">
-  /* eslint-disable @typescript-eslint/no-unused-vars */
   import {
     type Content,
     type ContextMenuItem,
@@ -1919,6 +1918,7 @@
                 })
               }
             }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             p2pWorkspace.syncLocalFolder(pt.id, pt as any, folderTabs)
           }
         }
@@ -2555,8 +2555,7 @@
           if (data.primaryTab.title) primaryTabs[pIdx].title = data.primaryTab.title
           if (data.primaryTab.spatialFlows)
             primaryTabs[pIdx].spatialFlows = data.primaryTab.spatialFlows
-          if (data.primaryTab.flowGroups)
-            primaryTabs[pIdx].flowGroups = data.primaryTab.flowGroups
+          if (data.primaryTab.flowGroups) primaryTabs[pIdx].flowGroups = data.primaryTab.flowGroups
         }
         primaryTabs = [...primaryTabs]
         tabContents = [...tabContents]
@@ -4264,7 +4263,9 @@
     const grp = pt.flowGroups.find((g) => g.id === groupId)
     const hasFlows = pt.spatialFlows?.some((f) => f.groupId === groupId)
     if (hasFlows) {
-      if (!confirm(`The group "${grp?.name}" contains flows. Do you want to delete it and its flows?`))
+      if (
+        !confirm(`The group "${grp?.name}" contains flows. Do you want to delete it and its flows?`)
+      )
         return
       pt.spatialFlows = pt.spatialFlows?.filter((f) => f.groupId !== groupId)
     }
@@ -4864,8 +4865,8 @@
                     {#if pt.p2pGroupId}
                       <span
                         class="tab-p2p-badge"
-                        title="Pasta compartilhada no grupo: {pt.p2pGroupName || 'P2P'}"
-                      >👥</span>
+                        title="Pasta compartilhada no grupo: {pt.p2pGroupName || 'P2P'}">👥</span
+                      >
                     {/if}
                     {#if pt.subTabIds.length > 1}
                       <span class="tab-count-badge" title="{pt.subTabIds.length} sub-tabs"
@@ -5529,645 +5530,703 @@
             </div>
 
             <!-- Main Content Layout: Config pane + Resizer + History pane -->
-            <div class="requests-body-layout" class:is-horizontal={$reqLayoutDirection === 'horizontal'}>
+            <div
+              class="requests-body-layout"
+              class:is-horizontal={$reqLayoutDirection === 'horizontal'}
+            >
               <!-- Request Configuration Pane -->
               <div class="req-config-pane">
                 <!-- Section tabs -->
                 <div class="req-tabs">
-              {#each REQ_TABS as [tab, label]}
-                <button
-                  class="req-tab"
-                  class:active={reqActiveTab === tab}
-                  on:click={() => (reqActiveTab = tab)}>{label}</button
-                >
-              {/each}
-            </div>
-
-            <!-- Section content -->
-            <div class="req-section-content">
-              {#if reqActiveTab === 'params'}
-                <div class="req-panel-container req-params-view">
-                  <div class="req-card">
-                    <div class="req-card-header">
-                      <div class="req-card-title">
-                        <span class="req-card-icon">🔍</span>
-                        <span>Query Parameters</span>
-                        {#if reqParams.length > 0}
-                          <span class="req-count-badge">
-                            {reqParams.filter((p) => p.enabled && p.key.trim()).length} active
-                          </span>
-                        {/if}
-                      </div>
-                      <div class="req-card-actions">
-                        <button type="button" class="req-btn-add primary" on:click={addParam}>
-                          <span class="btn-icon">＋</span> Add Parameter
-                        </button>
-                      </div>
-                    </div>
-
-                    {#if reqParams.length === 0}
-                      <div class="req-empty-card">
-                        <span class="empty-icon">🔍</span>
-                        <div class="empty-text">
-                          <strong>No query parameters configured</strong>
-                          <small>Parameters are automatically serialized and appended to the URL as <code>?key=value</code></small>
-                        </div>
-                        <button type="button" class="req-btn-add secondary" on:click={addParam}>
-                          ＋ Add First Parameter
-                        </button>
-                      </div>
-                    {:else}
-                      <div class="req-table-wrapper">
-                        <table class="req-data-table">
-                          <thead>
-                            <tr>
-                              <th class="col-checkbox" title="Enable/Disable">✓</th>
-                              <th class="col-key">Key</th>
-                              <th class="col-val">Value</th>
-                              <th class="col-actions"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {#each reqParams as param, pi (pi)}
-                              <tr class:is-disabled={!param.enabled}>
-                                <td class="col-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    title="Include this parameter"
-                                    bind:checked={param.enabled}
-                                    on:change={onParamChange}
-                                  />
-                                </td>
-                                <td class="col-key">
-                                  <input
-                                    type="text"
-                                    placeholder="Key (e.g. limit or page)"
-                                    bind:value={param.key}
-                                    on:input={onParamChange}
-                                    spellcheck="false"
-                                  />
-                                </td>
-                                <td class="col-val">
-                                  <input
-                                    type="text"
-                                    placeholder="Value"
-                                    bind:value={param.value}
-                                    on:input={onParamChange}
-                                    spellcheck="false"
-                                  />
-                                </td>
-                                <td class="col-actions">
-                                  <button
-                                    type="button"
-                                    class="req-row-del-btn"
-                                    title="Remove parameter"
-                                    aria-label="Remove parameter"
-                                    on:click={() => removeParam(pi)}
-                                  >
-                                    <svg
-                                      class="req-del-icon"
-                                      width="13"
-                                      height="13"
-                                      viewBox="0 0 24 24"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      stroke-width="2"
-                                      stroke-linecap="round"
-                                      stroke-linejoin="round"
-                                      aria-hidden="true"
-                                    >
-                                      <path d="M3 6h18" />
-                                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                                      <line x1="10" y1="11" x2="10" y2="17" />
-                                      <line x1="14" y1="11" x2="14" y2="17" />
-                                    </svg>
-                                  </button>
-                                </td>
-                              </tr>
-                            {/each}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div class="req-table-footer">
-                        <button type="button" class="req-add-row-inline" on:click={addParam}>
-                          ＋ Add another parameter
-                        </button>
-                      </div>
-                    {/if}
-                  </div>
+                  {#each REQ_TABS as [tab, label]}
+                    <button
+                      class="req-tab"
+                      class:active={reqActiveTab === tab}
+                      on:click={() => (reqActiveTab = tab)}>{label}</button
+                    >
+                  {/each}
                 </div>
-              {:else if reqActiveTab === 'headers'}
-                <div class="req-panel-container req-headers-view">
-                  <div class="req-card">
-                    <div class="req-card-header">
-                      <div class="req-card-title">
-                        <span class="req-card-icon">🏷️</span>
-                        <span>Request Headers</span>
-                        {#if reqHeaderRows.length > 0}
-                          <span class="req-count-badge">
-                            {reqHeaderRows.filter((r) => r.enabled && r.key.trim()).length} active
-                          </span>
+
+                <!-- Section content -->
+                <div class="req-section-content">
+                  {#if reqActiveTab === 'params'}
+                    <div class="req-panel-container req-params-view">
+                      <div class="req-card">
+                        <div class="req-card-header">
+                          <div class="req-card-title">
+                            <span class="req-card-icon">🔍</span>
+                            <span>Query Parameters</span>
+                            {#if reqParams.length > 0}
+                              <span class="req-count-badge">
+                                {reqParams.filter((p) => p.enabled && p.key.trim()).length} active
+                              </span>
+                            {/if}
+                          </div>
+                          <div class="req-card-actions">
+                            <button type="button" class="req-btn-add primary" on:click={addParam}>
+                              <span class="btn-icon">＋</span> Add Parameter
+                            </button>
+                          </div>
+                        </div>
+
+                        {#if reqParams.length === 0}
+                          <div class="req-empty-card">
+                            <span class="empty-icon">🔍</span>
+                            <div class="empty-text">
+                              <strong>No query parameters configured</strong>
+                              <small
+                                >Parameters are automatically serialized and appended to the URL as <code
+                                  >?key=value</code
+                                ></small
+                              >
+                            </div>
+                            <button type="button" class="req-btn-add secondary" on:click={addParam}>
+                              ＋ Add First Parameter
+                            </button>
+                          </div>
+                        {:else}
+                          <div class="req-table-wrapper">
+                            <table class="req-data-table">
+                              <thead>
+                                <tr>
+                                  <th class="col-checkbox" title="Enable/Disable">✓</th>
+                                  <th class="col-key">Key</th>
+                                  <th class="col-val">Value</th>
+                                  <th class="col-actions"></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {#each reqParams as param, pi (pi)}
+                                  <tr class:is-disabled={!param.enabled}>
+                                    <td class="col-checkbox">
+                                      <input
+                                        type="checkbox"
+                                        title="Include this parameter"
+                                        bind:checked={param.enabled}
+                                        on:change={onParamChange}
+                                      />
+                                    </td>
+                                    <td class="col-key">
+                                      <input
+                                        type="text"
+                                        placeholder="Key (e.g. limit or page)"
+                                        bind:value={param.key}
+                                        on:input={onParamChange}
+                                        spellcheck="false"
+                                      />
+                                    </td>
+                                    <td class="col-val">
+                                      <input
+                                        type="text"
+                                        placeholder="Value"
+                                        bind:value={param.value}
+                                        on:input={onParamChange}
+                                        spellcheck="false"
+                                      />
+                                    </td>
+                                    <td class="col-actions">
+                                      <button
+                                        type="button"
+                                        class="req-row-del-btn"
+                                        title="Remove parameter"
+                                        aria-label="Remove parameter"
+                                        on:click={() => removeParam(pi)}
+                                      >
+                                        <svg
+                                          class="req-del-icon"
+                                          width="13"
+                                          height="13"
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          stroke-width="2"
+                                          stroke-linecap="round"
+                                          stroke-linejoin="round"
+                                          aria-hidden="true"
+                                        >
+                                          <path d="M3 6h18" />
+                                          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                          <line x1="10" y1="11" x2="10" y2="17" />
+                                          <line x1="14" y1="11" x2="14" y2="17" />
+                                        </svg>
+                                      </button>
+                                    </td>
+                                  </tr>
+                                {/each}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div class="req-table-footer">
+                            <button type="button" class="req-add-row-inline" on:click={addParam}>
+                              ＋ Add another parameter
+                            </button>
+                          </div>
                         {/if}
-                      </div>
-                      <div class="req-card-actions">
-                        <button type="button" class="req-btn-add primary" on:click={addHeaderRow}>
-                          <span class="btn-icon">＋</span> Add Header
-                        </button>
                       </div>
                     </div>
-
-                    {#if reqHeaderRows.length === 0}
-                      <div class="req-empty-card">
-                        <span class="empty-icon">🏷️</span>
-                        <div class="empty-text">
-                          <strong>No custom headers configured</strong>
-                          <small>Common headers like <code>Content-Type</code> or <code>Authorization</code> can be added here.</small>
+                  {:else if reqActiveTab === 'headers'}
+                    <div class="req-panel-container req-headers-view">
+                      <div class="req-card">
+                        <div class="req-card-header">
+                          <div class="req-card-title">
+                            <span class="req-card-icon">🏷️</span>
+                            <span>Request Headers</span>
+                            {#if reqHeaderRows.length > 0}
+                              <span class="req-count-badge">
+                                {reqHeaderRows.filter((r) => r.enabled && r.key.trim()).length} active
+                              </span>
+                            {/if}
+                          </div>
+                          <div class="req-card-actions">
+                            <button
+                              type="button"
+                              class="req-btn-add primary"
+                              on:click={addHeaderRow}
+                            >
+                              <span class="btn-icon">＋</span> Add Header
+                            </button>
+                          </div>
                         </div>
-                        <button type="button" class="req-btn-add secondary" on:click={addHeaderRow}>
-                          ＋ Add First Header
-                        </button>
-                      </div>
-                    {:else}
-                      <div class="req-table-wrapper">
-                        <table class="req-data-table">
-                          <thead>
-                            <tr>
-                              <th class="col-checkbox" title="Enable/Disable">✓</th>
-                              <th class="col-key">Header</th>
-                              <th class="col-val">Value</th>
-                              <th class="col-actions"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {#each reqHeaderRows as row, ri (ri)}
-                              <tr class:is-disabled={!row.enabled}>
-                                <td class="col-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    title="Include this header"
-                                    bind:checked={row.enabled}
-                                    on:change={onHeaderRowChange}
-                                  />
-                                </td>
-                                <td class="col-key">
-                                  <input
-                                    type="text"
-                                    list="req-header-suggest"
-                                    placeholder="Header (e.g. Accept or Authorization)"
-                                    bind:value={row.key}
-                                    on:input={onHeaderRowChange}
-                                    spellcheck="false"
-                                  />
-                                </td>
-                                <td class="col-val">
-                                  <input
-                                    type="text"
-                                    placeholder="Value or {'{{variable}}'}"
-                                    bind:value={row.value}
-                                    on:input={onHeaderRowChange}
-                                    spellcheck="false"
-                                  />
-                                </td>
-                                <td class="col-actions">
-                                  <button
-                                    type="button"
-                                    class="req-row-del-btn"
-                                    title="Remove header"
-                                    aria-label="Remove header"
-                                    on:click={() => removeHeaderRow(ri)}
-                                  >
-                                    <svg
-                                      class="req-del-icon"
-                                      width="13"
-                                      height="13"
-                                      viewBox="0 0 24 24"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      stroke-width="2"
-                                      stroke-linecap="round"
-                                      stroke-linejoin="round"
-                                      aria-hidden="true"
-                                    >
-                                      <path d="M3 6h18" />
-                                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                                      <line x1="10" y1="11" x2="10" y2="17" />
-                                      <line x1="14" y1="11" x2="14" y2="17" />
-                                    </svg>
-                                  </button>
-                                </td>
-                              </tr>
-                            {/each}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div class="req-table-footer">
-                        <button type="button" class="req-add-row-inline" on:click={addHeaderRow}>
-                          ＋ Add another header
-                        </button>
-                      </div>
-                    {/if}
-                    <datalist id="req-header-suggest">
-                      {#each HEADER_SUGGESTIONS as suggestion}
-                        <option value={suggestion}></option>
-                      {/each}
-                    </datalist>
-                  </div>
-                </div>
-              {:else if reqActiveTab === 'body'}
-                <div class="req-panel-container req-body-view">
-                  <div class="req-card">
-                    <div class="req-card-header">
-                      <div class="req-body-type-selector">
-                        <span class="body-type-label">Payload Format:</span>
-                        <div class="body-segmented-control" role="tablist">
-                          <button
-                            type="button"
-                            class="seg-btn"
-                            class:active={reqBodyType === 'none'}
-                            on:click={() => (reqBodyType = 'none')}
-                          >
-                            None
-                          </button>
-                          <button
-                            type="button"
-                            class="seg-btn"
-                            class:active={reqBodyType === 'json'}
-                            on:click={() => (reqBodyType = 'json')}
-                          >
-                            JSON (application/json)
-                          </button>
-                          <button
-                            type="button"
-                            class="seg-btn"
-                            class:active={reqBodyType === 'text'}
-                            on:click={() => (reqBodyType = 'text')}
-                          >
-                            Text (Raw)
-                          </button>
-                        </div>
-                        {#if bodyIgnored}
-                          <span class="body-ignored-badge" title="GET and HEAD requests typically do not have a body">
-                            ⚠ Ignored for {reqMethod}
-                          </span>
-                        {/if}
-                      </div>
 
-                      <div class="req-card-actions">
-                        {#if reqBodyType === 'json'}
-                          <button
-                            type="button"
-                            class="req-tool-btn"
-                            title="Format and prettify JSON payload"
-                            on:click={formatRequestBody}
-                            disabled={!reqBody.trim() || reqBodyInvalid}
-                          >
-                            ✨ Prettify JSON
-                          </button>
+                        {#if reqHeaderRows.length === 0}
+                          <div class="req-empty-card">
+                            <span class="empty-icon">🏷️</span>
+                            <div class="empty-text">
+                              <strong>No custom headers configured</strong>
+                              <small
+                                >Common headers like <code>Content-Type</code> or
+                                <code>Authorization</code> can be added here.</small
+                              >
+                            </div>
+                            <button
+                              type="button"
+                              class="req-btn-add secondary"
+                              on:click={addHeaderRow}
+                            >
+                              ＋ Add First Header
+                            </button>
+                          </div>
+                        {:else}
+                          <div class="req-table-wrapper">
+                            <table class="req-data-table">
+                              <thead>
+                                <tr>
+                                  <th class="col-checkbox" title="Enable/Disable">✓</th>
+                                  <th class="col-key">Header</th>
+                                  <th class="col-val">Value</th>
+                                  <th class="col-actions"></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {#each reqHeaderRows as row, ri (ri)}
+                                  <tr class:is-disabled={!row.enabled}>
+                                    <td class="col-checkbox">
+                                      <input
+                                        type="checkbox"
+                                        title="Include this header"
+                                        bind:checked={row.enabled}
+                                        on:change={onHeaderRowChange}
+                                      />
+                                    </td>
+                                    <td class="col-key">
+                                      <input
+                                        type="text"
+                                        list="req-header-suggest"
+                                        placeholder="Header (e.g. Accept or Authorization)"
+                                        bind:value={row.key}
+                                        on:input={onHeaderRowChange}
+                                        spellcheck="false"
+                                      />
+                                    </td>
+                                    <td class="col-val">
+                                      <input
+                                        type="text"
+                                        placeholder="Value or {'{{variable}}'}"
+                                        bind:value={row.value}
+                                        on:input={onHeaderRowChange}
+                                        spellcheck="false"
+                                      />
+                                    </td>
+                                    <td class="col-actions">
+                                      <button
+                                        type="button"
+                                        class="req-row-del-btn"
+                                        title="Remove header"
+                                        aria-label="Remove header"
+                                        on:click={() => removeHeaderRow(ri)}
+                                      >
+                                        <svg
+                                          class="req-del-icon"
+                                          width="13"
+                                          height="13"
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          stroke-width="2"
+                                          stroke-linecap="round"
+                                          stroke-linejoin="round"
+                                          aria-hidden="true"
+                                        >
+                                          <path d="M3 6h18" />
+                                          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                          <line x1="10" y1="11" x2="10" y2="17" />
+                                          <line x1="14" y1="11" x2="14" y2="17" />
+                                        </svg>
+                                      </button>
+                                    </td>
+                                  </tr>
+                                {/each}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div class="req-table-footer">
+                            <button
+                              type="button"
+                              class="req-add-row-inline"
+                              on:click={addHeaderRow}
+                            >
+                              ＋ Add another header
+                            </button>
+                          </div>
                         {/if}
-                        <button
-                          type="button"
-                          class="req-tool-btn primary"
-                          title="Open payload in the main JSON Editor view"
-                          on:click={openBodyInEditor}
-                        >
-                          ↗ Open in Editor
-                        </button>
+                        <datalist id="req-header-suggest">
+                          {#each HEADER_SUGGESTIONS as suggestion}
+                            <option value={suggestion}></option>
+                          {/each}
+                        </datalist>
                       </div>
                     </div>
+                  {:else if reqActiveTab === 'body'}
+                    <div class="req-panel-container req-body-view">
+                      <div class="req-card">
+                        <div class="req-card-header">
+                          <div class="req-body-type-selector">
+                            <span class="body-type-label">Payload Format:</span>
+                            <div class="body-segmented-control" role="tablist">
+                              <button
+                                type="button"
+                                class="seg-btn"
+                                class:active={reqBodyType === 'none'}
+                                on:click={() => (reqBodyType = 'none')}
+                              >
+                                None
+                              </button>
+                              <button
+                                type="button"
+                                class="seg-btn"
+                                class:active={reqBodyType === 'json'}
+                                on:click={() => (reqBodyType = 'json')}
+                              >
+                                JSON (application/json)
+                              </button>
+                              <button
+                                type="button"
+                                class="seg-btn"
+                                class:active={reqBodyType === 'text'}
+                                on:click={() => (reqBodyType = 'text')}
+                              >
+                                Text (Raw)
+                              </button>
+                            </div>
+                            {#if bodyIgnored}
+                              <span
+                                class="body-ignored-badge"
+                                title="GET and HEAD requests typically do not have a body"
+                              >
+                                ⚠ Ignored for {reqMethod}
+                              </span>
+                            {/if}
+                          </div>
 
-                    {#if reqBodyType === 'none'}
-                      <div class="req-empty-card">
-                        <span class="empty-icon">📄</span>
-                        <div class="empty-text">
-                          <strong>This request has no body payload</strong>
-                          <small>Select <strong>JSON</strong> or <strong>Text</strong> above to attach a payload for POST, PUT or PATCH requests.</small>
-                        </div>
-                        <button type="button" class="req-btn-add secondary" on:click={() => (reqBodyType = 'json')}>
-                          Attach JSON Payload
-                        </button>
-                      </div>
-                    {:else}
-                      <div class="req-code-editor-box">
-                        <div class="code-editor-header">
-                          <span class="code-header-badge">
+                          <div class="req-card-actions">
                             {#if reqBodyType === 'json'}
-                              <span class="json-icon">&#123;&#125;</span> application/json
-                            {:else}
-                              <span class="text-icon">📝</span> text/plain
+                              <button
+                                type="button"
+                                class="req-tool-btn"
+                                title="Format and prettify JSON payload"
+                                on:click={formatRequestBody}
+                                disabled={!reqBody.trim() || reqBodyInvalid}
+                              >
+                                ✨ Prettify JSON
+                              </button>
                             {/if}
-                          </span>
-                          <span class="code-header-hint">Ctrl + Enter to Send</span>
+                            <button
+                              type="button"
+                              class="req-tool-btn primary"
+                              title="Open payload in the main JSON Editor view"
+                              on:click={openBodyInEditor}
+                            >
+                              ↗ Open in Editor
+                            </button>
+                          </div>
                         </div>
-                        <textarea
-                          class="req-code-textarea"
-                          rows="9"
-                          placeholder={reqBodyType === 'json' ? '{\n  "key": "value"\n}' : 'Raw text payload...'}
-                          bind:value={reqBody}
-                          on:input={onBodyInput}
-                          on:keydown={(e) => {
-                            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void sendRequest()
-                          }}
-                          spellcheck="false"
-                        ></textarea>
-                        <div class="code-editor-footer">
-                          {#if reqBodyType === 'json'}
-                            {#if reqBodyInvalid}
-                              <span class="payload-status invalid">
-                                ⚠ Invalid JSON syntax — verify braces, quotes and commas
+
+                        {#if reqBodyType === 'none'}
+                          <div class="req-empty-card">
+                            <span class="empty-icon">📄</span>
+                            <div class="empty-text">
+                              <strong>This request has no body payload</strong>
+                              <small
+                                >Select <strong>JSON</strong> or <strong>Text</strong> above to attach
+                                a payload for POST, PUT or PATCH requests.</small
+                              >
+                            </div>
+                            <button
+                              type="button"
+                              class="req-btn-add secondary"
+                              on:click={() => (reqBodyType = 'json')}
+                            >
+                              Attach JSON Payload
+                            </button>
+                          </div>
+                        {:else}
+                          <div class="req-code-editor-box">
+                            <div class="code-editor-header">
+                              <span class="code-header-badge">
+                                {#if reqBodyType === 'json'}
+                                  <span class="json-icon">&#123;&#125;</span> application/json
+                                {:else}
+                                  <span class="text-icon">📝</span> text/plain
+                                {/if}
                               </span>
-                            {:else if reqBody.trim()}
-                              <span class="payload-status valid">
-                                ✓ Valid JSON payload
+                              <span class="code-header-hint">Ctrl + Enter to Send</span>
+                            </div>
+                            <textarea
+                              class="req-code-textarea"
+                              rows="9"
+                              placeholder={reqBodyType === 'json'
+                                ? '{\n  "key": "value"\n}'
+                                : 'Raw text payload...'}
+                              bind:value={reqBody}
+                              on:input={onBodyInput}
+                              on:keydown={(e) => {
+                                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey))
+                                  void sendRequest()
+                              }}
+                              spellcheck="false"
+                            ></textarea>
+                            <div class="code-editor-footer">
+                              {#if reqBodyType === 'json'}
+                                {#if reqBodyInvalid}
+                                  <span class="payload-status invalid">
+                                    ⚠ Invalid JSON syntax — verify braces, quotes and commas
+                                  </span>
+                                {:else if reqBody.trim()}
+                                  <span class="payload-status valid"> ✓ Valid JSON payload </span>
+                                {:else}
+                                  <span class="payload-status empty">Empty payload (optional)</span>
+                                {/if}
+                              {:else}
+                                <span class="payload-status text">{reqBody.length} characters</span>
+                              {/if}
+                            </div>
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  {:else if reqActiveTab === 'auth'}
+                    <div class="req-panel-container req-auth-view">
+                      <div class="req-card">
+                        <div class="req-card-header">
+                          <div class="req-card-title">
+                            <span class="req-card-icon">🔐</span>
+                            <span>Authentication</span>
+                            <span class="req-count-badge">{reqAuthType.toUpperCase()}</span>
+                          </div>
+                          <div class="req-card-actions">
+                            <button
+                              type="button"
+                              class="req-tool-btn"
+                              title="Audit and validate configured authentication"
+                              on:click={validateAndRevalidateAuth}
+                            >
+                              ⚡ Test / Validate Auth
+                            </button>
+                            {#if authValidationMessage}
+                              <span
+                                class="auth-validation-badge"
+                                class:ok={authValidationMessage.ok}
+                                class:bad={!authValidationMessage.ok}
+                              >
+                                {authValidationMessage.text}
                               </span>
-                            {:else}
-                              <span class="payload-status empty">Empty payload (optional)</span>
                             {/if}
-                          {:else}
-                            <span class="payload-status text">{reqBody.length} characters</span>
+                          </div>
+                        </div>
+
+                        <div class="req-auth-card-body">
+                          <p class="req-auth-intro">
+                            Choose an authentication method for this request:
+                          </p>
+                          <div class="req-auth-methods">
+                            {#each AUTH_METHODS as [value, label, hint]}
+                              <button
+                                type="button"
+                                class="req-auth-method"
+                                class:active={reqAuthType === value}
+                                title={hint}
+                                on:click={() => (reqAuthType = value)}
+                              >
+                                {label}
+                              </button>
+                            {/each}
+                          </div>
+
+                          {#if reqAuthType === 'bearer'}
+                            <div class="req-auth-fields">
+                              <label class="req-auth-field">
+                                <span class="req-label">Token:</span>
+                                <input
+                                  class="req-auth-input"
+                                  type="text"
+                                  placeholder={BEARER_PLACEHOLDER}
+                                  bind:value={authBearerToken}
+                                  spellcheck="false"
+                                />
+                              </label>
+                              <div class="req-token-block">
+                                <span class="req-note"
+                                  >Fetch a token from an API — saves it as <code>{TOKEN_VAR}</code> in
+                                  the active environment.</span
+                                >
+                                <div class="req-token-row">
+                                  <input
+                                    class="req-auth-input"
+                                    type="text"
+                                    placeholder="Token URL (https://auth.example.com/token)"
+                                    bind:value={tokenUrl}
+                                    spellcheck="false"
+                                  />
+                                  <input
+                                    class="req-path"
+                                    type="text"
+                                    placeholder="token JSON path (e.g. access_token)"
+                                    bind:value={tokenPath}
+                                    spellcheck="false"
+                                  />
+                                  <button
+                                    type="button"
+                                    class="req-tool-btn primary"
+                                    title={'Fetch token into {{token}} of the active environment'}
+                                    on:click={() => void fetchToken()}
+                                  >
+                                    🔑 Get token
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          {:else if reqAuthType === 'basic'}
+                            <div class="req-auth-fields">
+                              <label class="req-auth-field">
+                                <span class="req-label">Username:</span>
+                                <input
+                                  class="req-auth-input"
+                                  type="text"
+                                  placeholder="username"
+                                  bind:value={authBasicUser}
+                                  spellcheck="false"
+                                />
+                              </label>
+                              <label class="req-auth-field">
+                                <span class="req-label">Password:</span>
+                                <input
+                                  class="req-auth-input"
+                                  type="password"
+                                  placeholder="password"
+                                  bind:value={authBasicPass}
+                                  spellcheck="false"
+                                />
+                              </label>
+                            </div>
+                          {:else if reqAuthType === 'apikey'}
+                            <div class="req-auth-fields">
+                              <label class="req-auth-field">
+                                <span class="req-label">Header name:</span>
+                                <input
+                                  class="req-auth-input"
+                                  type="text"
+                                  placeholder="X-API-Key"
+                                  bind:value={authApiKeyName}
+                                  spellcheck="false"
+                                />
+                              </label>
+                              <label class="req-auth-field">
+                                <span class="req-label">Key value:</span>
+                                <input
+                                  class="req-auth-input"
+                                  type="text"
+                                  placeholder="key"
+                                  bind:value={authApiKeyValue}
+                                  spellcheck="false"
+                                />
+                              </label>
+                            </div>
+                          {:else if reqAuthType === 'none'}
+                            <div class="req-auth-empty-note">
+                              <span>✓ No authentication will be sent with this request.</span>
+                            </div>
                           {/if}
                         </div>
                       </div>
-                    {/if}
-                  </div>
-                </div>
-              {:else if reqActiveTab === 'auth'}
-                <div class="req-panel-container req-auth-view">
-                  <div class="req-card">
-                    <div class="req-card-header">
-                      <div class="req-card-title">
-                        <span class="req-card-icon">🔐</span>
-                        <span>Authentication</span>
-                        <span class="req-count-badge">{reqAuthType.toUpperCase()}</span>
-                      </div>
-                      <div class="req-card-actions">
-                        <button
-                          type="button"
-                          class="req-tool-btn"
-                          title="Audit and validate configured authentication"
-                          on:click={validateAndRevalidateAuth}
-                        >
-                          ⚡ Test / Validate Auth
-                        </button>
-                        {#if authValidationMessage}
-                          <span
-                            class="auth-validation-badge"
-                            class:ok={authValidationMessage.ok}
-                            class:bad={!authValidationMessage.ok}
-                          >
-                            {authValidationMessage.text}
-                          </span>
+                    </div>
+                  {:else if reqActiveTab === 'captures'}
+                    <div class="req-panel-container req-captures-pane">
+                      <CapturePathsTable
+                        bind:captures={reqCaptures}
+                        sampleJsonText={reqResponseText}
+                      />
+                    </div>
+                  {:else}
+                    <div class="req-panel-container req-env-view">
+                      <div class="req-card">
+                        <div class="req-card-header">
+                          <div class="req-env-selector-group">
+                            <span class="env-selector-label">Active Environment:</span>
+                            <div class="env-select-wrap">
+                              <select
+                                class="tb-select env-main-select"
+                                bind:value={$activeEnvName}
+                                on:change={onEnvSelected}
+                              >
+                                <option value="">No environment</option>
+                                {#each Object.keys($environments) as name}
+                                  <option value={name}>{name}</option>
+                                {/each}
+                              </select>
+                            </div>
+                            <button
+                              type="button"
+                              class="req-tool-btn"
+                              title="Create new environment"
+                              on:click={newEnvironment}
+                            >
+                              ＋ New Env
+                            </button>
+                            <button
+                              type="button"
+                              class="req-tool-btn"
+                              title="Manage Environments & Globals (Postman style)"
+                              on:click={() => (envManagerOpen = true)}
+                            >
+                              ⚙️ Manage All
+                            </button>
+                          </div>
+
+                          <div class="req-card-actions">
+                            <button
+                              type="button"
+                              class="req-tool-btn primary"
+                              title="Open environment in the main editor"
+                              disabled={!$activeEnvName}
+                              on:click={openEnvInEditor}
+                            >
+                              ↗ Open in Editor
+                            </button>
+                          </div>
+                        </div>
+
+                        {#if !$activeEnvName}
+                          <div class="req-empty-card">
+                            <span class="empty-icon">🌐</span>
+                            <div class="empty-text">
+                              <strong>No active environment selected</strong>
+                              <small
+                                >Select an environment from the dropdown above or click <strong
+                                  >＋ New Env</strong
+                                >
+                                to manage environment variables (e.g. <code>baseUrl</code>,
+                                <code>token</code>, <code>apiKey</code>).</small
+                              >
+                            </div>
+                            <button
+                              type="button"
+                              class="req-btn-add secondary"
+                              on:click={newEnvironment}
+                            >
+                              ＋ Create First Environment
+                            </button>
+                          </div>
+                        {:else}
+                          <div class="req-code-editor-box">
+                            <div class="code-editor-header">
+                              <span class="code-header-badge">
+                                <span class="json-icon">&#123;&#125;</span> Variables for
+                                <strong>{$activeEnvName}</strong>
+                              </span>
+                              <span class="code-header-hint">
+                                Variables can be referenced as <code>{'{{variableName}}'}</code>
+                              </span>
+                            </div>
+                            <textarea
+                              class="req-code-textarea"
+                              rows="9"
+                              placeholder={'{\n  "baseUrl": "https://api.example.com",\n  "token": "..."\n}'}
+                              disabled={!$activeEnvName}
+                              bind:value={envJsonText}
+                              on:input={onEnvJsonInput}
+                              spellcheck="false"
+                            ></textarea>
+                            <div class="code-editor-footer">
+                              <span class="payload-status text">
+                                Variables defined in JSON format. Changes save automatically.
+                              </span>
+                            </div>
+                          </div>
                         {/if}
                       </div>
                     </div>
+                  {/if}
+                </div>
 
-                    <div class="req-auth-card-body">
-                      <p class="req-auth-intro">Choose an authentication method for this request:</p>
-                      <div class="req-auth-methods">
-                        {#each AUTH_METHODS as [value, label, hint]}
+                <!-- Response -->
+                {#if reqResult}
+                  {#if 'error' in reqResult}
+                    <div class="req-response">
+                      <div class="req-result req-error">⚠ {reqResult.error}</div>
+                    </div>
+                  {:else}
+                    <div class="req-response">
+                      <div class="req-response-head">
+                        <span
+                          class="req-status-chip"
+                          class:ok={reqResult.status < 400}
+                          class:bad={reqResult.status >= 400}
+                        >
+                          {reqResult.status}
+                          {reqResult.statusText}
+                        </span>
+                        <span class="req-meta"
+                          >{reqResult.durationMs} ms · {formatBytes(
+                            reqResult.sizeBytes
+                          )}{#if reqResult.viaProxy}
+                            · 🛡 via proxy{/if}</span
+                        >
+                        <span class="req-spacer"></span>
+                        <span class="req-meta">Response opened in editor tab</span>
+                        {#if reqResponseText}
                           <button
                             type="button"
-                            class="req-auth-method"
-                            class:active={reqAuthType === value}
-                            title={hint}
-                            on:click={() => (reqAuthType = value)}
+                            class="req-mini-btn"
+                            title={responsePreviewOpen ? 'Hide preview' : 'Show preview'}
+                            on:click={() => (responsePreviewOpen = !responsePreviewOpen)}
                           >
-                            {label}
+                            {responsePreviewOpen ? 'Hide preview ▴' : 'Preview ▾'}
                           </button>
-                        {/each}
+                        {/if}
                       </div>
-
-                      {#if reqAuthType === 'bearer'}
-                        <div class="req-auth-fields">
-                          <label class="req-auth-field">
-                            <span class="req-label">Token:</span>
-                            <input
-                              class="req-auth-input"
-                              type="text"
-                              placeholder={BEARER_PLACEHOLDER}
-                              bind:value={authBearerToken}
-                              spellcheck="false"
-                            />
-                          </label>
-                          <div class="req-token-block">
-                            <span class="req-note"
-                              >Fetch a token from an API — saves it as <code>{TOKEN_VAR}</code> in the active environment.</span
-                            >
-                            <div class="req-token-row">
-                              <input
-                                class="req-auth-input"
-                                type="text"
-                                placeholder="Token URL (https://auth.example.com/token)"
-                                bind:value={tokenUrl}
-                                spellcheck="false"
-                              />
-                              <input
-                                class="req-path"
-                                type="text"
-                                placeholder="token JSON path (e.g. access_token)"
-                                bind:value={tokenPath}
-                                spellcheck="false"
-                              />
-                              <button
-                                type="button"
-                                class="req-tool-btn primary"
-                                title={'Fetch token into {{token}} of the active environment'}
-                                on:click={() => void fetchToken()}
-                              >
-                                🔑 Get token
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      {:else if reqAuthType === 'basic'}
-                        <div class="req-auth-fields">
-                          <label class="req-auth-field">
-                            <span class="req-label">Username:</span>
-                            <input
-                              class="req-auth-input"
-                              type="text"
-                              placeholder="username"
-                              bind:value={authBasicUser}
-                              spellcheck="false"
-                            />
-                          </label>
-                          <label class="req-auth-field">
-                            <span class="req-label">Password:</span>
-                            <input
-                              class="req-auth-input"
-                              type="password"
-                              placeholder="password"
-                              bind:value={authBasicPass}
-                              spellcheck="false"
-                            />
-                          </label>
-                        </div>
-                      {:else if reqAuthType === 'apikey'}
-                        <div class="req-auth-fields">
-                          <label class="req-auth-field">
-                            <span class="req-label">Header name:</span>
-                            <input
-                              class="req-auth-input"
-                              type="text"
-                              placeholder="X-API-Key"
-                              bind:value={authApiKeyName}
-                              spellcheck="false"
-                            />
-                          </label>
-                          <label class="req-auth-field">
-                            <span class="req-label">Key value:</span>
-                            <input
-                              class="req-auth-input"
-                              type="text"
-                              placeholder="key"
-                              bind:value={authApiKeyValue}
-                              spellcheck="false"
-                            />
-                          </label>
-                        </div>
-                      {:else if reqAuthType === 'none'}
-                        <div class="req-auth-empty-note">
-                          <span>✓ No authentication will be sent with this request.</span>
+                      {#if reqResult.missing && reqResult.missing.length > 0}
+                        <div class="req-result req-error">
+                          Unresolved variables: {reqResult.missing.join(', ')}
                         </div>
                       {/if}
-                    </div>
-                  </div>
-                </div>
-              {:else if reqActiveTab === 'captures'}
-                <div class="req-panel-container req-captures-pane">
-                  <CapturePathsTable bind:captures={reqCaptures} sampleJsonText={reqResponseText} />
-                </div>
-              {:else}
-                <div class="req-panel-container req-env-view">
-                  <div class="req-card">
-                    <div class="req-card-header">
-                      <div class="req-env-selector-group">
-                        <span class="env-selector-label">Active Environment:</span>
-                        <div class="env-select-wrap">
-                          <select class="tb-select env-main-select" bind:value={$activeEnvName} on:change={onEnvSelected}>
-                            <option value="">No environment</option>
-                            {#each Object.keys($environments) as name}
-                              <option value={name}>{name}</option>
-                            {/each}
-                          </select>
-                        </div>
-                        <button type="button" class="req-tool-btn" title="Create new environment" on:click={newEnvironment}>
-                          ＋ New Env
-                        </button>
-                        <button
-                          type="button"
-                          class="req-tool-btn"
-                          title="Manage Environments & Globals (Postman style)"
-                          on:click={() => (envManagerOpen = true)}
-                        >
-                          ⚙️ Manage All
-                        </button>
-                      </div>
-
-                      <div class="req-card-actions">
-                        <button
-                          type="button"
-                          class="req-tool-btn primary"
-                          title="Open environment in the main editor"
-                          disabled={!$activeEnvName}
-                          on:click={openEnvInEditor}
-                        >
-                          ↗ Open in Editor
-                        </button>
-                      </div>
-                    </div>
-
-                    {#if !$activeEnvName}
-                      <div class="req-empty-card">
-                        <span class="empty-icon">🌐</span>
-                        <div class="empty-text">
-                          <strong>No active environment selected</strong>
-                          <small>Select an environment from the dropdown above or click <strong>＋ New Env</strong> to manage environment variables (e.g. <code>baseUrl</code>, <code>token</code>, <code>apiKey</code>).</small>
-                        </div>
-                        <button type="button" class="req-btn-add secondary" on:click={newEnvironment}>
-                          ＋ Create First Environment
-                        </button>
-                      </div>
-                    {:else}
-                      <div class="req-code-editor-box">
-                        <div class="code-editor-header">
-                          <span class="code-header-badge">
-                            <span class="json-icon">&#123;&#125;</span> Variables for <strong>{$activeEnvName}</strong>
-                          </span>
-                          <span class="code-header-hint">
-                            Variables can be referenced as <code>{'{{variableName}}'}</code>
-                          </span>
-                        </div>
-                        <textarea
-                          class="req-code-textarea"
-                          rows="9"
-                          placeholder={'{\n  "baseUrl": "https://api.example.com",\n  "token": "..."\n}'}
-                          disabled={!$activeEnvName}
-                          bind:value={envJsonText}
-                          on:input={onEnvJsonInput}
-                          spellcheck="false"
-                        ></textarea>
-                        <div class="code-editor-footer">
-                          <span class="payload-status text">
-                            Variables defined in JSON format. Changes save automatically.
-                          </span>
-                        </div>
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-              {/if}
-            </div>
-
-            <!-- Response -->
-            {#if reqResult}
-              {#if 'error' in reqResult}
-                <div class="req-response">
-                  <div class="req-result req-error">⚠ {reqResult.error}</div>
-                </div>
-              {:else}
-                <div class="req-response">
-                  <div class="req-response-head">
-                    <span
-                      class="req-status-chip"
-                      class:ok={reqResult.status < 400}
-                      class:bad={reqResult.status >= 400}
-                    >
-                      {reqResult.status}
-                      {reqResult.statusText}
-                    </span>
-                    <span class="req-meta"
-                      >{reqResult.durationMs} ms · {formatBytes(
-                        reqResult.sizeBytes
-                      )}{#if reqResult.viaProxy}
-                        · 🛡 via proxy{/if}</span
-                    >
-                    <span class="req-spacer"></span>
-                    <span class="req-meta">Response opened in editor tab</span>
-                    {#if reqResponseText}
-                      <button
-                        type="button"
-                        class="req-mini-btn"
-                        title={responsePreviewOpen ? 'Hide preview' : 'Show preview'}
-                        on:click={() => (responsePreviewOpen = !responsePreviewOpen)}
-                      >
-                        {responsePreviewOpen ? 'Hide preview ▴' : 'Preview ▾'}
-                      </button>
-                    {/if}
-                  </div>
-                  {#if reqResult.missing && reqResult.missing.length > 0}
-                    <div class="req-result req-error">
-                      Unresolved variables: {reqResult.missing.join(', ')}
+                      {#if reqResponseText && responsePreviewOpen}
+                        <pre class="req-response-body">{reqResponseText}</pre>
+                      {/if}
                     </div>
                   {/if}
-                  {#if reqResponseText && responsePreviewOpen}
-                    <pre class="req-response-body">{reqResponseText}</pre>
-                  {/if}
-                </div>
-              {/if}
-            {/if}
-
+                {/if}
               </div>
 
               <!-- Resizer divider between Config Pane and History (when history exists and is open) -->
@@ -6190,9 +6249,9 @@
                   class="req-history-pane"
                   class:is-collapsed={!$historyOpen}
                   style={$historyOpen
-                    ? ($reqLayoutDirection === 'horizontal'
-                        ? `width: ${$reqHistoryWidth}px; flex-shrink: 0;`
-                        : `height: ${$reqHistoryHeight}px; flex-shrink: 0;`)
+                    ? $reqLayoutDirection === 'horizontal'
+                      ? `width: ${$reqHistoryWidth}px; flex-shrink: 0;`
+                      : `height: ${$reqHistoryHeight}px; flex-shrink: 0;`
                     : ''}
                 >
                   <div
@@ -6380,8 +6439,8 @@
   <P2PCollaborationModal
     bind:open={p2pModalOpen}
     prefillOfferToken={p2pPrefillOffer}
-    primaryTabs={primaryTabs}
-    activePrimaryTabId={activePrimaryTabId}
+    {primaryTabs}
+    {activePrimaryTabId}
     onUpdatePrimaryTab={handleUpdatePrimaryTabP2P}
     onCreateFolderFromShare={handleCreateFolderFromShare}
     onClose={() => (p2pModalOpen = false)}
@@ -8026,7 +8085,9 @@
     align-items: center;
     justify-content: center;
     background: $bg-chrome;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease;
     user-select: none;
     z-index: 5;
     flex-shrink: 0;
@@ -9055,7 +9116,9 @@
       border: 1px solid $b-input;
       border-radius: 4px;
       outline: none;
-      transition: border-color 0.12s, box-shadow 0.12s;
+      transition:
+        border-color 0.12s,
+        box-shadow 0.12s;
 
       &:focus {
         border-color: $ac;

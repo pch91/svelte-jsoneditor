@@ -51,9 +51,9 @@ describe('P2PCryptoEngine (E2EE with ECDH + AES-256-GCM)', () => {
 
   it('prevents an eavesdropping hacker (Eve) from decrypting the payload', async () => {
     const epoch = aliceCrypto.getCurrentEpoch()
-    const alicePair = await aliceCrypto.getOrCreateDailyKeyPair(epoch)
+    await aliceCrypto.getOrCreateDailyKeyPair(epoch)
     const bobPair = await bobCrypto.getOrCreateDailyKeyPair(epoch)
-    const evePair = await eveHackerCrypto.getOrCreateDailyKeyPair(epoch)
+    await eveHackerCrypto.getOrCreateDailyKeyPair(epoch)
 
     await aliceCrypto.deriveSharedSecret('bob', bobPair.publicKeyJwk, epoch)
 

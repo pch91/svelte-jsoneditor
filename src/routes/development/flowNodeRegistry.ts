@@ -85,7 +85,9 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
         mappings: []
       }
     }),
-    getOutputPorts: () => [{ id: 'out', label: 'Mapped Out', slot: 'middle', slotIndex: 1, color: '#06b6d4' }],
+    getOutputPorts: () => [
+      { id: 'out', label: 'Mapped Out', slot: 'middle', slotIndex: 1, color: '#06b6d4' }
+    ],
     getInputPorts: () => [{ id: 'in', label: 'Input', slot: 'middle', color: '#06b6d4' }]
   },
 
@@ -101,6 +103,7 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
     createData: () => ({
       mergeData: {
         strategy: 'wait-all',
+        payloadMode: 'pass-active',
         inputs: [
           { id: 'in_1', label: 'Branch 1', slot: 'middle', color: '#8b5cf6' },
           { id: 'in_2', label: 'Branch 2', slot: 'middle', color: '#8b5cf6' }
@@ -191,7 +194,13 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
     }),
     getOutputPorts: () => [
       { id: 'out', label: 'Proceed (Out)', slot: 'middle', slotIndex: 1, color: '#10b981' },
-      { id: 'dropped', label: 'Dropped (Queue Overflow)', slot: 'bottom', slotIndex: 3, color: '#ef4444' }
+      {
+        id: 'dropped',
+        label: 'Dropped (Queue Overflow)',
+        slot: 'bottom',
+        slotIndex: 3,
+        color: '#ef4444'
+      }
     ],
     getInputPorts: () => [{ id: 'in', label: 'Input', slot: 'middle', color: '#10b981' }]
   },

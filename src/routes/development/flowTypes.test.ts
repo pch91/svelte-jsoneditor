@@ -3,7 +3,8 @@ import {
   createDefaultFlowGraph,
   createAdvancedFlowGraph,
   executeJsSandbox,
-  migrateChainToFlowGraph
+  migrateChainToFlowGraph,
+  evaluateRouterRules
 } from './flowTypes.js'
 
 describe('executeJsSandbox', () => {
@@ -95,56 +96,127 @@ describe('createDefaultFlowGraph', () => {
 })
 
 describe('createAdvancedFlowGraph', () => {
-  it('returns an advanced Rick & Morty workflow with router, transform, multi-port connectors, and branch jumps', () => {
+  it('returns a comprehensive 11-node Rick & Morty workflow with loop iteration, throttle, router, mapper, merge, and events', () => {
     const graph = createAdvancedFlowGraph()
-    expect(graph.nodes.length).toBe(14)
-    expect(graph.nodes.some((n) => n.type === 'start')).toBe(true)
-    expect(graph.nodes.some((n) => n.type === 'rest')).toBe(true)
-    expect(graph.nodes.some((n) => n.type === 'router')).toBe(true)
-    expect(graph.nodes.some((n) => n.type === 'transform')).toBe(true)
-    expect(graph.nodes.some((n) => n.type === 'js')).toBe(true)
-    expect(graph.nodes.some((n) => n.type === 'event-throw')).toBe(true)
-    expect(graph.nodes.some((n) => n.type === 'event-catch')).toBe(true)
-    expect(graph.nodes.some((n) => n.type === 'terminate')).toBe(true)
+    expect(graph.nodes.length).toBe(12)
 
-    // Router node validation
+    // All 11 distinct node types must be present
+    const nodeTypes = new Set(graph.nodes.map((n) => n.type))
+    expect(nodeTypes.size).toBe(11)
+    expect(nodeTypes.has('start')).toBe(true)
+    expect(nodeTypes.has('rest')).toBe(true)
+    expect(nodeTypes.has('loop')).toBe(true)
+    expect(nodeTypes.has('delay')).toBe(true)
+    expect(nodeTypes.has('js')).toBe(true)
+    expect(nodeTypes.has('router')).toBe(true)
+    expect(nodeTypes.has('transform')).toBe(true)
+    expect(nodeTypes.has('merge')).toBe(true)
+    expect(nodeTypes.has('event-throw')).toBe(true)
+    expect(nodeTypes.has('event-catch')).toBe(true)
+    expect(nodeTypes.has('terminate')).toBe(true)
+
+    // 1. Loop validation with per-iteration variable configuration
+    const loopNode = graph.nodes.find((n) => n.type === 'loop')
+    expect(loopNode?.loopData?.mode).toBe('for-each')
+    expect(loopNode?.loopData?.arrayPath).toBe('results')
+    expect(loopNode?.loopData?.itemVar).toBe('character')
+    expect(loopNode?.loopData?.indexVar).toBe('charIdx')
+    expect(loopNode?.loopData?.maxIterations).toBe(3)
+
+    // Loop port routing: item goes to throttle delay, done goes to router
+    const loopItemConn = graph.connections.find(
+      (c) => c.fromId === 'node_loop' && c.fromPort === 'item'
+    )
+    const loopDoneConn = graph.connections.find(
+      (c) => c.fromId === 'node_loop' && c.fromPort === 'done'
+    )
+    expect(loopItemConn?.toId).toBe('node_loop_delay')
+    expect(loopDoneConn?.toId).toBe('node_router')
+
+    // 2. Throttle Delay and Loop Process Script
+    const delayNode = graph.nodes.find((n) => n.id === 'node_loop_delay')
+    expect(delayNode?.delayData?.delayMs).toBe(300)
+
+    const loopProcessNode = graph.nodes.find((n) => n.id === 'node_loop_process')
+    expect(loopProcessNode?.jsData?.code).toContain("pm.environment.get('character')")
+    expect(loopProcessNode?.jsData?.code).toContain("pm.environment.get('charIdx')")
+    expect(loopProcessNode?.jsData?.code).toContain('processedHeroes')
+
+    // 3. Router node validation
     const routerNode = graph.nodes.find((n) => n.type === 'router')
-    expect(routerNode?.routerData?.ports.length).toBe(3)
-    expect(routerNode?.routerData?.ports.map((p) => p.id)).toEqual(['port_alive', 'port_dead', 'port_unknown'])
-    expect(routerNode?.routerData?.rules.length).toBe(3)
+    expect(routerNode?.routerData?.ports.length).toBe(2)
+    expect(routerNode?.routerData?.ports.map((p) => p.id)).toEqual(['port_alive', 'port_dead'])
+    expect(routerNode?.routerData?.rules.length).toBe(2)
+    expect(routerNode?.routerData?.rules[0].path).toBe('lastHeroStatus')
     expect(routerNode?.routerData?.rules[0].operator).toBe('==')
     expect(routerNode?.routerData?.rules[0].value).toBe('Alive')
 
-    // Transform node validation
+    // 4. Transform node validation
     const transformNode = graph.nodes.find((n) => n.type === 'transform')
     expect(transformNode?.transformData?.mappings.length).toBe(3)
     expect(transformNode?.transformData?.saveToEnvVar).toBe('heroProfile')
 
-    // Chained URLs: later REST blocks use values captured by earlier blocks
-    const fetchChar = graph.nodes.find((n) => n.id === 'node_fetch_char')
-    expect(fetchChar?.restData?.captures?.map((c) => c.name)).toEqual(
-      expect.arrayContaining(['originUrl', 'firstEpisodeUrl'])
+    // 5. Merge node validation
+    const mergeNode = graph.nodes.find((n) => n.type === 'merge')
+    expect(mergeNode?.mergeData?.strategy).toBe('wait-all')
+    expect(mergeNode?.mergeData?.inputs?.length).toBe(2)
+    expect(mergeNode?.mergeData?.inputs?.map((i) => i.id)).toEqual(['in_1', 'in_2'])
+
+    // Convergence into merge inputs
+    const aliveMerge = graph.connections.find((c) => c.toId === 'node_merge' && c.toPort === 'in_1')
+    const deadMerge = graph.connections.find((c) => c.toId === 'node_merge' && c.toPort === 'in_2')
+    expect(aliveMerge?.fromId).toBe('node_transform')
+    expect(deadMerge?.fromId).toBe('node_js_audit')
+
+    // Merge output connects to Event Throw
+    const mergeOutConn = graph.connections.find(
+      (c) => c.fromId === 'node_merge' && c.fromPort === 'joined'
     )
-    expect(graph.nodes.find((n) => n.id === 'node_fetch_origin')?.restData?.url).toBe('{{originUrl}}')
-    expect(graph.nodes.find((n) => n.id === 'node_fetch_episode')?.restData?.url).toBe(
-      '{{firstEpisodeUrl}}'
-    )
+    expect(mergeOutConn?.toId).toBe('node_throw')
 
-    // fromPort multi-port connections validation
-    const aliveConn = graph.connections.find((c) => c.fromPort === 'port_alive')
-    const deadConn = graph.connections.find((c) => c.fromPort === 'port_dead')
-    const unkConn = graph.connections.find((c) => c.fromPort === 'port_unknown')
-    expect(aliveConn?.toId).toBe('node_transform_alive')
-    expect(deadConn?.toId).toBe('node_fetch_episode')
-    expect(unkConn?.toId).toBe('node_js_unknown')
+    // 6. Event jump & receiver validation
+    const throwNode = graph.nodes.find((n) => n.type === 'event-throw')
+    expect(throwNode?.eventData?.eventName).toBe('pipeline_complete')
 
-    // Event jump & receiver validation
-    const jumps = graph.nodes.filter((n) => n.type === 'event-throw')
-    expect(jumps.length).toBe(3)
-    expect(jumps.every((j) => j.eventData?.eventName === 'finish_telemetry')).toBe(true)
+    const catchNode = graph.nodes.find((n) => n.type === 'event-catch')
+    expect(catchNode?.eventData?.eventName).toBe('pipeline_complete')
 
-    const receiver = graph.nodes.find((n) => n.type === 'event-catch')
-    expect(receiver?.eventData?.eventName).toBe('finish_telemetry')
+    const termConn = graph.connections.find((c) => c.fromId === 'node_catch')
+    expect(termConn?.toId).toBe('node_terminate')
+  })
+
+  it('evaluates router rules against environment variables when field is absent from payload', () => {
+    const rules = [
+      {
+        id: 'r_alive',
+        portId: 'port_alive',
+        label: 'Status Alive',
+        type: 'jsonpath' as const,
+        path: 'lastHeroStatus',
+        operator: '==' as const,
+        value: 'Alive'
+      },
+      {
+        id: 'r_fallback',
+        portId: 'port_dead',
+        label: 'Fallback',
+        type: 'otherwise' as const
+      }
+    ]
+
+    // 1. When payload has loop info without lastHeroStatus, fallback to env
+    const loopPayload = { mode: 'for-each', processedCount: 3 }
+    const env = { lastHeroStatus: 'Alive', lastHeroName: 'Summer Smith' }
+
+    const res = evaluateRouterRules(rules, 'first-match', loopPayload, 200, env)
+    expect(res.matchedPortIds).toEqual(['port_alive'])
+    expect(res.matchedRules[0].id).toBe('r_alive')
+
+    // 2. When env has Dead, matches fallback
+    const envDead = { lastHeroStatus: 'Dead' }
+    const resDead = evaluateRouterRules(rules, 'first-match', loopPayload, 200, envDead)
+    expect(resDead.matchedPortIds).toEqual(['port_dead'])
+    expect(resDead.matchedRules[0].id).toBe('r_fallback')
   })
 })
 

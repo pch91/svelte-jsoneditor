@@ -113,17 +113,8 @@ export class P2PCryptoEngine {
   /**
    * Derives a temporary message/token-specific key using the Master Shared Secret + Token ID (Salt).
    */
-  public async deriveTokenKey(
-    masterKey: CryptoKey,
-    tokenId: string
-  ): Promise<CryptoKey> {
+  public async deriveTokenKey(masterKey: CryptoKey, tokenId: string): Promise<CryptoKey> {
     if (!tokenId) return masterKey
-
-    // Hash the tokenId into a 16-byte salt
-    const saltBuffer = await window.crypto.subtle.digest(
-      'SHA-256',
-      new TextEncoder().encode(tokenId)
-    )
 
     // In Web Crypto, when deriving a new AES key from an existing non-raw key,
     // we use HKDF or direct AES-GCM operation. For simplicity and broad compatibility,
@@ -166,10 +157,7 @@ export class P2PCryptoEngine {
   /**
    * Decrypts an encrypted message payload using the shared secret.
    */
-  public async decrypt(
-    remotePeerId: string,
-    payload: EncryptedMessagePayload
-  ): Promise<unknown> {
+  public async decrypt(remotePeerId: string, payload: EncryptedMessagePayload): Promise<unknown> {
     const masterKey = this.sharedSecrets.get(remotePeerId)
     if (!masterKey) {
       throw new Error(`Nenhum segredo compartilhado estabelecido com o peer: ${remotePeerId}`)
@@ -198,7 +186,10 @@ export class P2PCryptoEngine {
     localPubJwk: JsonWebKey,
     remotePubJwk: JsonWebKey
   ): Promise<string> {
-    const sorted = [JSON.stringify(localPubJwk.x || ''), JSON.stringify(remotePubJwk.x || '')].sort()
+    const sorted = [
+      JSON.stringify(localPubJwk.x || ''),
+      JSON.stringify(remotePubJwk.x || '')
+    ].sort()
     const raw = sorted.join(':')
     const hashBuffer = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw))
     const hashArray = new Uint8Array(hashBuffer)

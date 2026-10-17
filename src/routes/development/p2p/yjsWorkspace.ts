@@ -10,15 +10,9 @@ import { IndexeddbPersistence } from 'y-indexeddb'
 import * as syncProtocol from 'y-protocols/sync'
 import * as awarenessProtocol from 'y-protocols/awareness'
 import { encoding, decoding } from 'lib0'
-import {
-  WebRtcManager,
-  MSG_SYNC,
-  MSG_AWARENESS,
-  type PeerInfo
-} from './webrtcManager.js'
+import { WebRtcManager, MSG_SYNC, MSG_AWARENESS, type PeerInfo } from './webrtcManager.js'
 import { GossipMesh } from './gossipMesh.js'
 import type { StoredWorkspace, StoredWorkspaceTab, StoredPrimaryTab } from '../workspaceStorage.js'
-import type { WorkspaceSpatialFlow, WorkspaceFlowGroup } from '../flowTypes.js'
 
 export interface UserPresence {
   clientId: number
@@ -71,7 +65,7 @@ const USER_COLORS = [
   '#10b981', // emerald
   '#06b6d4', // cyan
   '#6366f1', // indigo
-  '#eab308'  // amber
+  '#eab308' // amber
 ]
 
 function getRandomColor(): string {
@@ -298,15 +292,7 @@ export class YjsWorkspaceManager {
   private bindAwarenessEvents() {
     this.awareness.on(
       'change',
-      ({
-        added,
-        updated,
-        removed
-      }: {
-        added: number[]
-        updated: number[]
-        removed: number[]
-      }) => {
+      ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
         const changedClients = added.concat(updated, removed)
         const update = awarenessProtocol.encodeAwarenessUpdate(this.awareness, changedClients)
         this.webrtc.broadcastBinary(MSG_AWARENESS, update)
@@ -370,8 +356,7 @@ export class YjsWorkspaceManager {
   private emitStateChange() {
     const peers = this.webrtc.getPeers()
     const openPeers = peers.filter((p) => p.dataChannelState === 'open')
-    const status =
-      openPeers.length > 0 ? 'connected' : peers.length > 0 ? 'connecting' : 'offline'
+    const status = openPeers.length > 0 ? 'connected' : peers.length > 0 ? 'connecting' : 'offline'
 
     const state: P2PWorkspaceState = {
       status,
@@ -441,10 +426,9 @@ export class YjsWorkspaceManager {
     }
 
     // 2. Send local awareness state
-    const awarenessUpdate = awarenessProtocol.encodeAwarenessUpdate(
-      this.awareness,
-      [this.ydoc.clientID]
-    )
+    const awarenessUpdate = awarenessProtocol.encodeAwarenessUpdate(this.awareness, [
+      this.ydoc.clientID
+    ])
     this.webrtc.sendBinaryTo(peerId, MSG_AWARENESS, awarenessUpdate)
 
     // 3. Announce in gossip mesh
@@ -545,7 +529,9 @@ export class YjsWorkspaceManager {
       primaryTabs: primaryTabs.length > 0 ? primaryTabs : undefined,
       activePrimaryTabId: yMeta.get('activePrimaryTabId') as number | undefined,
       panePrimaryMap: yPanes.get('panePrimaryMap') as Record<number, number[]> | undefined,
-      paneActivePrimaryMap: yPanes.get('paneActivePrimaryMap') as Record<number, number> | undefined,
+      paneActivePrimaryMap: yPanes.get('paneActivePrimaryMap') as
+        | Record<number, number>
+        | undefined,
       layout,
       nextTabId: (yMeta.get('nextTabId') as number) || 1,
       nextPrimaryTabId: yMeta.get('nextPrimaryTabId') as number | undefined,
@@ -558,7 +544,10 @@ export class YjsWorkspaceManager {
   /**
    * Synchronizes an individual spatial flow graph into CRDT.
    */
-  public updateFlowGraph(spatialFlowId: string, flowData: { nodes: unknown; connections: unknown }) {
+  public updateFlowGraph(
+    spatialFlowId: string,
+    flowData: { nodes: unknown; connections: unknown }
+  ) {
     const yFlows = this.ydoc.getMap('flows')
     yFlows.set(spatialFlowId, flowData)
   }
@@ -814,10 +803,7 @@ export class YjsWorkspaceManager {
 
     if (typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
       try {
-        const persistence = new IndexeddbPersistence(
-          `svelte-jsoneditor-folder-crdt-${key}`,
-          doc
-        )
+        const persistence = new IndexeddbPersistence(`svelte-jsoneditor-folder-crdt-${key}`, doc)
         this.folderPersistences.set(key, persistence)
       } catch {
         // Fallback for restricted storage environments
@@ -830,11 +816,7 @@ export class YjsWorkspaceManager {
         if (autoSync) {
           const encoder = encoding.createEncoder()
           syncProtocol.writeUpdate(encoder, update)
-          this.webrtc.broadcastBinaryToFolder(
-            folderId,
-            MSG_SYNC,
-            encoding.toUint8Array(encoder)
-          )
+          this.webrtc.broadcastBinaryToFolder(folderId, MSG_SYNC, encoding.toUint8Array(encoder))
         }
       }
 

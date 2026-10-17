@@ -580,7 +580,9 @@ describe('FlowCanvas', () => {
 
     // Assert all 4 middle ports are rendered on the canvas card rack with unique top positions
     const routerNode = target.querySelector('.flow-node-router') as HTMLElement
-    const midPortEls = routerNode.querySelectorAll('.node-ports-rack .slot-middle') as NodeListOf<HTMLElement>
+    const midPortEls = routerNode.querySelectorAll(
+      '.node-ports-rack .slot-middle'
+    ) as NodeListOf<HTMLElement>
     expect(midPortEls.length).toBe(4)
 
     const topPositions = Array.from(midPortEls).map((el) => el.style.top)
@@ -771,7 +773,12 @@ describe('FlowCanvas', () => {
             sampleInput: JSON.stringify({ user_id: 104, raw_name: ' rick sanchez ' }),
             mappings: [
               { id: 'm1', sourcePath: 'user_id', targetPath: 'id', modifier: 'number' as const },
-              { id: 'm2', sourcePath: 'raw_name', targetPath: 'profile.name', modifier: 'trim' as const }
+              {
+                id: 'm2',
+                sourcePath: 'raw_name',
+                targetPath: 'profile.name',
+                modifier: 'trim' as const
+              }
             ]
           }
         }
@@ -1093,8 +1100,20 @@ describe('FlowCanvas', () => {
       ],
       connections: [
         { id: 'c1', fromId: 'js_init', toId: 'router_1', kind: 'solid' },
-        { id: 'c2', fromId: 'router_1', toId: 'js_admin_branch', fromPort: 'port_admin', kind: 'solid' },
-        { id: 'c3', fromId: 'router_1', toId: 'js_user_branch', fromPort: 'port_user', kind: 'solid' },
+        {
+          id: 'c2',
+          fromId: 'router_1',
+          toId: 'js_admin_branch',
+          fromPort: 'port_admin',
+          kind: 'solid'
+        },
+        {
+          id: 'c3',
+          fromId: 'router_1',
+          toId: 'js_user_branch',
+          fromPort: 'port_user',
+          kind: 'solid'
+        },
         { id: 'c4', fromId: 'js_admin_branch', toId: 'merge_1', toPort: 'in_admin', kind: 'solid' },
         { id: 'c5', fromId: 'js_user_branch', toId: 'merge_1', toPort: 'in_user', kind: 'solid' },
         { id: 'c6', fromId: 'merge_1', toId: 'js_final', fromPort: 'joined', kind: 'solid' }
@@ -1162,9 +1181,7 @@ describe('FlowCanvas', () => {
           }
         }
       ],
-      connections: [
-        { id: 'c_pipe', fromId: 'js_producer', toId: 'js_consumer', kind: 'solid' }
-      ]
+      connections: [{ id: 'c_pipe', fromId: 'js_producer', toId: 'js_consumer', kind: 'solid' }]
     }
 
     mount(FlowCanvas, {
@@ -1204,9 +1221,7 @@ describe('FlowCanvas', () => {
           status: 'idle' as const,
           transformData: {
             sampleInput: JSON.stringify({ user: { firstName: 'Alice' } }),
-            mappings: [
-              { id: 'm1', sourcePath: 'user.firstName', targetPath: 'name' }
-            ],
+            mappings: [{ id: 'm1', sourcePath: 'user.firstName', targetPath: 'name' }],
             saveToEnvVar: 'mappedName'
           }
         },
@@ -1222,9 +1237,7 @@ describe('FlowCanvas', () => {
           }
         }
       ],
-      connections: [
-        { id: 'c_tr', fromId: 'tr_1', toId: 'js_reader', kind: 'solid' }
-      ]
+      connections: [{ id: 'c_tr', fromId: 'tr_1', toId: 'js_reader', kind: 'solid' }]
     }
 
     mount(FlowCanvas, {
@@ -1298,9 +1311,7 @@ describe('FlowCanvas', () => {
           }
         }
       ],
-      connections: [
-        { id: 'c_ev', fromId: 'throw_sub', toId: 'catch_ev', kind: 'solid' }
-      ]
+      connections: [{ id: 'c_ev', fromId: 'throw_sub', toId: 'catch_ev', kind: 'solid' }]
     }
 
     mount(FlowCanvas, {
@@ -1377,7 +1388,199 @@ describe('FlowCanvas', () => {
 
     expect(canvas.classList.contains('is-panning')).toBe(false)
   })
+
+  it('correctly formats merged output according to payloadMode (combine, append, structured, pass-active)', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const createGraph = (
+      payloadMode: 'combine' | 'append' | 'structured' | 'pass-active'
+    ): FlowGraph => ({
+      nodes: [
+        {
+          id: 'js_1',
+          type: 'js' as const,
+          title: 'Producer 1',
+          x: 100,
+          y: 50,
+          status: 'idle' as const,
+          jsData: {
+            code:
+              payloadMode === 'append'
+                ? 'return ["item1", "item2"]'
+                : 'return { branchA: "alpha", common: 1 }'
+          }
+        },
+        {
+          id: 'js_2',
+          type: 'js' as const,
+          title: 'Producer 2',
+          x: 100,
+          y: 200,
+          status: 'idle' as const,
+          jsData: {
+            code:
+              payloadMode === 'append'
+                ? 'return ["item3"]'
+                : 'return { branchB: "beta", common: 2 }'
+          }
+        },
+        {
+          id: 'merge_node',
+          type: 'merge' as const,
+          title: 'Merge',
+          x: 400,
+          y: 120,
+          status: 'idle' as const,
+          mergeData: {
+            strategy: 'wait-all',
+            payloadMode
+          }
+        }
+      ],
+      connections: [
+        { id: 'c1', fromId: 'js_1', toId: 'merge_node', toPort: 'in_1', kind: 'solid' },
+        { id: 'c2', fromId: 'js_2', toId: 'merge_node', toPort: 'in_2', kind: 'solid' }
+      ]
+    })
+
+    // Test combine mode
+    const graphCombine = createGraph('combine')
+    mount(FlowCanvas, {
+      target,
+      props: { flowGraph: graphCombine, environments: {}, activeEnvName: '', globalProxy: '' }
+    })
+    const runBtn = getByText(target, 'Run Flow')
+    await fireEvent.click(runBtn)
+    await new Promise((r) => setTimeout(r, 600))
+    await tick()
+
+    const mergeNodeCombine = graphCombine.nodes.find((n) => n.id === 'merge_node')
+    expect(mergeNodeCombine?.status).toBe('success')
+    const combinePayload = JSON.parse(mergeNodeCombine?.lastRun?.responseText || '{}')
+    expect(combinePayload.branchA).toBe('alpha')
+    expect(combinePayload.branchB).toBe('beta')
+    expect(combinePayload.common).toBe(2)
+  })
+
+  it('correctly flattens and concatenates arrays in append payloadMode', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graphAppend: FlowGraph = {
+      nodes: [
+        {
+          id: 'js_1',
+          type: 'js' as const,
+          title: 'Producer 1',
+          x: 100,
+          y: 50,
+          status: 'idle' as const,
+          jsData: { code: 'return ["item1", "item2"]' }
+        },
+        {
+          id: 'js_2',
+          type: 'js' as const,
+          title: 'Producer 2',
+          x: 100,
+          y: 200,
+          status: 'idle' as const,
+          jsData: { code: 'return ["item3"]' }
+        },
+        {
+          id: 'merge_node',
+          type: 'merge' as const,
+          title: 'Merge',
+          x: 400,
+          y: 120,
+          status: 'idle' as const,
+          mergeData: {
+            strategy: 'wait-all',
+            payloadMode: 'append'
+          }
+        }
+      ],
+      connections: [
+        { id: 'c1', fromId: 'js_1', toId: 'merge_node', toPort: 'in_1', kind: 'solid' },
+        { id: 'c2', fromId: 'js_2', toId: 'merge_node', toPort: 'in_2', kind: 'solid' }
+      ]
+    }
+
+    mount(FlowCanvas, {
+      target,
+      props: { flowGraph: graphAppend, environments: {}, activeEnvName: '', globalProxy: '' }
+    })
+    const runBtn = getByText(target, 'Run Flow')
+    await fireEvent.click(runBtn)
+    await new Promise((r) => setTimeout(r, 600))
+    await tick()
+
+    const mergeNodeAppend = graphAppend.nodes.find((n) => n.id === 'merge_node')
+    expect(mergeNodeAppend?.status).toBe('success')
+    const appendPayload = JSON.parse(mergeNodeAppend?.lastRun?.responseText || '[]')
+    expect(Array.isArray(appendPayload)).toBe(true)
+    expect(appendPayload).toEqual(['item1', 'item2', 'item3'])
+  })
+
+  it('correctly outputs formal structured results object in structured payloadMode', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graphStructured: FlowGraph = {
+      nodes: [
+        {
+          id: 'js_1',
+          type: 'js' as const,
+          title: 'Producer 1',
+          x: 100,
+          y: 50,
+          status: 'idle' as const,
+          jsData: { code: 'return { branchA: "alpha" }' }
+        },
+        {
+          id: 'js_2',
+          type: 'js' as const,
+          title: 'Producer 2',
+          x: 100,
+          y: 200,
+          status: 'idle' as const,
+          jsData: { code: 'return { branchB: "beta" }' }
+        },
+        {
+          id: 'merge_node',
+          type: 'merge' as const,
+          title: 'Merge',
+          x: 400,
+          y: 120,
+          status: 'idle' as const,
+          mergeData: {
+            strategy: 'wait-all',
+            payloadMode: 'structured'
+          }
+        }
+      ],
+      connections: [
+        { id: 'c1', fromId: 'js_1', toId: 'merge_node', toPort: 'in_1', kind: 'solid' },
+        { id: 'c2', fromId: 'js_2', toId: 'merge_node', toPort: 'in_2', kind: 'solid' }
+      ]
+    }
+
+    mount(FlowCanvas, {
+      target,
+      props: { flowGraph: graphStructured, environments: {}, activeEnvName: '', globalProxy: '' }
+    })
+    const runBtn = getByText(target, 'Run Flow')
+    await fireEvent.click(runBtn)
+    await new Promise((r) => setTimeout(r, 600))
+    await tick()
+
+    const mergeNodeStructured = graphStructured.nodes.find((n) => n.id === 'merge_node')
+    expect(mergeNodeStructured?.status).toBe('success')
+    const structuredPayload = JSON.parse(mergeNodeStructured?.lastRun?.responseText || '{}')
+    expect(structuredPayload.strategy).toBe('wait-all')
+    expect(structuredPayload.payloadMode).toBe('structured')
+    expect(structuredPayload.results).toBeDefined()
+    expect(structuredPayload.results.in_1.branchA).toBe('alpha')
+    expect(structuredPayload.results.in_2.branchB).toBe('beta')
+  })
 })
-
-
-

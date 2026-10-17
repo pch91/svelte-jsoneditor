@@ -18,7 +18,8 @@ import {
   rowsToHeadersText,
   stripCodeFences,
   tokenizeShellArgs,
-  truncateText
+  truncateText,
+  type HeaderRow
 } from './requestsUtils.js'
 
 describe('parseHeadersText', () => {
@@ -493,8 +494,8 @@ describe('buildCurlCommand', () => {
       method: 'GET',
       url: 'https://api.example.com/test',
       headers: [
-        { key: 'Accept', value: 'application/json' } as any,
-        { key: 'User-Agent', value: 'MyApp/1.0' } as any
+        { key: 'Accept', value: 'application/json' } as unknown as HeaderRow,
+        { key: 'User-Agent', value: 'MyApp/1.0' } as unknown as HeaderRow
       ]
     })
 

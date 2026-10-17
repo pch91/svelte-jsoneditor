@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  applyModifier,
-  setValueByPath,
-  applyMappings,
-  flattenJsonPaths
-} from './flowMapper.js'
+import { applyModifier, setValueByPath, applyMappings, flattenJsonPaths } from './flowMapper.js'
 import type { FlowNodeTransformMapping } from './flowTypes.js'
 
 describe('flowMapper', () => {
@@ -83,8 +78,18 @@ describe('flowMapper', () => {
       const mappings: FlowNodeTransformMapping[] = [
         { id: '1', sourcePath: 'user_id', targetPath: 'id', modifier: 'number' },
         { id: '2', sourcePath: 'raw_name', targetPath: 'profile.name', modifier: 'trim' },
-        { id: '3', sourcePath: 'contact.raw_email', targetPath: 'profile.email', modifier: 'lowercase' },
-        { id: '4', sourcePath: 'contact.status', targetPath: 'profile.isActive', modifier: 'boolean' }
+        {
+          id: '3',
+          sourcePath: 'contact.raw_email',
+          targetPath: 'profile.email',
+          modifier: 'lowercase'
+        },
+        {
+          id: '4',
+          sourcePath: 'contact.status',
+          targetPath: 'profile.isActive',
+          modifier: 'boolean'
+        }
       ]
 
       const result = applyMappings(sampleInput, mappings)
@@ -114,6 +119,23 @@ describe('flowMapper', () => {
     it('returns original input when mappings array is empty', () => {
       const result = applyMappings({ foo: 'bar' }, [])
       expect(result).toEqual({ foo: 'bar' })
+    })
+
+    it('extracts from env as fallback when source property is absent from input', () => {
+      const mappings: FlowNodeTransformMapping[] = [
+        { id: '1', sourcePath: 'lastHeroName', targetPath: 'hero.name', modifier: 'uppercase' },
+        { id: '2', sourcePath: 'lastHeroStatus', targetPath: 'hero.status', modifier: 'lowercase' }
+      ]
+      const input = { upstreamStatus: 200 } // does not contain lastHeroName
+      const env = { lastHeroName: 'Summer Smith', lastHeroStatus: 'Alive' }
+
+      const result = applyMappings(input, mappings, env)
+      expect(result).toEqual({
+        hero: {
+          name: 'SUMMER SMITH',
+          status: 'alive'
+        }
+      })
     })
   })
 

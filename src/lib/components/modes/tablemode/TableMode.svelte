@@ -373,11 +373,7 @@
     } else {
       // By default expands up to 4 levels; subsequent levels expand 1 by 1
       const maxLevels = columnPath.length < 4 ? 4 - columnPath.length + 1 : 1
-      const toExpand = collectExpandableDescendantPaths(
-        json as unknown[],
-        columnPath,
-        maxLevels
-      )
+      const toExpand = collectExpandableDescendantPaths(json as unknown[], columnPath, maxLevels)
       expandedColumns = {
         ...expandedColumns,
         ...toExpand,
@@ -464,7 +460,6 @@
 
   $: refreshScrollTop(json)
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function refreshScrollTop(_json: unknown | undefined) {
     // When the contents go from lots of items and scrollable contents to only a few items and
     // no vertical scroll, the actual scrollTop changes to 0 but there is no on:scroll event
@@ -2023,7 +2018,9 @@
                     colorIndex={vCol.colorIndex}
                     isArrayElement={vCol.isArrayElement}
                     isExpandable={vCol.isExpandable}
-                    isExpanded={vCol.isExpandable ? isColExpanded : (vCol.isExpandedSubColumn && isColExpanded)}
+                    isExpanded={vCol.isExpandable
+                      ? isColExpanded
+                      : vCol.isExpandedSubColumn && isColExpanded}
                     onToggleExpand={() => {
                       if (vCol.isExpandable) {
                         toggleExpandColumn(vCol.fullPath)
@@ -2031,7 +2028,9 @@
                         toggleExpandColumn(vCol.parentPath)
                       }
                     }}
-                    onCollapseParent={vCol.isExpandedSubColumn ? () => toggleExpandColumn(vCol.parentPath) : undefined}
+                    onCollapseParent={vCol.isExpandedSubColumn
+                      ? () => toggleExpandColumn(vCol.parentPath)
+                      : undefined}
                     onContextMenu={(e) =>
                       openColumnContextMenu(
                         e,

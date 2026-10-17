@@ -5,14 +5,8 @@
  * Handles binary transport for Yjs sync steps, awareness states, and gossip routing.
  */
 
-import * as syncProtocol from 'y-protocols/sync'
-import * as awarenessProtocol from 'y-protocols/awareness'
-import { encoding, decoding } from 'lib0'
-import {
-  compressPayload,
-  decompressPayload,
-  type SignalingPayload
-} from './sdpToken.js'
+import { decoding } from 'lib0'
+import { compressPayload, decompressPayload, type SignalingPayload } from './sdpToken.js'
 import { P2PCryptoEngine } from './p2pCrypto.js'
 
 export const MSG_SYNC = 0
@@ -56,8 +50,18 @@ export interface WebRtcManagerConfig {
   userName: string
   userColor: string
   iceServers?: RTCIceServer[]
-  onSyncMessage?: (peerId: string, decoder: decoding.Decoder, roomId?: string, folderId?: number | string) => void
-  onAwarenessMessage?: (peerId: string, update: Uint8Array, roomId?: string, folderId?: number | string) => void
+  onSyncMessage?: (
+    peerId: string,
+    decoder: decoding.Decoder,
+    roomId?: string,
+    folderId?: number | string
+  ) => void
+  onAwarenessMessage?: (
+    peerId: string,
+    update: Uint8Array,
+    roomId?: string,
+    folderId?: number | string
+  ) => void
   onGossipMessage?: (fromPeerId: string, message: GossipMessage) => void
   onStatusChange?: ConnectionStateChangeCallback
   onKicked?: (reason?: string) => void
@@ -96,8 +100,18 @@ export class WebRtcManager {
   private bannedPeerIds = new Set<string>()
   private syncEnabled = true
   public crypto: P2PCryptoEngine = new P2PCryptoEngine()
-  private onSyncMessage?: (peerId: string, decoder: decoding.Decoder, roomId?: string, folderId?: number | string) => void
-  private onAwarenessMessage?: (peerId: string, update: Uint8Array, roomId?: string, folderId?: number | string) => void
+  private onSyncMessage?: (
+    peerId: string,
+    decoder: decoding.Decoder,
+    roomId?: string,
+    folderId?: number | string
+  ) => void
+  private onAwarenessMessage?: (
+    peerId: string,
+    update: Uint8Array,
+    roomId?: string,
+    folderId?: number | string
+  ) => void
   private onGossipMessage?: (fromPeerId: string, message: GossipMessage) => void
   private onStatusChange?: ConnectionStateChangeCallback
   private onKicked?: (reason?: string) => void
@@ -121,20 +135,15 @@ export class WebRtcManager {
   }
 
   public getConnectedPeerCount(): number {
-    return Array.from(this.peers.values()).filter(
-      (p) => p.dc?.readyState === 'open'
-    ).length
+    return Array.from(this.peers.values()).filter((p) => p.dc?.readyState === 'open').length
   }
 
   private notifyStatusChange() {
     if (!this.onStatusChange) return
     const peerList = this.getPeers()
-    const openCount = peerList.filter(
-      (p) => p.dataChannelState === 'open'
-    ).length
+    const openCount = peerList.filter((p) => p.dataChannelState === 'open').length
 
-    const status =
-      openCount > 0 ? 'connected' : this.pendingOfferPc ? 'connecting' : 'offline'
+    const status = openCount > 0 ? 'connected' : this.pendingOfferPc ? 'connecting' : 'offline'
 
     this.onStatusChange({
       status,
@@ -145,21 +154,16 @@ export class WebRtcManager {
   /**
    * Helper to wait for ICE candidates gathering to finish.
    */
-  private waitForIceGathering(
-    pc: RTCPeerConnection,
-    timeoutMs = 2500
-  ): Promise<void> {
+  private waitForIceGathering(pc: RTCPeerConnection, timeoutMs = 2500): Promise<void> {
     return new Promise((resolve) => {
       if (pc.iceGatheringState === 'complete') {
         resolve()
         return
       }
 
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-
-      const checkState = () => {
+      function checkState() {
         if (pc.iceGatheringState === 'complete') {
-          if (timeoutHandle) clearTimeout(timeoutHandle)
+          clearTimeout(timeoutHandle)
           pc.removeEventListener('icegatheringstatechange', checkState)
           resolve()
         }
@@ -167,7 +171,7 @@ export class WebRtcManager {
 
       pc.addEventListener('icegatheringstatechange', checkState)
 
-      timeoutHandle = setTimeout(() => {
+      const timeoutHandle = setTimeout(() => {
         pc.removeEventListener('icegatheringstatechange', checkState)
         resolve() // Resolve anyway with current candidates gathered so far
       }, timeoutMs)
@@ -288,9 +292,7 @@ export class WebRtcManager {
 
     this.setupPeerConnectionEvents(remotePeerId, pc)
 
-    await pc.setRemoteDescription(
-      new RTCSessionDescription({ type: 'offer', sdp: payload.sdp })
-    )
+    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: payload.sdp }))
 
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
@@ -377,9 +379,7 @@ export class WebRtcManager {
     this.setupDataChannel(remotePeerId, dc)
     this.setupPeerConnectionEvents(remotePeerId, pc)
 
-    await pc.setRemoteDescription(
-      new RTCSessionDescription({ type: 'answer', sdp: payload.sdp })
-    )
+    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: payload.sdp }))
 
     this.notifyStatusChange()
   }

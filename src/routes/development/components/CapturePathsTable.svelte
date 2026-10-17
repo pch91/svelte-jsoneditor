@@ -60,7 +60,14 @@
           title="Test paths against the last response received"
           on:click={testCaptures}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg
+          >
           Test on Response
         </button>
       {/if}
@@ -70,7 +77,14 @@
         title="Add new capture rule"
         on:click={addRow}
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"><path d="M12 5v14M5 12h14" /></svg
+        >
         Add Rule
       </button>
     </div>
@@ -84,7 +98,14 @@
         (e.g. <code>data.token</code> → <code>authToken</code>).
       </p>
       <button type="button" class="cap-btn cap-btn-add" on:click={addRow}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"><path d="M12 5v14M5 12h14" /></svg
+        >
         Add First Rule
       </button>
     </div>

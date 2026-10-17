@@ -83,10 +83,13 @@
   title={!readOnly ? columnName + ' (Click to sort the data by this column)' : columnName}
 >
   {#if parentName}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <span
       class="jse-column-parent-badge"
       class:clickable={!!onCollapseParent}
-      style="background: {badgeColor.bg}; border-color: {badgeColor.border}; color: {badgeColor.text}; cursor: {onCollapseParent ? 'pointer' : 'default'};"
+      style="background: {badgeColor.bg}; border-color: {badgeColor.border}; color: {badgeColor.text}; cursor: {onCollapseParent
+        ? 'pointer'
+        : 'default'};"
       title={onCollapseParent
         ? `Collapse sub-columns of "${parentName}"`
         : `Source: ${parentName}{isArrayElement ? ' (list)' : ' (object)'}`}

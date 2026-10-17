@@ -20,7 +20,12 @@
   export let open = false
   export let onClose: () => void = () => {}
   export let prefillOfferToken: string = ''
-  export let primaryTabs: { id: number; title: string; p2pGroupId?: string; p2pGroupName?: string }[] = []
+  export let primaryTabs: {
+    id: number
+    title: string
+    p2pGroupId?: string
+    p2pGroupName?: string
+  }[] = []
   export let activePrimaryTabId: number = 1
   export let onJoinFolderGroup:
     | ((folderId: number, groupId: string, groupName: string, folderName?: string) => void)
@@ -231,11 +236,7 @@
   async function handleCreateGroup() {
     if (!newGroupName.trim() || !selectedFolderId) return
     const folderTitle = currentFolder?.title || `Pasta ${selectedFolderId}`
-    const created = workspace.createFolderGroup(
-      selectedFolderId,
-      folderTitle,
-      newGroupName.trim()
-    )
+    const created = workspace.createFolderGroup(selectedFolderId, folderTitle, newGroupName.trim())
     groupInfo = created
     if (onUpdatePrimaryTab) {
       onUpdatePrimaryTab(selectedFolderId, {
@@ -477,22 +478,33 @@
       <div class="folder-bar">
         <div class="folder-bar-left">
           <span class="folder-bar-label">📁 Pasta:</span>
-          <select class="folder-select" bind:value={selectedFolderId} on:change={handleFolderChange}>
+          <select
+            class="folder-select"
+            bind:value={selectedFolderId}
+            on:change={handleFolderChange}
+          >
             {#each primaryTabs as tab (tab.id)}
               <option value={tab.id}>
-                📁 {tab.title || 'Pasta ' + tab.id} {tab.p2pGroupId ? `(👥 ${tab.p2pGroupName || 'Grupo'})` : '(Isolada / Sem Grupo)'}
+                📁 {tab.title || 'Pasta ' + tab.id}
+                {tab.p2pGroupId ? `(👥 ${tab.p2pGroupName || 'Grupo'})` : '(Isolada / Sem Grupo)'}
               </option>
             {/each}
           </select>
         </div>
         <div class="folder-bar-right">
           {#if currentFolder?.p2pGroupId}
-            <span class="folder-status-badge badge-active" title="Esta pasta possui grupo P2P isolado">
+            <span
+              class="folder-status-badge badge-active"
+              title="Esta pasta possui grupo P2P isolado"
+            >
               <span class="status-dot online"></span>
               {currentFolder.p2pGroupName || 'Grupo Ativo'}
             </span>
           {:else}
-            <span class="folder-status-badge badge-isolated" title="Esta pasta é privada e isolada de outros grupos">
+            <span
+              class="folder-status-badge badge-isolated"
+              title="Esta pasta é privada e isolada de outros grupos"
+            >
               <span class="status-dot isolated"></span>
               Isolada (Privada)
             </span>
@@ -550,13 +562,15 @@
               <div class="empty-icon">📁</div>
               <h3>Nenhum Grupo Ativo para esta Pasta</h3>
               <p>
-                Crie um grupo de colaboração para convidar colegas e sincronizar estritamente a pasta
+                Crie um grupo de colaboração para convidar colegas e sincronizar estritamente a
+                pasta
                 <strong>"{currentFolder?.title || 'Pasta ' + selectedFolderId}"</strong> em tempo real.
                 Suas outras pastas permanecem 100% privadas e isoladas deste grupo.
               </p>
 
               <div class="create-group-form">
-                <label for="p2p-group-name" class="form-label">Nome do Grupo para esta Pasta:</label>
+                <label for="p2p-group-name" class="form-label">Nome do Grupo para esta Pasta:</label
+                >
                 <div class="input-with-button">
                   <input
                     id="p2p-group-name"
@@ -575,9 +589,9 @@
               <div class="info-callout">
                 <div class="callout-icon">🔒</div>
                 <div class="callout-text">
-                  <strong>Isolamento Absoluto por Pasta:</strong> O grupo desta pasta NUNCA
-                  enxerga ou recebe dados de outras pastas. Cada pasta possui grupo,
-                  membros e controle de sincronismo 100% independentes.
+                  <strong>Isolamento Absoluto por Pasta:</strong> O grupo desta pasta NUNCA enxerga ou
+                  recebe dados de outras pastas. Cada pasta possui grupo, membros e controle de sincronismo
+                  100% independentes.
                 </div>
               </div>
             </div>
@@ -615,12 +629,20 @@
               <!-- COMPACT SMART CONTROL STRIP (Redesenhado: Limpo, rápido e intuitivo) -->
               <div class="sync-toggles-strip">
                 <!-- Toggle 1: Sincronismo em Tempo Real -->
-                <div class="toggle-pill-card" class:paused={!folderAutoSync} title={folderAutoSync ? 'Modificações sincronizam instantaneamente com o grupo' : 'Modo rascunho: edições locais isoladas'}>
+                <div
+                  class="toggle-pill-card"
+                  class:paused={!folderAutoSync}
+                  title={folderAutoSync
+                    ? 'Modificações sincronizam instantaneamente com o grupo'
+                    : 'Modo rascunho: edições locais isoladas'}
+                >
                   <div class="toggle-pill-left">
                     <span class="pill-icon">{folderAutoSync ? '🟢' : '⏸'}</span>
                     <div class="pill-texts">
                       <span class="pill-title">Tempo Real</span>
-                      <span class="pill-status">{folderAutoSync ? 'Ativo' : 'Pausado (Rascunho)'}</span>
+                      <span class="pill-status"
+                        >{folderAutoSync ? 'Ativo' : 'Pausado (Rascunho)'}</span
+                      >
                     </div>
                   </div>
                   <div class="pill-actions">
@@ -645,12 +667,20 @@
                 </div>
 
                 <!-- Toggle 2: Ponte com Navegador Fechado (Extensão) -->
-                <div class="toggle-pill-card" class:paused={!extensionRelayEnabled} title={extensionRelayEnabled ? 'Extensão ativa: atua como ponte contínua mesmo com a aba fechada' : 'Desativado: o compartilhamento ocorre apenas com a aba aberta'}>
+                <div
+                  class="toggle-pill-card"
+                  class:paused={!extensionRelayEnabled}
+                  title={extensionRelayEnabled
+                    ? 'Extensão ativa: atua como ponte contínua mesmo com a aba fechada'
+                    : 'Desativado: o compartilhamento ocorre apenas com a aba aberta'}
+                >
                   <div class="toggle-pill-left">
                     <span class="pill-icon">{extensionRelayEnabled ? '🧩' : '💤'}</span>
                     <div class="pill-texts">
                       <span class="pill-title">Ponte em 2º Plano</span>
-                      <span class="pill-status">{extensionRelayEnabled ? 'Extensão Ativa' : 'Desativada'}</span>
+                      <span class="pill-status"
+                        >{extensionRelayEnabled ? 'Extensão Ativa' : 'Desativada'}</span
+                      >
                     </div>
                   </div>
                   <div class="pill-actions">
@@ -707,7 +737,9 @@
                               🔒 Chave {workspace.webrtc.crypto.getCurrentEpoch()}
                             </span>
                           {:else}
-                            {@const peerEntry = p2pState.peers.find((p) => p.peerId === member.peerId)}
+                            {@const peerEntry = p2pState.peers.find(
+                              (p) => p.peerId === member.peerId
+                            )}
                             {#if peerEntry?.latencyMs}
                               <span class="latency-pill">⚡ {peerEntry.latencyMs}ms</span>
                             {:else if peerEntry?.dataChannelState === 'open'}
@@ -716,8 +748,13 @@
                               <span class="latency-pill offline">⚪ Mesh Relay</span>
                             {/if}
                             {#if peerEntry?.isE2ee}
-                              <span class="e2ee-pill" title="Criptografado ponta-a-ponta com chave móvel diária">
-                                🔒 E2EE {peerEntry.sasFingerprint ? `• ${peerEntry.sasFingerprint}` : ''}
+                              <span
+                                class="e2ee-pill"
+                                title="Criptografado ponta-a-ponta com chave móvel diária"
+                              >
+                                🔒 E2EE {peerEntry.sasFingerprint
+                                  ? `• ${peerEntry.sasFingerprint}`
+                                  : ''}
                               </span>
                             {/if}
                           {/if}
@@ -750,15 +787,16 @@
                 <h4>Copie o Convite P2P e envie para o colega</h4>
               </div>
               <p class="step-desc">
-                Este token contém a oferta WebRTC com candidatos ICE embutidos. O convidado pode usar
-                o link direto ou copiar o token no aplicativo dele.
+                Este token contém a oferta WebRTC com candidatos ICE embutidos. O convidado pode
+                usar o link direto ou copiar o token no aplicativo dele.
               </p>
 
               {#if isGeneratingOffer}
                 <div class="loading-box">⏳ Gerando candidatos ICE e token comprimido...</div>
               {:else if generatedOfferToken}
                 <div class="token-display-box">
-                  <textarea class="token-textarea" readonly rows="3" value={generatedOfferToken}></textarea>
+                  <textarea class="token-textarea" readonly rows="3" value={generatedOfferToken}
+                  ></textarea>
                   <div class="token-actions">
                     <button
                       class="action-btn primary small"
@@ -786,6 +824,7 @@
                   <div class="qr-preview-section">
                     <span class="qr-label">Ou escaneie com câmera móvel / tablet:</span>
                     <div class="qr-wrapper">
+                      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
                       {@html qrCodeSvg}
                     </div>
                   </div>
@@ -815,7 +854,9 @@
                   <div class="error-banner">{connectionError}</div>
                 {/if}
                 {#if connectionSuccess}
-                  <div class="success-banner">✓ Conexão P2P estabelecida com sucesso! Membro adicionado.</div>
+                  <div class="success-banner">
+                    ✓ Conexão P2P estabelecida com sucesso! Membro adicionado.
+                  </div>
                 {/if}
 
                 <button
@@ -855,32 +896,48 @@
                       <span class="preview-icon">📁</span>
                       <div class="preview-text">
                         <div class="preview-folder-name">
-                          Pasta Compartilhada: <strong>{joinPayloadPreview.folderName || 'Pasta Lvl 1'}</strong>
+                          Pasta Compartilhada: <strong
+                            >{joinPayloadPreview.folderName || 'Pasta Lvl 1'}</strong
+                          >
                         </div>
                         <div class="preview-group-name">
-                          Grupo: <strong>{joinPayloadPreview.groupName || 'Equipe P2P'}</strong> • Convidado por: <strong>{joinPayloadPreview.userName || 'Peer'}</strong>
+                          Grupo: <strong>{joinPayloadPreview.groupName || 'Equipe P2P'}</strong> •
+                          Convidado por: <strong>{joinPayloadPreview.userName || 'Peer'}</strong>
                         </div>
                       </div>
                     </div>
                     <div class="preview-targets">
                       <label class="preview-radio">
                         <input type="radio" bind:group={joinTargetMode} value="current" />
-                        <span>Sincronizar na pasta atual selecionada (<strong>{currentFolder?.title || 'Pasta ' + selectedFolderId}</strong>)</span>
+                        <span
+                          >Sincronizar na pasta atual selecionada (<strong
+                            >{currentFolder?.title || 'Pasta ' + selectedFolderId}</strong
+                          >)</span
+                        >
                       </label>
                       <label class="preview-radio">
                         <input type="radio" bind:group={joinTargetMode} value="new" />
-                        <span>Criar nova Pasta Compartilhada "<strong>{joinPayloadPreview.folderName || 'Nova Pasta'}</strong>" (Recomendado)</span>
+                        <span
+                          >Criar nova Pasta Compartilhada "<strong
+                            >{joinPayloadPreview.folderName || 'Nova Pasta'}</strong
+                          >" (Recomendado)</span
+                        >
                       </label>
                     </div>
                     <div class="preview-isolation-alert">
-                      🔒 <strong>Isolamento Absoluto:</strong> O compartilhamento é restrito a esta pasta. Suas outras pastas e as pastas do anfitrião permanecem 100% privadas e inacessíveis entre grupos.
+                      🔒 <strong>Isolamento Absoluto:</strong> O compartilhamento é restrito a esta pasta.
+                      Suas outras pastas e as pastas do anfitrião permanecem 100% privadas e inacessíveis
+                      entre grupos.
                     </div>
 
                     {#if joinPayloadPreview.publicKeyJwk}
                       <div class="preview-e2ee-alert">
                         <div class="e2ee-badge-row">
                           <span class="e2ee-shield">🛡️</span>
-                          <strong>Criptografia E2EE de Chave Móvel ({joinPayloadPreview.epoch || 'Hoje'})</strong>
+                          <strong
+                            >Criptografia E2EE de Chave Móvel ({joinPayloadPreview.epoch ||
+                              'Hoje'})</strong
+                          >
                         </div>
                         {#if previewSasFingerprint}
                           <div class="preview-sas-box">
@@ -889,7 +946,8 @@
                           </div>
                         {/if}
                         <div class="e2ee-desc">
-                          Os dados serão cifrados com segredo mútuo (A × B). Observadores na rede ou intermediários não conseguem decifrar os dados.
+                          Os dados serão cifrados com segredo mútuo (A × B). Observadores na rede ou
+                          intermediários não conseguem decifrar os dados.
                         </div>
                       </div>
                     {/if}
@@ -905,7 +963,9 @@
                   disabled={!joinOfferTokenInput.trim() || isGeneratingAnswer}
                   on:click={handleJoinWithOffer}
                 >
-                  {isGeneratingAnswer ? '⏳ Gerando Resposta...' : '📩 Aceitar Convite & Entrar na Pasta Compartilhada'}
+                  {isGeneratingAnswer
+                    ? '⏳ Gerando Resposta...'
+                    : '📩 Aceitar Convite & Entrar na Pasta Compartilhada'}
                 </button>
               </div>
             </div>
@@ -917,11 +977,13 @@
                   <h4>Envie esta Resposta de volta para quem te convidou</h4>
                 </div>
                 <p class="step-desc">
-                  Copie o token abaixo e envie de volta pelo chat/WhatsApp/Slack para quem gerou o convite:
+                  Copie o token abaixo e envie de volta pelo chat/WhatsApp/Slack para quem gerou o
+                  convite:
                 </p>
 
                 <div class="token-display-box">
-                  <textarea class="token-textarea" readonly rows="3" value={generatedAnswerToken}></textarea>
+                  <textarea class="token-textarea" readonly rows="3" value={generatedAnswerToken}
+                  ></textarea>
                   <button
                     class="action-btn primary"
                     on:click={() => copyToClipboard(generatedAnswerToken, 'answer')}
@@ -938,7 +1000,9 @@
           <div class="settings-container">
             <div class="settings-card">
               <h4>Seu Perfil de Colaborador</h4>
-              <p class="card-desc">Personalize como os outros membros do grupo veem você em tempo real.</p>
+              <p class="card-desc">
+                Personalize como os outros membros do grupo veem você em tempo real.
+              </p>
 
               <!-- LIVE PROFILE PREVIEW (Feedback visual imediato) -->
               <div class="live-preview-box">
@@ -955,7 +1019,9 @@
                     </div>
                     <div class="member-meta">
                       <span class="peer-id-snippet">ID: {workspace.localPeerId.slice(0, 10)}</span>
-                      <span class="e2ee-pill">🔒 Chave {workspace.webrtc.crypto.getCurrentEpoch()}</span>
+                      <span class="e2ee-pill"
+                        >🔒 Chave {workspace.webrtc.crypto.getCurrentEpoch()}</span
+                      >
                     </div>
                   </div>
                 </div>
@@ -1006,16 +1072,17 @@
               <h4>Arquitetura & Diagnóstico da Malha P2P</h4>
               <ul class="diag-list">
                 <li>
-                  <strong>Topologia:</strong> Malha Completa (Full Mesh) com Protocolo de Fofoca
-                  (Gossip Swarm)
+                  <strong>Topologia:</strong> Malha Completa (Full Mesh) com Protocolo de Fofoca (Gossip
+                  Swarm)
                 </li>
                 <li>
-                  <strong>Resolução de Conflitos:</strong> CRDTs Matemáticos via Yjs (Sem colisão de
-                  dados)
+                  <strong>Resolução de Conflitos:</strong> CRDTs Matemáticos via Yjs (Sem colisão de dados)
                 </li>
                 <li>
                   <strong>Persistência Local:</strong>
-                  {p2pState.persistedLocally ? '🟢 Sincronizado no IndexedDB' : '🟡 Carregando DB Local'}
+                  {p2pState.persistedLocally
+                    ? '🟢 Sincronizado no IndexedDB'
+                    : '🟡 Carregando DB Local'}
                 </li>
                 <li>
                   <strong>Navegador / PWA:</strong> Autônomo com Cache Service Worker
@@ -1058,7 +1125,9 @@
             <div class="dialog-icon">🧩</div>
             <h3>Extensão de Navegador Necessária</h3>
             <p>
-              Para continuar funcionando como <strong>ponte P2P mesmo com o site fechado</strong>, é necessário instalar a extensão no seu navegador (compatível com <strong>Google Chrome, Microsoft Edge e Mozilla Firefox</strong>).
+              Para continuar funcionando como <strong>ponte P2P mesmo com o site fechado</strong>, é
+              necessário instalar a extensão no seu navegador (compatível com
+              <strong>Google Chrome, Microsoft Edge e Mozilla Firefox</strong>).
             </p>
             <div class="extension-download-bar">
               <a
@@ -1080,19 +1149,31 @@
             <div class="install-steps-box">
               <div class="install-step-item">
                 <span class="step-num-pill">1</span>
-                <span>Baixe o pacote acima e descompacte o arquivo <code>p2p-relay-extension.zip</code>.</span>
+                <span
+                  >Baixe o pacote acima e descompacte o arquivo <code>p2p-relay-extension.zip</code
+                  >.</span
+                >
               </div>
               <div class="install-step-item">
                 <span class="step-num-pill">2</span>
-                <span>Abra <code>chrome://extensions</code> no Chrome, <code>edge://extensions</code> no Edge ou <code>about:debugging</code> no Firefox.</span>
+                <span
+                  >Abra <code>chrome://extensions</code> no Chrome, <code>edge://extensions</code>
+                  no Edge ou <code>about:debugging</code> no Firefox.</span
+                >
               </div>
               <div class="install-step-item">
                 <span class="step-num-pill">3</span>
-                <span>Ative o <strong>Modo Desenvolvedor</strong> e clique em <strong>Carregar sem compactação</strong> (selecione a pasta da extensão).</span>
+                <span
+                  >Ative o <strong>Modo Desenvolvedor</strong> e clique em
+                  <strong>Carregar sem compactação</strong> (selecione a pasta da extensão).</span
+                >
               </div>
             </div>
             <div class="dialog-buttons">
-              <button class="action-btn ghost" on:click={() => (showExtensionInstallDialog = false)}>
+              <button
+                class="action-btn ghost"
+                on:click={() => (showExtensionInstallDialog = false)}
+              >
                 Fechar
               </button>
               <button class="action-btn primary" on:click={handleToggleExtensionRelay}>
@@ -1134,7 +1215,8 @@
     flex-direction: column;
     overflow: hidden;
     color: var(--theme-t-main, #cccccc);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     font-size: 13px;
   }
 
@@ -1619,8 +1701,13 @@
   }
 
   @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.8; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.8;
+    }
   }
 
   /* LIVE PROFILE PREVIEW */
@@ -1798,7 +1885,9 @@
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition:
+      background 0.15s,
+      color 0.15s;
     white-space: nowrap;
   }
 
@@ -2029,7 +2118,9 @@
     border-radius: 50%;
     border: 2px solid transparent;
     cursor: pointer;
-    transition: transform 0.15s, border-color 0.15s;
+    transition:
+      transform 0.15s,
+      border-color 0.15s;
   }
 
   .color-dot:hover {
@@ -2238,12 +2329,6 @@
     font-size: 10.5px;
     color: var(--theme-t-muted, #94a3b8);
     line-height: 1.35;
-  }
-
-  /* EXTENSION STYLES */
-  .sync-control-card.extension-card {
-    margin-top: 8px;
-    border-color: var(--theme-b-main, #3e3e42);
   }
 
   .extension-dialog {

@@ -30,7 +30,6 @@
 
   // we have an unused parameter path to trigger scrollToLastItem when path changes,
   // see $: scrollToLastItem(path)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function scrollToLastItem(path: JSONPath) {
     setTimeout(() => {
       if (refNavigationBar && refNavigationBar.scrollTo) {

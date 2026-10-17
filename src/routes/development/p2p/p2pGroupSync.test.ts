@@ -5,7 +5,6 @@ import { encoding, decoding } from 'lib0'
 import {
   compressPayload,
   decompressPayload,
-  buildShareUrl,
   extractOfferFromUrl,
   type SignalingPayload
 } from './sdpToken.js'
@@ -231,4 +230,3 @@ describe('Level-1 Folder Isolation & Zero-Bleed Between Groups', () => {
     expect(aliceTabs.get('tab_users_b')).toBeUndefined()
   })
 })
-

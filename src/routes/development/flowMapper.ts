@@ -37,7 +37,11 @@ export function applyModifier(value: unknown, modifier?: MapperModifier): unknow
 /**
  * Set a nested value on an object via dot-separated path (e.g. "billing.address.city").
  */
-export function setValueByPath(target: Record<string, unknown>, path: string, value: unknown): void {
+export function setValueByPath(
+  target: Record<string, unknown>,
+  path: string,
+  value: unknown
+): void {
   const segments = path
     .trim()
     .split('.')
@@ -65,7 +69,8 @@ export function setValueByPath(target: Record<string, unknown>, path: string, va
  */
 export function applyMappings(
   input: unknown,
-  mappings: FlowNodeTransformMapping[]
+  mappings: FlowNodeTransformMapping[],
+  env?: Record<string, unknown>
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {}
 
@@ -82,6 +87,12 @@ export function applyMappings(
 
     const source = mapping.sourcePath?.trim()
     let extracted: unknown = source ? extractValueByPath(input, source) : undefined
+    if (extracted === undefined && env && source) {
+      extracted = extractValueByPath(env, source)
+      if (extracted === undefined && source in env) {
+        extracted = env[source]
+      }
+    }
 
     if (extracted === undefined || extracted === null || extracted === '') {
       if (mapping.defaultValue !== undefined && mapping.defaultValue !== '') {

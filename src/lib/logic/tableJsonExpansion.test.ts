@@ -6,7 +6,6 @@ import {
   collectExpandableDescendantPaths,
   createVisualCellPatch,
   getRowSortValue,
-  getVisualCellPath,
   getVisualCellValue,
   isColumnExpandable,
   sortJsonWithExpansion,
@@ -528,7 +527,13 @@ describe('tableJsonExpansion', () => {
       const l6Col = vColsAfter.find((c) => c.displayName === 'l6')
       expect(l6Col).toBeDefined()
       expect(l6Col?.isExpandable).toBe(false)
-      expect(getVisualCellValue(veryDeepData, { originalRowIndex: 0, subRowIndex: 0, isSubRow: false, subRowTotal: 1 }, l6Col!)).toBe('deepest')
+      expect(
+        getVisualCellValue(
+          veryDeepData,
+          { originalRowIndex: 0, subRowIndex: 0, isSubRow: false, subRowTotal: 1 },
+          l6Col!
+        )
+      ).toBe('deepest')
     })
 
     test('collapsing a column removes all its descendants', () => {

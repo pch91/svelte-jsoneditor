@@ -11,7 +11,8 @@
     FlowNodeRouterRule,
     FlowNodeRouterData,
     FlowNodeTransformMapping,
-    PortSlot
+    PortSlot,
+    MergePayloadMode
   } from '../flowTypes.js'
   import {
     executeJsSandbox,
@@ -39,6 +40,7 @@
   } from '../flowGeometry.js'
   import { FLOW_NODE_REGISTRY, variantsOf, categoryOf } from '../flowNodeRegistry.js'
   import { applyMappings, flattenJsonPaths } from '../flowMapper.js'
+  import { layoutFlowGraph } from '../flowAutoLayout.js'
   import NodeTypeSwitcher from './NodeTypeSwitcher.svelte'
   import CapturePathsTable from './CapturePathsTable.svelte'
   import CurlImportModal from './CurlImportModal.svelte'
@@ -224,11 +226,7 @@
           rules: createDefaultRouterRules()
         }
       }
-      if (
-        sidePanelTab !== 'rules' &&
-        sidePanelTab !== 'ports' &&
-        sidePanelTab !== 'response'
-      ) {
+      if (sidePanelTab !== 'rules' && sidePanelTab !== 'ports' && sidePanelTab !== 'response') {
         sidePanelTab = 'rules'
       }
     } else if (selectedNode.type === 'transform') {
@@ -331,7 +329,12 @@
   }
 
   function isMultiPortNode(node: FlowNode): boolean {
-    if (node.type === 'router' || node.type === 'loop' || node.type === 'delay' || node.type === 'merge') {
+    if (
+      node.type === 'router' ||
+      node.type === 'loop' ||
+      node.type === 'delay' ||
+      node.type === 'merge'
+    ) {
       return true
     }
     return node.type === 'js' && (node.jsData?.ports?.length ?? 0) > 0
@@ -425,6 +428,108 @@
     return bodyNodes.some((bn) => bn.id === conn.fromId)
   }
 
+  function parseNodeResponse(responseText?: string): unknown {
+    if (!responseText) return null
+    try {
+      return JSON.parse(responseText)
+    } catch {
+      return responseText
+    }
+  }
+
+  function getIncomingPayload(targetNodeId: string): unknown {
+    const upConns = flowGraph.connections.filter(
+      (c) => c.toId === targetNodeId && !isLoopFeedbackConnection(c)
+    )
+    if (upConns.length === 0) return null
+
+    const validPayloads: { key: string; payload: unknown }[] = []
+    for (let i = 0; i < upConns.length; i++) {
+      const conn = upConns[i]
+      const upNode = flowGraph.nodes.find((n) => n.id === conn.fromId)
+      if (upNode?.lastRun?.responseText) {
+        const p = parseNodeResponse(upNode.lastRun.responseText)
+        const key = conn.toPort || upNode.title || `in_${i + 1}`
+        validPayloads.push({ key, payload: p })
+      }
+    }
+
+    if (validPayloads.length === 0) return null
+    if (validPayloads.length === 1) return validPayloads[0].payload
+
+    const rawList = validPayloads.map((v) => v.payload)
+
+    // 1. If multiple arrays arrive (e.g. into Loop / Iterate), concatenate them
+    if (rawList.every(Array.isArray)) {
+      return (rawList as unknown[][]).flat()
+    }
+
+    // 2. If multiple plain objects arrive (e.g. into Map / Transform), merge their properties
+    const allObjects = rawList.every(
+      (p) => typeof p === 'object' && p !== null && !Array.isArray(p)
+    )
+    if (allObjects) {
+      const branches: Record<string, unknown> = {}
+      validPayloads.forEach((v) => {
+        branches[v.key] = v.payload
+      })
+      return {
+        ...Object.assign({}, ...rawList),
+        _branches: branches
+      }
+    }
+
+    // 3. Mixed types: return grouped by branch key
+    const branches: Record<string, unknown> = {}
+    validPayloads.forEach((v) => {
+      branches[v.key] = v.payload
+    })
+    return branches
+  }
+
+  function buildMergePayload(
+    mode: MergePayloadMode | undefined,
+    branchResults: Record<string, unknown>,
+    strategy: string,
+    incomingCount: number
+  ): unknown {
+    const activeEntries = Object.entries(branchResults).filter(
+      ([, val]) => val !== null && val !== undefined
+    )
+
+    const effectiveMode: MergePayloadMode = mode || 'pass-active'
+
+    if (effectiveMode === 'pass-active') {
+      if (activeEntries.length > 0) {
+        // Returns the payload of the active/winning branch directly
+        return activeEntries[activeEntries.length - 1][1]
+      }
+      return {}
+    }
+
+    if (effectiveMode === 'combine') {
+      // Shallow merge all active branch objects into a single root object
+      const objects = activeEntries
+        .map(([, val]) => val)
+        .filter((v) => typeof v === 'object' && v !== null && !Array.isArray(v))
+      return Object.assign({}, ...objects)
+    }
+
+    if (effectiveMode === 'append') {
+      // Concatenate all branch items/lists into a single array
+      const values = activeEntries.map(([, val]) => val)
+      return values.flat()
+    }
+
+    // Default: 'structured' mode
+    return {
+      mergedAt: Date.now(),
+      strategy,
+      payloadMode: effectiveMode,
+      branchesCount: incomingCount,
+      results: branchResults
+    }
+  }
 
   function canAddPortToSlot(ports: FlowNodePort[], slot: PortSlot): boolean {
     if (ports.length >= 10) return false
@@ -643,7 +748,11 @@
   function selectTransformPath(mapping: FlowNodeTransformMapping, selectedPath: string) {
     mapping.sourcePath = selectedPath
     if (!mapping.targetPath || !mapping.targetPath.trim()) {
-      const suggestedTarget = selectedPath.split('.').pop()?.replace(/\[\d+\]/g, '') || selectedPath
+      const suggestedTarget =
+        selectedPath
+          .split('.')
+          .pop()
+          ?.replace(/\[\d+\]/g, '') || selectedPath
       mapping.targetPath = suggestedTarget
     }
     closePathDropdown()
@@ -773,7 +882,8 @@
     }
     scan(rawPayload)
 
-    const arrayPath = node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
+    const arrayPath =
+      node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
     let currentEvaluation: LoopUpstreamInfo['currentEvaluation']
     if (rawPayload !== null && rawPayload !== undefined) {
       const extracted = extractValueByPath(rawPayload, arrayPath)
@@ -835,11 +945,7 @@
         sidePanelTab = 'script'
       }
     } else if (node.type === 'router') {
-      if (
-        sidePanelTab !== 'rules' &&
-        sidePanelTab !== 'ports' &&
-        sidePanelTab !== 'response'
-      ) {
+      if (sidePanelTab !== 'rules' && sidePanelTab !== 'ports' && sidePanelTab !== 'response') {
         sidePanelTab = 'rules'
       }
     } else {
@@ -983,10 +1089,7 @@
 
     const exists = flowGraph.connections.find(
       (c) =>
-        c.fromId === fromId &&
-        c.toId === toId &&
-        c.fromPort === fromPort &&
-        c.toPort === toPort
+        c.fromId === fromId && c.toId === toId && c.fromPort === fromPort && c.toPort === toPort
     )
     if (!exists) {
       const newConn: FlowConnection = {
@@ -1294,108 +1397,13 @@
 
   function autoLayout() {
     if (!flowGraph.nodes.length) return
-
-    const CARD_W = 280
-    const CARD_H = 140
-    const CIRCLE_SIZE = 54
-    const GAP_CARD = 50
-    const GAP_CIRCLE = 40
-    const ROW_HEIGHT = 180
-    const MAX_ROW_WIDTH = 960
-
-    const inDegree: Record<string, number> = {}
-    const adj: Record<string, string[]> = {}
-
-    flowGraph.nodes.forEach((n) => {
-      inDegree[n.id] = 0
-      adj[n.id] = []
+    flowGraph = layoutFlowGraph(flowGraph, {
+      baseX: 60,
+      baseY: 80,
+      gapX: 80,
+      gapY: 40,
+      flowGapY: 120
     })
-
-    flowGraph.connections.forEach((c) => {
-      if (inDegree[c.toId] !== undefined) inDegree[c.toId]++
-      if (adj[c.fromId]) adj[c.fromId].push(c.toId)
-    })
-
-    // Implicit wireless connection between throw and catch with matching eventName
-    flowGraph.nodes.forEach((n) => {
-      if (n.type === 'event-catch' && n.eventData?.eventName) {
-        const targetEvt = n.eventData.eventName.trim().toLowerCase()
-        const matchingThrow = flowGraph.nodes.find(
-          (t) =>
-            t.type === 'event-throw' && t.eventData?.eventName?.trim().toLowerCase() === targetEvt
-        )
-        if (matchingThrow && !adj[matchingThrow.id].includes(n.id)) {
-          adj[matchingThrow.id].push(n.id)
-          inDegree[n.id]++
-        }
-      }
-    })
-
-    const levels: Record<string, number> = {}
-    const queue = flowGraph.nodes.filter((n) => inDegree[n.id] === 0).map((n) => n.id)
-
-    queue.forEach((id) => {
-      levels[id] = 0
-    })
-
-    const visited = new Set<string>()
-    while (queue.length > 0) {
-      const u = queue.shift()!
-      visited.add(u)
-      const currentLevel = levels[u] ?? 0
-      for (const v of adj[u] ?? []) {
-        levels[v] = Math.max(levels[v] ?? 0, currentLevel + 1)
-        inDegree[v]--
-        if (inDegree[v] === 0) {
-          queue.push(v)
-        }
-      }
-    }
-
-    flowGraph.nodes.forEach((n) => {
-      if (!visited.has(n.id)) {
-        levels[n.id] = 0
-      }
-    })
-
-    // Sort nodes topologically by level
-    const maxLevel = Math.max(...Object.values(levels), 0)
-    const orderedNodes: FlowNode[] = []
-    for (let l = 0; l <= maxLevel; l++) {
-      const nodesAtL = flowGraph.nodes.filter((n) => (levels[n.id] ?? 0) === l)
-      orderedNodes.push(...nodesAtL)
-    }
-
-    // Smart multi-row packing layout with centered vertical alignment
-    let currentRow = 0
-    let currentX = 60
-    const startY = 80
-
-    orderedNodes.forEach((node, index) => {
-      const w = getNodeWidth(node.type)
-      const gap = isCircleNode(node.type) ? GAP_CIRCLE : GAP_CARD
-
-      // Break to next row if:
-      // 1. It is an event-catch node and previous nodes exist (wireless jump starts next row)
-      // 2. OR currentX + w > MAX_ROW_WIDTH and there is already content on this row
-      const shouldBreakRow =
-        index > 0 &&
-        ((node.type === 'event-catch' && currentX > 200) ||
-          (currentX + w > MAX_ROW_WIDTH && currentX > 300))
-
-      if (shouldBreakRow) {
-        currentRow++
-        currentX = 60
-      }
-
-      const rowCenterY = startY + currentRow * ROW_HEIGHT + CARD_H / 2
-      node.x = Math.round(currentX)
-      node.y = Math.round(rowCenterY - getNodeHeight(node) / 2)
-
-      currentX += w + gap
-    })
-
-    flowGraph = { ...flowGraph }
     notifyChange()
     showToast('Auto layout arranged successfully!')
   }
@@ -1403,7 +1411,7 @@
   function resetToExample(exampleIndex: 1 | 2 = 1) {
     const isAdvanced = exampleIndex === 2
     const flowTitle = isAdvanced
-      ? 'Example 2: Advanced Flow (Router + Multi-Ports + JSON Mapper)'
+      ? 'Example 2: Advanced Pipeline (Loop + Throttle + Router + Mapper + Merge + Telemetry)'
       : 'Example 1: Linear Flow (REST + Script + Event Jump)'
 
     if (flowGraph.nodes.length > 0) {
@@ -1418,6 +1426,9 @@
         episodeName: 'Pilot',
         customHeader: 'RickMorty-Verified'
       }
+      environments = { ...environments }
+    } else if (!environments['Rick & Morty'].baseUrl) {
+      environments['Rick & Morty'].baseUrl = 'https://rickandmortyapi.com/api'
       environments = { ...environments }
     }
     if (!activeEnvName) {
@@ -1899,8 +1910,16 @@
               const rawHeaders = subNode.restData.headerRows
                 ? rowsToHeadersText(subNode.restData.headerRows)
                 : subNode.restData.headers || ''
-              const resolvedHeaders = resolveVariables(rawHeaders, subEnv, globalEnvironment).resolved
-              const resolvedBody = resolveVariables(subNode.restData.body || '', subEnv, globalEnvironment).resolved
+              const resolvedHeaders = resolveVariables(
+                rawHeaders,
+                subEnv,
+                globalEnvironment
+              ).resolved
+              const resolvedBody = resolveVariables(
+                subNode.restData.body || '',
+                subEnv,
+                globalEnvironment
+              ).resolved
 
               const hasBody =
                 subNode.restData.bodyType !== 'none' &&
@@ -1980,14 +1999,16 @@
           } else {
             transformInput = initialPayload
           }
-          const mapped = applyMappings(transformInput || {}, subNode.transformData.mappings || [])
+          const mapped = applyMappings(
+            transformInput || {},
+            subNode.transformData.mappings || [],
+            subEnv
+          )
           subLastResp = JSON.stringify(mapped, null, 2)
           if (subNode.transformData.saveToEnvVar) {
             subEnv[subNode.transformData.saveToEnvVar] = subLastResp
           }
-          subLogs.push(
-            `Transform: ${(subNode.transformData.mappings || []).length} fields mapped`
-          )
+          subLogs.push(`Transform: ${(subNode.transformData.mappings || []).length} fields mapped`)
         } else if (subNode.type === 'delay' && subNode.delayData) {
           const dMs = Math.min(subNode.delayData.delayMs || 1000, 3000)
           await new Promise((r) => setTimeout(r, dMs))
@@ -2004,8 +2025,7 @@
       success: subSuccess,
       durationMs,
       logs: subLogs,
-      responseText:
-        subLastResp || JSON.stringify({ subFlow: targetFlowName, durationMs }, null, 2),
+      responseText: subLastResp || JSON.stringify({ subFlow: targetFlowName, durationMs }, null, 2),
       updatedEnv: subEnv
     }
   }
@@ -2019,24 +2039,12 @@
     activeNodePorts?: Map<string, Set<string>>
   ): Promise<Record<string, string>> {
     const started = performance.now()
-    const upConns = flowGraph.connections.filter(
-      (c) => c.toId === node.id && !isLoopFeedbackConnection(c)
-    )
-    let inputPayload: unknown = null
-    if (upConns.length > 0) {
-      const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
-      if (upNode?.lastRun?.responseText) {
-        try {
-          inputPayload = JSON.parse(upNode.lastRun.responseText)
-        } catch {
-          inputPayload = upNode.lastRun.responseText
-        }
-      }
-    }
+    const inputPayload = getIncomingPayload(node.id)
 
     const mode = node.loopData?.mode || 'for-each'
     let items: unknown[] = []
-    let arrayPath = node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
+    let arrayPath =
+      node.loopData?.arrayPath !== undefined ? node.loopData.arrayPath.trim() : 'items'
 
     if (mode === 'count') {
       const count = Math.min(
@@ -2046,7 +2054,12 @@
       items = Array.from({ length: count }, (_, i) => ({ index: i, count: i + 1 }))
       arrayPath = `[Counter 0..${count - 1}]`
     } else {
-      const arr = extractValueByPath(inputPayload || {}, arrayPath)
+      let arr = Array.isArray(inputPayload)
+        ? inputPayload
+        : extractValueByPath(inputPayload || {}, arrayPath)
+      if (arr === undefined && Array.isArray(inputPayload)) {
+        arr = inputPayload
+      }
       items = Array.isArray(arr) ? arr : arr !== undefined ? [arr] : [inputPayload]
     }
 
@@ -2141,9 +2154,7 @@
             } else {
               bNode.status = 'error'
               const iterLogs =
-                res.logs.length > 0
-                  ? res.logs.map((l) => `[Iter #${iter + 1}] ${l}`)
-                  : []
+                res.logs.length > 0 ? res.logs.map((l) => `[Iter #${iter + 1}] ${l}`) : []
               iterLogs.push(`[Iter #${iter + 1}] [ERROR] ${res.error}`)
               const cumLogs = bodyNodeLogs.get(bNode.id)!
               cumLogs.push(...iterLogs)
@@ -2170,7 +2181,11 @@
             const rest = bNode.restData
             const resolvedUrl = resolveVariables(rest.url, currentEnv, globalEnvironment).resolved
             const headersStr = rest.headerRows ? rowsToHeadersText(rest.headerRows) : rest.headers
-            const resolvedHeaders = resolveVariables(headersStr, currentEnv, globalEnvironment).resolved
+            const resolvedHeaders = resolveVariables(
+              headersStr,
+              currentEnv,
+              globalEnvironment
+            ).resolved
             const resolvedBody = resolveVariables(rest.body, currentEnv, globalEnvironment).resolved
 
             let proxyToUse = globalProxy
@@ -2253,7 +2268,11 @@
             }
             bNode.history = [historyItem, ...(bNode.history || []).slice(0, 4)]
           } else if (bNode.type === 'transform') {
-            const mapped = applyMappings(currentItem || {}, bNode.transformData?.mappings || [])
+            const mapped = applyMappings(
+              currentItem || {},
+              bNode.transformData?.mappings || [],
+              currentEnv
+            )
             const responseText = JSON.stringify(mapped, null, 2)
             if (bNode.transformData?.saveToEnvVar) {
               currentEnv[bNode.transformData.saveToEnvVar] = responseText
@@ -2339,6 +2358,7 @@
       totalItems: items.length,
       processedCount: processed.length,
       items: processed,
+      lastItem: processed[processed.length - 1] ?? null,
       bodyBlocks: bodyNodes.length
     }
     const responseText = JSON.stringify(loopResult, null, 2)
@@ -2474,18 +2494,7 @@
 
         showToast(`Block finished with status ${res.status} (${durationMs}ms)`)
       } else if (node.type === 'js' && node.jsData) {
-        const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
-        let upstreamPayload: unknown = null
-        if (upConns.length > 0) {
-          const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
-          if (upNode?.lastRun?.responseText) {
-            try {
-              upstreamPayload = JSON.parse(upNode.lastRun.responseText)
-            } catch {
-              upstreamPayload = upNode.lastRun.responseText
-            }
-          }
-        }
+        const upstreamPayload = getIncomingPayload(node.id)
         const res = executeJsSandbox(node.jsData.code, currentEnv, globalEnvironment, {
           ports: node.jsData.ports,
           payload: upstreamPayload
@@ -2496,13 +2505,19 @@
           currentEnv = { ...currentEnv, ...res.updatedEnv }
           globalEnvironment = { ...globalEnvironment, ...res.updatedGlobalEnv }
           node.status = 'success'
+          const jsResponseText =
+            res.returnValue !== undefined
+              ? typeof res.returnValue === 'string'
+                ? res.returnValue
+                : JSON.stringify(res.returnValue, null, 2)
+              : JSON.stringify(res.updatedEnv, null, 2)
           node.lastRun = {
             durationMs,
             status: 'OK',
             outputSummary: res.logs.length > 0 ? res.logs[res.logs.length - 1] : 'Script completed',
             timestamp: Date.now(),
             logs: res.logs,
-            responseText: JSON.stringify(res.updatedEnv, null, 2)
+            responseText: jsResponseText
           }
           const historyItem: FlowNodeExecutionHistoryEntry = {
             id: String(Date.now()),
@@ -2510,7 +2525,7 @@
             status: 'OK',
             durationMs,
             logs: res.logs,
-            responseText: JSON.stringify(res.updatedEnv, null, 2)
+            responseText: jsResponseText
           }
           // Strict limit of 5 history items
           node.history = [historyItem, ...(node.history || []).slice(0, 4)]
@@ -2534,22 +2549,13 @@
         }
       } else if (node.type === 'router' && node.routerData) {
         // Collect upstream response/status if available
+        const upstreamPayload = getIncomingPayload(node.id)
         const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
-        let upstreamPayload: unknown = null
         let upstreamStatus = 200
         if (upConns.length > 0) {
           const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
-          if (upNode?.lastRun) {
-            if (typeof upNode.lastRun.status === 'number') {
-              upstreamStatus = upNode.lastRun.status
-            }
-            if (upNode.lastRun.responseText) {
-              try {
-                upstreamPayload = JSON.parse(upNode.lastRun.responseText)
-              } catch {
-                upstreamPayload = upNode.lastRun.responseText
-              }
-            }
+          if (upNode?.lastRun && typeof upNode.lastRun.status === 'number') {
+            upstreamStatus = upNode.lastRun.status
           }
         }
 
@@ -2557,7 +2563,8 @@
           node.routerData.rules || [],
           node.routerData.mode || 'first-match',
           upstreamPayload,
-          upstreamStatus
+          upstreamStatus,
+          currentEnv
         )
         const durationMs = Math.round(performance.now() - started)
         const hasMatches = res.matchedPortIds.length > 0
@@ -2697,18 +2704,7 @@
         }
         showToast(`Event received: "${ev}"`)
       } else if (node.type === 'transform') {
-        const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
-        let inputPayload: unknown = null
-        if (upConns.length > 0) {
-          const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
-          if (upNode?.lastRun?.responseText) {
-            try {
-              inputPayload = JSON.parse(upNode.lastRun.responseText)
-            } catch {
-              inputPayload = upNode.lastRun.responseText
-            }
-          }
-        }
+        let inputPayload = getIncomingPayload(node.id)
         if (!inputPayload && node.transformData?.sampleInput) {
           try {
             inputPayload = JSON.parse(node.transformData.sampleInput)
@@ -2716,7 +2712,11 @@
             inputPayload = node.transformData.sampleInput
           }
         }
-        const mapped = applyMappings(inputPayload || {}, node.transformData?.mappings || [])
+        const mapped = applyMappings(
+          inputPayload || {},
+          node.transformData?.mappings || [],
+          currentEnv
+        )
         const responseText = JSON.stringify(mapped, null, 2)
         if (node.transformData?.saveToEnvVar) {
           currentEnv[node.transformData.saveToEnvVar] = responseText
@@ -2794,12 +2794,12 @@
           }
         }
 
-        const mergedPayload = {
-          mergedAt: Date.now(),
-          strategy: node.mergeData?.strategy || 'wait-all',
-          branchesCount: incomingConns.length,
-          results: branchResults
-        }
+        const mergedPayload = buildMergePayload(
+          node.mergeData?.payloadMode,
+          branchResults,
+          node.mergeData?.strategy || 'wait-all',
+          incomingConns.length
+        )
         const responseText = JSON.stringify(mergedPayload, null, 2)
         const durationMs = Math.round(performance.now() - started)
         node.status = 'success'
@@ -3038,7 +3038,9 @@
                 )
                 let upstreamPayload: unknown = null
                 if (upConns.length > 0) {
-                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+                  const upNode = flowGraph.nodes.find(
+                    (n) => n.id === upConns[upConns.length - 1].fromId
+                  )
                   if (upNode?.lastRun?.responseText) {
                     try {
                       upstreamPayload = JSON.parse(upNode.lastRun.responseText)
@@ -3223,20 +3225,7 @@
                   failedNodes.add(node.id)
                 }
               } else if (node.type === 'js' && node.jsData) {
-                const upConns = flowGraph.connections.filter(
-                  (c) => c.toId === node.id && !isLoopFeedbackConnection(c)
-                )
-                let upstreamPayload: unknown = null
-                if (upConns.length > 0) {
-                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
-                  if (upNode?.lastRun?.responseText) {
-                    try {
-                      upstreamPayload = JSON.parse(upNode.lastRun.responseText)
-                    } catch {
-                      upstreamPayload = upNode.lastRun.responseText
-                    }
-                  }
-                }
+                const upstreamPayload = getIncomingPayload(node.id)
                 const res = executeJsSandbox(node.jsData.code, currentEnv, globalEnvironment, {
                   ports: node.jsData.ports,
                   payload: upstreamPayload
@@ -3250,6 +3239,12 @@
                   if (res.activePorts?.length > 0) {
                     activeNodePorts.set(node.id, new Set(res.activePorts))
                   }
+                  const jsResponseText =
+                    res.returnValue !== undefined
+                      ? typeof res.returnValue === 'string'
+                        ? res.returnValue
+                        : JSON.stringify(res.returnValue, null, 2)
+                      : JSON.stringify(res.updatedEnv, null, 2)
                   node.lastRun = {
                     durationMs,
                     status: 'OK',
@@ -3261,7 +3256,7 @@
                           : 'Script finished',
                     timestamp: Date.now(),
                     logs: res.logs,
-                    responseText: JSON.stringify(res.updatedEnv, null, 2)
+                    responseText: jsResponseText
                   }
                   const historyItem: FlowNodeExecutionHistoryEntry = {
                     id: String(Date.now()),
@@ -3269,7 +3264,7 @@
                     status: 'OK',
                     durationMs,
                     logs: res.logs,
-                    responseText: JSON.stringify(res.updatedEnv, null, 2)
+                    responseText: jsResponseText
                   }
                   // Strict limit of 5 history items
                   node.history = [historyItem, ...(node.history || []).slice(0, 4)]
@@ -3287,22 +3282,15 @@
                   failedNodes.add(node.id)
                 }
               } else if (node.type === 'router' && node.routerData) {
+                const upstreamPayload = getIncomingPayload(node.id)
                 const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
-                let upstreamPayload: unknown = null
                 let upstreamStatus = 200
                 if (upConns.length > 0) {
-                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
-                  if (upNode?.lastRun) {
-                    if (typeof upNode.lastRun.status === 'number') {
-                      upstreamStatus = upNode.lastRun.status
-                    }
-                    if (upNode.lastRun.responseText) {
-                      try {
-                        upstreamPayload = JSON.parse(upNode.lastRun.responseText)
-                      } catch {
-                        upstreamPayload = upNode.lastRun.responseText
-                      }
-                    }
+                  const upNode = flowGraph.nodes.find(
+                    (n) => n.id === upConns[upConns.length - 1].fromId
+                  )
+                  if (upNode?.lastRun && typeof upNode.lastRun.status === 'number') {
+                    upstreamStatus = upNode.lastRun.status
                   }
                 }
 
@@ -3310,7 +3298,8 @@
                   node.routerData.rules || [],
                   node.routerData.mode || 'first-match',
                   upstreamPayload,
-                  upstreamStatus
+                  upstreamStatus,
+                  currentEnv
                 )
                 const durationMs = Math.round(performance.now() - started)
                 const hasMatches = res.matchedPortIds.length > 0
@@ -3355,18 +3344,7 @@
                   failedNodes.add(node.id)
                 }
               } else if (node.type === 'transform') {
-                const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
-                let inputPayload: unknown = null
-                if (upConns.length > 0) {
-                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
-                  if (upNode?.lastRun?.responseText) {
-                    try {
-                      inputPayload = JSON.parse(upNode.lastRun.responseText)
-                    } catch {
-                      inputPayload = upNode.lastRun.responseText
-                    }
-                  }
-                }
+                let inputPayload = getIncomingPayload(node.id)
                 if (!inputPayload && node.transformData?.sampleInput) {
                   try {
                     inputPayload = JSON.parse(node.transformData.sampleInput)
@@ -3374,7 +3352,11 @@
                     inputPayload = node.transformData.sampleInput
                   }
                 }
-                const mapped = applyMappings(inputPayload || {}, node.transformData?.mappings || [])
+                const mapped = applyMappings(
+                  inputPayload || {},
+                  node.transformData?.mappings || [],
+                  currentEnv
+                )
                 const responseText = JSON.stringify(mapped, null, 2)
                 if (node.transformData?.saveToEnvVar) {
                   currentEnv[node.transformData.saveToEnvVar] = responseText
@@ -3416,7 +3398,9 @@
                 const upConns = flowGraph.connections.filter((c) => c.toId === node.id)
                 let upstreamText = ''
                 if (upConns.length > 0) {
-                  const upNode = flowGraph.nodes.find((n) => n.id === upConns[upConns.length - 1].fromId)
+                  const upNode = flowGraph.nodes.find(
+                    (n) => n.id === upConns[upConns.length - 1].fromId
+                  )
                   if (upNode?.lastRun?.responseText) {
                     upstreamText = upNode.lastRun.responseText
                   }
@@ -3458,12 +3442,12 @@
                   }
                 }
 
-                const mergedPayload = {
-                  mergedAt: Date.now(),
-                  strategy: node.mergeData?.strategy || 'wait-all',
-                  branchesCount: incomingConns.length,
-                  results: branchResults
-                }
+                const mergedPayload = buildMergePayload(
+                  node.mergeData?.payloadMode,
+                  branchResults,
+                  node.mergeData?.strategy || 'wait-all',
+                  incomingConns.length
+                )
                 const responseText = JSON.stringify(mergedPayload, null, 2)
                 const durationMs = Math.round(performance.now() - started)
                 node.status = 'success'
@@ -3540,8 +3524,6 @@
     )
   }
 
-
-
   function getNodeOutputPort(
     node: FlowNode,
     portId?: string
@@ -3595,7 +3577,13 @@
   }
 </script>
 
-<svelte:window on:click={() => { fileMenuOpen = false; examplesMenuOpen = false; }} on:keydown={handleKeydown} />
+<svelte:window
+  on:click={() => {
+    fileMenuOpen = false
+    examplesMenuOpen = false
+  }}
+  on:keydown={handleKeydown}
+/>
 
 <div class="flow-container">
   <!-- Top Canvas Toolbar -->
@@ -3821,9 +3809,7 @@
               role="menuitem"
               on:click={() =>
                 runFileAction(() =>
-                  onSaveFlowToWorkspace
-                    ? onSaveFlowToWorkspace(false)
-                    : saveFlowFile(false)
+                  onSaveFlowToWorkspace ? onSaveFlowToWorkspace(false) : saveFlowFile(false)
                 )}
             >
               <span>💾 Save</span>
@@ -3834,9 +3820,7 @@
               role="menuitem"
               on:click={() =>
                 runFileAction(() =>
-                  onSaveFlowToWorkspace
-                    ? onSaveFlowToWorkspace(true)
-                    : saveFlowFile(true)
+                  onSaveFlowToWorkspace ? onSaveFlowToWorkspace(true) : saveFlowFile(true)
                 )}
             >
               <span>📝 Save As…</span>
@@ -3988,7 +3972,12 @@
               {#if sourceNode}
                 {@const sp = getNodeOutputPort(sourceNode, connectingFromPortId || undefined)}
                 <path
-                  d={computeBezierPath(sp, sp.direction, { x: mouseX, y: mouseY, direction: 'left' }, 'left')}
+                  d={computeBezierPath(
+                    sp,
+                    sp.direction,
+                    { x: mouseX, y: mouseY, direction: 'left' },
+                    'left'
+                  )}
                   class="conn-line-draft"
                   marker-end="url(#arrow-solid)"
                 />
@@ -4048,7 +4037,8 @@
                 {#if node.type !== 'start'}
                   <div
                     class="node-port port-input circle-port-input"
-                    style="left: {getRelInputPort(node).relX}px; top: {getRelInputPort(node).relY}px;"
+                    style="left: {getRelInputPort(node).relX}px; top: {getRelInputPort(node)
+                      .relY}px;"
                     title="Drop connection here"
                     on:mouseup|stopPropagation={() => endConnect(node.id)}
                   ></div>
@@ -4079,7 +4069,8 @@
                 {#if node.type !== 'terminate'}
                   <div
                     class="node-port port-output circle-port-output"
-                    style="left: {getRelOutputPort(node).relX}px; top: {getRelOutputPort(node).relY}px;"
+                    style="left: {getRelOutputPort(node).relX}px; top: {getRelOutputPort(node)
+                      .relY}px;"
                     title="Click and drag to connect to another block"
                     on:mousedown={(e) => startConnect(e, node.id)}
                   ></div>
@@ -4274,7 +4265,8 @@
                 {:else}
                   <div
                     class="node-port port-input compact-port-input"
-                    style="left: {getRelInputPort(node).relX}px; top: {getRelInputPort(node).relY}px;"
+                    style="left: {getRelInputPort(node).relX}px; top: {getRelInputPort(node)
+                      .relY}px;"
                     title="Drop connection here"
                     on:mouseup|stopPropagation={() => endConnect(node.id)}
                   ></div>
@@ -4288,37 +4280,63 @@
                     <span class="compact-icon delay-icon">⏳</span>
                     <div class="node-delay-preview-compact compact-details">
                       <div class="node-compact-summary">
-                        <span class="compact-main-val" title={node.title}>{node.title || 'Delay'}</span>
+                        <span class="compact-main-val" title={node.title}
+                          >{node.title || 'Delay'}</span
+                        >
                       </div>
-                      <span class="compact-sub-val">{node.delayData?.delayMs || 1000}ms · {node.delayData?.mode === 'throttle' ? 'Throttle' : 'Delay'}</span>
+                      <span class="compact-sub-val"
+                        >{node.delayData?.delayMs || 1000}ms · {node.delayData?.mode === 'throttle'
+                          ? 'Throttle'
+                          : 'Delay'}</span
+                      >
                     </div>
                   {:else if node.type === 'merge'}
                     <span class="compact-icon merge-icon">🔗</span>
                     <div class="node-merge-preview-compact compact-details">
                       <div class="node-compact-summary">
-                        <span class="compact-main-val" title={node.title}>{node.title || 'Wait All'}</span>
+                        <span class="compact-main-val" title={node.title}
+                          >{node.title || 'Wait All'}</span
+                        >
                       </div>
-                      <span class="compact-sub-val">{node.mergeData?.strategy === 'wait-all' ? 'Wait All' : 'First'} ({node.mergeData?.inputs?.length || 2} in)</span>
+                      <span class="compact-sub-val"
+                        >{node.mergeData?.strategy === 'wait-all' ? 'Wait All' : 'First'} ({node
+                          .mergeData?.inputs?.length || 2} in)</span
+                      >
                     </div>
                   {:else if node.type === 'transform'}
                     <span class="compact-icon transform-icon">🔄</span>
                     <div class="node-transform-preview-compact compact-details">
                       <div class="node-compact-summary">
-                        <span class="compact-main-val" title={node.title}>{node.title || 'JSON Mapper'}</span>
+                        <span class="compact-main-val" title={node.title}
+                          >{node.title || 'JSON Mapper'}</span
+                        >
                         {#if node.lastRun?.responseText}
                           <button
                             type="button"
                             class="node-quick-btn compact-editor-btn"
                             title="Open mapped output in JSON Editor tab"
-                            on:click|stopPropagation={() => onOpenInEditor?.(node.lastRun?.responseText || '', `${node.title || 'Transform'} Output`)}
-                          >↗ Editor</button>
+                            on:click|stopPropagation={() =>
+                              onOpenInEditor?.(
+                                node.lastRun?.responseText || '',
+                                `${node.title || 'Transform'} Output`
+                              )}>↗ Editor</button
+                          >
                         {/if}
                       </div>
-                      <span class="compact-sub-val">{node.transformData?.mappings?.length ? `${node.transformData.mappings.length} fields` : 'payload ➔ out'}</span>
+                      <span class="compact-sub-val"
+                        >{node.transformData?.mappings?.length
+                          ? `${node.transformData.mappings.length} fields`
+                          : 'payload ➔ out'}</span
+                      >
                     </div>
                   {:else if node.type === 'router'}
                     <div class="router-diamond-wrapper">
-                      <svg class="router-diamond-svg" viewBox="0 0 130 130" width="130" height="130">
+                      <svg
+                        class="router-diamond-svg"
+                        viewBox="0 0 130 130"
+                        width="130"
+                        height="130"
+                      >
                         <defs>
                           <radialGradient id="router-grad-{node.id}" cx="35%" cy="35%" r="65%">
                             <stop offset="0%" stop-color="rgba(245, 158, 11, 0.25)" />
@@ -4336,18 +4354,29 @@
                       <div class="router-diamond-core node-router-preview-compact compact-details">
                         <span class="compact-icon router-icon">🔀</span>
                         <div class="node-compact-summary">
-                          <span class="compact-main-val" title={node.title}>{node.title || 'Switch'}</span>
+                          <span class="compact-main-val" title={node.title}
+                            >{node.title || 'Switch'}</span
+                          >
                         </div>
-                        <span class="compact-sub-val">{node.routerData?.mode === 'all-matches' ? 'All' : 'First'} ({node.routerData?.rules?.length || 2})</span>
+                        <span class="compact-sub-val"
+                          >{node.routerData?.mode === 'all-matches' ? 'All' : 'First'} ({node
+                            .routerData?.rules?.length || 2})</span
+                        >
                       </div>
                     </div>
                   {:else if node.type === 'loop'}
                     <span class="compact-icon loop-icon">🔁</span>
                     <div class="node-loop-preview-compact compact-details">
                       <div class="node-compact-summary">
-                        <span class="compact-main-val" title={node.title}>{node.title || 'Loop'}</span>
+                        <span class="compact-main-val" title={node.title}
+                          >{node.title || 'Loop'}</span
+                        >
                       </div>
-                      <span class="compact-sub-val">{node.loopData?.mode === 'count' ? `${node.loopData?.repeatCount || 5}x` : (node.loopData?.arrayPath || 'items')} · LOOP</span>
+                      <span class="compact-sub-val"
+                        >{node.loopData?.mode === 'count'
+                          ? `${node.loopData?.repeatCount || 5}x`
+                          : node.loopData?.arrayPath || 'items'} · LOOP</span
+                      >
                     </div>
                   {/if}
                 </div>
@@ -4362,7 +4391,9 @@
                       <!-- svelte-ignore a11y_no_static_element_interactions -->
                       <div
                         class="node-port port-output port-multi slot-{port.slot}"
-                        style="left: {relX}px; top: {relY}px; {port.color ? `border-color: ${port.color};` : ''}"
+                        style="left: {relX}px; top: {relY}px; {port.color
+                          ? `border-color: ${port.color};`
+                          : ''}"
                         title="{port.label} ({port.slot.toUpperCase()})"
                         on:mousedown={(e) => startConnect(e, node.id, port.id)}
                       >
@@ -4373,7 +4404,8 @@
                 {:else}
                   <div
                     class="node-port port-output compact-port-output"
-                    style="left: {getRelOutputPort(node).relX}px; top: {getRelOutputPort(node).relY}px;"
+                    style="left: {getRelOutputPort(node).relX}px; top: {getRelOutputPort(node)
+                      .relY}px;"
                     title="Click and drag to connect to another block"
                     on:mousedown={(e) => startConnect(e, node.id)}
                   ></div>
@@ -4456,7 +4488,9 @@
                     {:else if node.type === 'transform'}
                       <span class="lang-tag lang-transform">🔄 MAP</span>
                     {:else}
-                      <span class="node-type-icon">{FLOW_NODE_REGISTRY[node.type]?.icon || '📦'}</span>
+                      <span class="node-type-icon"
+                        >{FLOW_NODE_REGISTRY[node.type]?.icon || '📦'}</span
+                      >
                     {/if}
                     <input
                       class="node-title-input"
@@ -4517,7 +4551,11 @@
                     <div class="node-transform-preview-compact">
                       <div class="node-compact-summary">
                         <span class="summary-label">map:</span>
-                        <span class="summary-val">{node.transformData?.mappings?.length ? `${node.transformData.mappings.length} fields mapped` : 'payload ➔ output'}</span>
+                        <span class="summary-val"
+                          >{node.transformData?.mappings?.length
+                            ? `${node.transformData.mappings.length} fields mapped`
+                            : 'payload ➔ output'}</span
+                        >
                       </div>
                     </div>
                   {/if}
@@ -4565,7 +4603,9 @@
                       <!-- svelte-ignore a11y_no_static_element_interactions -->
                       <div
                         class="node-port port-output port-multi slot-{port.slot}"
-                        style="left: {relX}px; top: {relY}px; {port.color ? `border-color: ${port.color};` : ''}"
+                        style="left: {relX}px; top: {relY}px; {port.color
+                          ? `border-color: ${port.color};`
+                          : ''}"
                         title="{port.label} ({port.slot.toUpperCase()})"
                         on:mousedown={(e) => startConnect(e, node.id, port.id)}
                       >
@@ -4576,7 +4616,8 @@
                 {:else}
                   <div
                     class="node-port port-output"
-                    style="left: {getRelOutputPort(node).relX}px; top: {getRelOutputPort(node).relY}px;"
+                    style="left: {getRelOutputPort(node).relX}px; top: {getRelOutputPort(node)
+                      .relY}px;"
                     title="Click and drag to connect to another block"
                     on:mousedown={(e) => startConnect(e, node.id)}
                   ></div>
@@ -5146,7 +5187,18 @@
                             aria-label="Remove parameter"
                             on:click={() => removeParam(pIdx)}
                           >
-                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <svg
+                              class="req-del-icon"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
                               <path d="M3 6h18" />
                               <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -5257,7 +5309,18 @@
                               aria-label="Remove header"
                               on:click={() => removeHeaderRow(hIdx)}
                             >
-                              <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <svg
+                                class="req-del-icon"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                              >
                                 <path d="M3 6h18" />
                                 <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                                 <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -5579,10 +5642,17 @@
 
                     {#if selectedNode.lastRun.logs && selectedNode.lastRun.logs.length > 0}
                       <div class="res-summary-logs" style="margin-top: 10px;">
-                        <div class="console-head" style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-bottom: 4px;">
+                        <div
+                          class="console-head"
+                          style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-bottom: 4px;"
+                        >
                           Execution Logs ({selectedNode.lastRun.logs.length}):
                         </div>
-                        <pre class="console-logs" style="max-height: 180px; overflow-y: auto;">{selectedNode.lastRun.logs.join('\n')}</pre>
+                        <pre
+                          class="console-logs"
+                          style="max-height: 180px; overflow-y: auto;">{selectedNode.lastRun.logs.join(
+                            '\n'
+                          )}</pre>
                       </div>
                     {/if}
 
@@ -5676,7 +5746,10 @@
                     type="button"
                     class="preset-chip chip-port"
                     title="Route to a specific output port"
-                    on:click={() => insertJsSnippet("// Route flow to specific output port\nroute('port_top_1');")}
+                    on:click={() =>
+                      insertJsSnippet(
+                        "// Route flow to specific output port\nroute('port_top_1');"
+                      )}
                   >
                     + route('port')
                   </button>
@@ -5684,7 +5757,10 @@
                     type="button"
                     class="preset-chip chip-port"
                     title="Emit data to a specific output port"
-                    on:click={() => insertJsSnippet("// Output payload to port\nout('port_top_1', { status: 'approved' });")}
+                    on:click={() =>
+                      insertJsSnippet(
+                        "// Output payload to port\nout('port_top_1', { status: 'approved' });"
+                      )}
                   >
                     + out('port', data)
                   </button>
@@ -5711,8 +5787,9 @@
                     <span class="ports-total-count">{jsPorts.length}/10 configured</span>
                   </div>
                   <p class="ports-help-note">
-                    Distribute up to <strong>10 ports</strong> on the right edge (max 3 Top, max 4 Middle, max 3 Bottom).
-                    In your script, call <code>route('port_id')</code> or <code>out('port_id', data)</code> to activate specific pins!
+                    Distribute up to <strong>10 ports</strong> on the right edge (max 3 Top, max 4
+                    Middle, max 3 Bottom). In your script, call <code>route('port_id')</code> or
+                    <code>out('port_id', data)</code> to activate specific pins!
                   </p>
                 </div>
 
@@ -5747,7 +5824,9 @@
                             bind:value={port.label}
                             on:input={notifyChange}
                           />
-                          <span class="port-id-pill" title="Use in route('{port.id}')">{port.id}</span>
+                          <span class="port-id-pill" title="Use in route('{port.id}')"
+                            >{port.id}</span
+                          >
                           <input
                             type="color"
                             class="port-color-picker"
@@ -5762,7 +5841,18 @@
                             aria-label="Remove port"
                             on:click={() => removePortFromNode(selectedNode, port.id)}
                           >
-                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <svg
+                              class="req-del-icon"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
                               <path d="M3 6h18" />
                               <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -5805,7 +5895,9 @@
                             bind:value={port.label}
                             on:input={notifyChange}
                           />
-                          <span class="port-id-pill" title="Use in route('{port.id}')">{port.id}</span>
+                          <span class="port-id-pill" title="Use in route('{port.id}')"
+                            >{port.id}</span
+                          >
                           <input
                             type="color"
                             class="port-color-picker"
@@ -5820,7 +5912,18 @@
                             aria-label="Remove port"
                             on:click={() => removePortFromNode(selectedNode, port.id)}
                           >
-                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <svg
+                              class="req-del-icon"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
                               <path d="M3 6h18" />
                               <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -5863,7 +5966,9 @@
                             bind:value={port.label}
                             on:input={notifyChange}
                           />
-                          <span class="port-id-pill" title="Use in route('{port.id}')">{port.id}</span>
+                          <span class="port-id-pill" title="Use in route('{port.id}')"
+                            >{port.id}</span
+                          >
                           <input
                             type="color"
                             class="port-color-picker"
@@ -5878,7 +5983,18 @@
                             aria-label="Remove port"
                             on:click={() => removePortFromNode(selectedNode, port.id)}
                           >
-                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <svg
+                              class="req-del-icon"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
                               <path d="M3 6h18" />
                               <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -5934,7 +6050,8 @@
                       on:change={notifyChange}
                     >
                       <option value="first-match">First Match (Stop at 1st match - Switch)</option>
-                      <option value="all-matches">All Matches (Branch to all matching ports)</option>
+                      <option value="all-matches">All Matches (Branch to all matching ports)</option
+                      >
                     </select>
                   </div>
                   <button
@@ -5948,10 +6065,14 @@
 
                 <div class="rules-list">
                   {#if selectedNode.routerData.rules.length === 0}
-                    <div class="rules-empty">No routing rules configured. Click "＋ Add Rule" to create one.</div>
+                    <div class="rules-empty">
+                      No routing rules configured. Click "＋ Add Rule" to create one.
+                    </div>
                   {:else}
                     {#each selectedNode.routerData.rules as rule, rIndex (rule.id)}
-                      {@const matchedPort = selectedNode.routerData.ports.find((p) => p.id === rule.portId)}
+                      {@const matchedPort = selectedNode.routerData.ports.find(
+                        (p) => p.id === rule.portId
+                      )}
                       <div class="rule-edit-card">
                         <div class="rule-card-header">
                           <div class="rule-num-wrap">
@@ -6056,17 +6177,63 @@
                                 />
                               </div>
                               <div class="status-preset-chips">
-                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '200-299'; notifyChange(); }}>2xx (200-299)</button>
-                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '200, 201, 204'; notifyChange(); }}>200, 201, 204</button>
-                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '300-399'; notifyChange(); }}>3xx (Redirect)</button>
-                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '400-499'; notifyChange(); }}>4xx (Client Err)</button>
-                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '500-599'; notifyChange(); }}>5xx (Server Err)</button>
-                                <button type="button" class="preset-chip" on:click={() => { rule.statusPattern = '404'; notifyChange(); }}>404 Not Found</button>
+                                <button
+                                  type="button"
+                                  class="preset-chip"
+                                  on:click={() => {
+                                    rule.statusPattern = '200-299'
+                                    notifyChange()
+                                  }}>2xx (200-299)</button
+                                >
+                                <button
+                                  type="button"
+                                  class="preset-chip"
+                                  on:click={() => {
+                                    rule.statusPattern = '200, 201, 204'
+                                    notifyChange()
+                                  }}>200, 201, 204</button
+                                >
+                                <button
+                                  type="button"
+                                  class="preset-chip"
+                                  on:click={() => {
+                                    rule.statusPattern = '300-399'
+                                    notifyChange()
+                                  }}>3xx (Redirect)</button
+                                >
+                                <button
+                                  type="button"
+                                  class="preset-chip"
+                                  on:click={() => {
+                                    rule.statusPattern = '400-499'
+                                    notifyChange()
+                                  }}>4xx (Client Err)</button
+                                >
+                                <button
+                                  type="button"
+                                  class="preset-chip"
+                                  on:click={() => {
+                                    rule.statusPattern = '500-599'
+                                    notifyChange()
+                                  }}>5xx (Server Err)</button
+                                >
+                                <button
+                                  type="button"
+                                  class="preset-chip"
+                                  on:click={() => {
+                                    rule.statusPattern = '404'
+                                    notifyChange()
+                                  }}>404 Not Found</button
+                                >
                               </div>
                             </div>
                           {:else if rule.type === 'jsonpath'}
                             <div class="condition-fields jsonpath-fields">
-                              <div class="jsonpath-grid" class:has-val={rule.operator !== 'exists' && rule.operator !== 'is_empty'}>
+                              <div
+                                class="jsonpath-grid"
+                                class:has-val={rule.operator !== 'exists' &&
+                                  rule.operator !== 'is_empty'}
+                              >
                                 <div class="path-col">
                                   <span class="field-sublabel">JSON Path:</span>
                                   <input
@@ -6114,7 +6281,10 @@
                           {:else if rule.type === 'otherwise'}
                             <div class="condition-fields otherwise-fields">
                               <div class="otherwise-callout">
-                                <span>⚓ Fallback Route: Matches whenever no preceding condition was satisfied.</span>
+                                <span
+                                  >⚓ Fallback Route: Matches whenever no preceding condition was
+                                  satisfied.</span
+                                >
                               </div>
                             </div>
                           {/if}
@@ -6137,8 +6307,9 @@
                     <span class="ports-total-count">{rPorts.length}/10 configured</span>
                   </div>
                   <p class="ports-help-note">
-                    Ports are physically distributed on the right edge: <strong>3 Top</strong>, <strong>4 Middle</strong>, and <strong>3 Bottom</strong>.
-                    Connect downstream nodes by dragging from any port pin on the canvas.
+                    Ports are physically distributed on the right edge: <strong>3 Top</strong>,
+                    <strong>4 Middle</strong>, and <strong>3 Bottom</strong>. Connect downstream
+                    nodes by dragging from any port pin on the canvas.
                   </p>
                 </div>
 
@@ -6161,7 +6332,9 @@
                   </div>
                   <div class="slot-ports-list">
                     {#if topPorts.length === 0}
-                      <div class="slot-empty-notice">No ports in Top slot. Click "+ Add Top Port" above.</div>
+                      <div class="slot-empty-notice">
+                        No ports in Top slot. Click "+ Add Top Port" above.
+                      </div>
                     {:else}
                       {#each topPorts as port (port.id)}
                         <div class="port-item-card">
@@ -6187,7 +6360,18 @@
                             aria-label="Remove port"
                             on:click={() => removePortFromNode(selectedNode, port.id)}
                           >
-                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <svg
+                              class="req-del-icon"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
                               <path d="M3 6h18" />
                               <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -6218,7 +6402,9 @@
                   </div>
                   <div class="slot-ports-list">
                     {#if midPorts.length === 0}
-                      <div class="slot-empty-notice">No ports in Middle slot. Click "+ Add Middle Port" above.</div>
+                      <div class="slot-empty-notice">
+                        No ports in Middle slot. Click "+ Add Middle Port" above.
+                      </div>
                     {:else}
                       {#each midPorts as port (port.id)}
                         <div class="port-item-card">
@@ -6244,7 +6430,18 @@
                             aria-label="Remove port"
                             on:click={() => removePortFromNode(selectedNode, port.id)}
                           >
-                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <svg
+                              class="req-del-icon"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
                               <path d="M3 6h18" />
                               <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -6275,7 +6472,9 @@
                   </div>
                   <div class="slot-ports-list">
                     {#if botPorts.length === 0}
-                      <div class="slot-empty-notice">No ports in Bottom slot. Click "+ Add Bottom Port" above.</div>
+                      <div class="slot-empty-notice">
+                        No ports in Bottom slot. Click "+ Add Bottom Port" above.
+                      </div>
                     {:else}
                       {#each botPorts as port (port.id)}
                         <div class="port-item-card">
@@ -6301,7 +6500,18 @@
                             aria-label="Remove port"
                             on:click={() => removePortFromNode(selectedNode, port.id)}
                           >
-                            <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <svg
+                              class="req-del-icon"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
                               <path d="M3 6h18" />
                               <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -6322,7 +6532,9 @@
                     <div class="eval-meta-grid">
                       <div class="meta-item">
                         <span class="meta-label">Status:</span>
-                        <span class="meta-val badge-{selectedNode.status}">{selectedNode.lastRun.status}</span>
+                        <span class="meta-val badge-{selectedNode.status}"
+                          >{selectedNode.lastRun.status}</span
+                        >
                       </div>
                       <div class="meta-item">
                         <span class="meta-label">Routing:</span>
@@ -6340,7 +6552,9 @@
                       </div>
                     {/if}
                   {:else}
-                    <div class="console-empty">No runs yet. Execute the flow to evaluate routing rules.</div>
+                    <div class="console-empty">
+                      No runs yet. Execute the flow to evaluate routing rules.
+                    </div>
                   {/if}
                 </div>
               </div>
@@ -6356,8 +6570,9 @@
                   </div>
                   <p class="event-help-text">
                     {#if selectedNode.type === 'event-throw'}
-                      When executed, this jump node transmits the signal with the event name.
-                      All receiver blocks (dotted circles) with the same name will be triggered wirelessly!
+                      When executed, this jump node transmits the signal with the event name. All
+                      receiver blocks (dotted circles) with the same name will be triggered
+                      wirelessly!
                     {:else}
                       This receiver node waits for the corresponding event transmission to continue
                       flow execution through its outputs.
@@ -6408,12 +6623,12 @@
                         <span class="beta-badge">BETA</span>
                       </div>
                       <p class="cross-flow-help">
-                        Triggers this event in another Spatial Flow of your workspace, activating receiver
-                        nodes (◌ Catch) that match this event name in the target flow.
+                        Triggers this event in another Spatial Flow of your workspace, activating
+                        receiver nodes (◌ Catch) that match this event name in the target flow.
                         <span class="cross-flow-warn">
-                          ⚠️ Sub-flow execution can be resource intensive. Upon completion,
-                          the sub-flow is unloaded from memory while keeping response history
-                          in this block.
+                          ⚠️ Sub-flow execution can be resource intensive. Upon completion, the
+                          sub-flow is unloaded from memory while keeping response history in this
+                          block.
                         </span>
                       </p>
                       <label class="event-field-label" for="target-flow-select"
@@ -6506,15 +6721,19 @@
                 <div class="transform-card">
                   <div class="transform-card-header">
                     <span class="transform-badge">🔄 JSON Schema Mapper</span>
-                    <span class="fields-count">{(selectedNode.transformData?.mappings || []).length} fields mapped</span>
+                    <span class="fields-count"
+                      >{(selectedNode.transformData?.mappings || []).length} fields mapped</span
+                    >
                   </div>
                   <p class="transform-help-text">
-                    Map fields from the JSON payload into a new output structure to test integrations.
+                    Map fields from the JSON payload into a new output structure to test
+                    integrations.
                   </p>
 
                   <div class="transform-sample-section">
                     <div class="sample-label-row">
-                      <label class="field-label" for="transform-sample">Input Payload (JSON):</label>
+                      <label class="field-label" for="transform-sample">Input Payload (JSON):</label
+                      >
                       <button
                         type="button"
                         class="btn-copy-sample"
@@ -6539,7 +6758,10 @@
                       <div class="mappings-title-wrap">
                         <span class="section-title">Mapping Rules:</span>
                         {#if transformPaths.length > 0}
-                          <span class="detected-badge-count" title="Fields available in the Source autocomplete">
+                          <span
+                            class="detected-badge-count"
+                            title="Fields available in the Source autocomplete"
+                          >
                             ⚡ {transformPaths.length} fields detected
                           </span>
                         {/if}
@@ -6550,7 +6772,8 @@
                             type="button"
                             class="btn-auto-map"
                             title="Automatically create rules for the detected fields"
-                            on:click={() => selectedNode && autoMapDetectedFields(selectedNode, transformPaths)}
+                            on:click={() =>
+                              selectedNode && autoMapDetectedFields(selectedNode, transformPaths)}
                           >
                             ✨ Map All
                           </button>
@@ -6567,7 +6790,8 @@
 
                     {#if (selectedNode.transformData.mappings || []).length === 0}
                       <div class="mappings-empty-hint">
-                        No fields mapped. Click <strong>＋ Add Field</strong> to select source and target keys.
+                        No fields mapped. Click <strong>＋ Add Field</strong> to select source and target
+                        keys.
                       </div>
                     {:else}
                       <div class="mappings-list">
@@ -6578,13 +6802,17 @@
                           >
                             <div class="mapping-paths-row">
                               <div class="mapping-col path-autocomplete-col">
-                                <label class="mini-label" for={`src-${mapping.id}`}>Source (Path):</label>
+                                <label class="mini-label" for={`src-${mapping.id}`}
+                                  >Source (Path):</label
+                                >
                                 <div class="path-combo-wrapper">
                                   <input
                                     id={`src-${mapping.id}`}
                                     type="text"
                                     class="side-text-input mini-input path-combo-input"
-                                    placeholder={transformPaths.length > 0 ? `e.g. ${transformPaths[0]} (or free value)` : 'e.g. user.id or email'}
+                                    placeholder={transformPaths.length > 0
+                                      ? `e.g. ${transformPaths[0]} (or free value)`
+                                      : 'e.g. user.id or email'}
                                     bind:value={mapping.sourcePath}
                                     on:focus={() => {
                                       if (transformPaths.length > 0) openPathDropdown(mapping.id)
@@ -6593,7 +6821,8 @@
                                       if (transformPaths.length > 0) openPathDropdown(mapping.id)
                                       notifyChange()
                                     }}
-                                    on:keydown={(e) => handlePathKeydown(e, mapping, transformPaths)}
+                                    on:keydown={(e) =>
+                                      handlePathKeydown(e, mapping, transformPaths)}
                                     on:blur={() => {
                                       setTimeout(() => {
                                         if (activePathDropdownMappingId === mapping.id) {
@@ -6612,16 +6841,29 @@
                                       title={`Fields detected in JSON (${transformPaths.length})`}
                                       tabindex="-1"
                                       on:mousedown|preventDefault
-                                      on:click|stopPropagation={() => togglePathDropdown(mapping.id)}
+                                      on:click|stopPropagation={() =>
+                                        togglePathDropdown(mapping.id)}
                                     >
-                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                      <svg
+                                        width="10"
+                                        height="10"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2.5"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                      >
                                         <polyline points="6 9 12 15 18 9"></polyline>
                                       </svg>
                                     </button>
                                   {/if}
 
                                   {#if activePathDropdownMappingId === mapping.id && transformPaths.length > 0}
-                                    {@const matchingPaths = getFilteredTransformPaths(transformPaths, mapping.sourcePath)}
+                                    {@const matchingPaths = getFilteredTransformPaths(
+                                      transformPaths,
+                                      mapping.sourcePath
+                                    )}
                                     <div
                                       class="path-dropdown-menu"
                                       role="listbox"
@@ -6629,14 +6871,20 @@
                                       on:mousedown|preventDefault
                                     >
                                       <div class="path-dropdown-header">
-                                        <span class="path-dropdown-header-title">Detected Fields ({matchingPaths.length})</span>
+                                        <span class="path-dropdown-header-title"
+                                          >Detected Fields ({matchingPaths.length})</span
+                                        >
                                         <span class="path-dropdown-badge">JSON</span>
                                       </div>
 
                                       {#if matchingPaths.length === 0}
                                         <div class="path-dropdown-empty">
-                                          <span class="empty-title">No field matching "{mapping.sourcePath}"</span>
-                                          <span class="empty-subtitle">Press Enter or keep typing your custom value.</span>
+                                          <span class="empty-title"
+                                            >No field matching "{mapping.sourcePath}"</span
+                                          >
+                                          <span class="empty-subtitle"
+                                            >Press Enter or keep typing your custom value.</span
+                                          >
                                         </div>
                                       {:else}
                                         <div class="path-dropdown-scroll">
@@ -6672,7 +6920,9 @@
                               </div>
                               <span class="mapping-arrow">➔</span>
                               <div class="mapping-col">
-                                <label class="mini-label" for={`tgt-${mapping.id}`}>Target (Path):</label>
+                                <label class="mini-label" for={`tgt-${mapping.id}`}
+                                  >Target (Path):</label
+                                >
                                 <input
                                   id={`tgt-${mapping.id}`}
                                   type="text"
@@ -6688,9 +6938,21 @@
                                 class="req-delete-btn"
                                 title="Remove rule"
                                 aria-label="Remove rule"
-                                on:click={() => selectedNode && removeTransformMapping(selectedNode, mapping.id)}
+                                on:click={() =>
+                                  selectedNode && removeTransformMapping(selectedNode, mapping.id)}
                               >
-                                <svg class="req-del-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <svg
+                                  class="req-del-icon"
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  aria-hidden="true"
+                                >
                                   <path d="M3 6h18" />
                                   <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                                   <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -6700,7 +6962,8 @@
 
                             <div class="mapping-options-row">
                               <div class="option-col">
-                                <label class="mini-label" for={`mod-${mapping.id}`}>Modifier:</label>
+                                <label class="mini-label" for={`mod-${mapping.id}`}>Modifier:</label
+                                >
                                 <select
                                   id={`mod-${mapping.id}`}
                                   class="side-method-select mini-select"
@@ -6717,7 +6980,9 @@
                                 </select>
                               </div>
                               <div class="option-col">
-                                <label class="mini-label" for={`def-${mapping.id}`}>Default Value (Fallback):</label>
+                                <label class="mini-label" for={`def-${mapping.id}`}
+                                  >Default Value (Fallback):</label
+                                >
                                 <input
                                   id={`def-${mapping.id}`}
                                   type="text"
@@ -6747,12 +7012,16 @@
                         ▶ Test Mapping
                       </button>
                     </div>
-                    <pre class="console-logs preview-box">{getLiveTransformPreview(selectedNode)}</pre>
+                    <pre class="console-logs preview-box">{getLiveTransformPreview(
+                        selectedNode
+                      )}</pre>
                   </div>
 
                   <!-- Variable Saving -->
                   <div class="field-row">
-                    <label class="field-label" for="save-env-var">Save Resulting JSON to Environment Variable:</label>
+                    <label class="field-label" for="save-env-var"
+                      >Save Resulting JSON to Environment Variable:</label
+                    >
                     <input
                       id="save-env-var"
                       type="text"
@@ -6780,7 +7049,8 @@
                     {/if}
                   </div>
                   {#if selectedNode.lastRun}
-                    <pre class="console-logs">{selectedNode.lastRun.responseText || selectedNode.lastRun.outputSummary}</pre>
+                    <pre class="console-logs">{selectedNode.lastRun.responseText ||
+                        selectedNode.lastRun.outputSummary}</pre>
                   {:else}
                     <div class="console-empty">Not executed yet. Run flow or click ▶ to test.</div>
                   {/if}
@@ -6799,7 +7069,8 @@
                       <button
                         type="button"
                         class="loop-mode-btn"
-                        class:active={!selectedNode.loopData.mode || selectedNode.loopData.mode === 'for-each'}
+                        class:active={!selectedNode.loopData.mode ||
+                          selectedNode.loopData.mode === 'for-each'}
                         on:click={() => {
                           if (selectedNode.loopData) selectedNode.loopData.mode = 'for-each'
                           notifyChange()
@@ -6814,8 +7085,10 @@
                         on:click={() => {
                           if (selectedNode.loopData) {
                             selectedNode.loopData.mode = 'count'
-                            if (!selectedNode.loopData.repeatCount) selectedNode.loopData.repeatCount = 5
-                            if (!selectedNode.loopData.indexVar) selectedNode.loopData.indexVar = 'index'
+                            if (!selectedNode.loopData.repeatCount)
+                              selectedNode.loopData.repeatCount = 5
+                            if (!selectedNode.loopData.indexVar)
+                              selectedNode.loopData.indexVar = 'index'
                           }
                           notifyChange()
                         }}
@@ -6831,7 +7104,11 @@
                       <div class="loop-upstream-bar">
                         <div class="upstream-meta">
                           <span class="upstream-icon">⚡</span>
-                          <span class="upstream-label">Connected input: <strong>{loopInfo.upNode?.title || 'Previous Node'}</strong></span>
+                          <span class="upstream-label"
+                            >Connected input: <strong
+                              >{loopInfo.upNode?.title || 'Previous Node'}</strong
+                            ></span
+                          >
                         </div>
                         {#if loopInfo.executed}
                           {#if loopInfo.detectedArrays.length > 0}
@@ -6845,24 +7122,29 @@
                                     class:active={selectedNode.loopData.arrayPath === arr.path}
                                     title={`Select ${arr.path || 'Root array'} with ${arr.length} items`}
                                     on:click={() => {
-                                      if (selectedNode.loopData) selectedNode.loopData.arrayPath = arr.path
+                                      if (selectedNode.loopData)
+                                        selectedNode.loopData.arrayPath = arr.path
                                       notifyChange()
                                     }}
                                   >
                                     <span class="chip-path">{arr.path || '[ ] Root'}</span>
-                                    <span class="chip-count">{arr.length} {arr.length === 1 ? 'item' : 'items'}</span>
+                                    <span class="chip-count"
+                                      >{arr.length} {arr.length === 1 ? 'item' : 'items'}</span
+                                    >
                                   </button>
                                 {/each}
                               </div>
                             </div>
                           {:else}
                             <div class="upstream-hint">
-                              ℹ️ The previous node ran, but no array was automatically detected in its output.
+                              ℹ️ The previous node ran, but no array was automatically detected in
+                              its output.
                             </div>
                           {/if}
                         {:else}
                           <div class="upstream-hint">
-                            ⏳ The previous node has not run yet. Click <strong>▶ Run Block</strong> on it to detect arrays in real time.
+                            ⏳ The previous node has not run yet. Click <strong>▶ Run Block</strong> on
+                            it to detect arrays in real time.
                           </div>
                         {/if}
                       </div>
@@ -6870,7 +7152,8 @@
                       <div class="loop-upstream-bar is-unconnected">
                         <span class="upstream-icon">🔗</span>
                         <span class="upstream-hint">
-                          Connect a previous node (REST, JS or Mapper) to the Iterator Loop to detect collections automatically.
+                          Connect a previous node (REST, JS or Mapper) to the Iterator Loop to
+                          detect collections automatically.
                         </span>
                       </div>
                     {/if}
@@ -6878,7 +7161,9 @@
                     <!-- Collection Path Field -->
                     <div class="field-row">
                       <div class="field-label-row">
-                        <label class="field-label" for="loop-array-path">Collection Path (Array):</label>
+                        <label class="field-label" for="loop-array-path"
+                          >Collection Path (Array):</label
+                        >
                         <span class="field-subnote">Dot-notation path in the JSON</span>
                       </div>
                       <input
@@ -6892,29 +7177,76 @@
                       <!-- Common quick suggestion chips -->
                       <div class="quick-chips-row">
                         <span class="chips-label">Suggestions:</span>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'items'; notifyChange(); }}>items</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'data.items'; notifyChange(); }}>data.items</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'results'; notifyChange(); }}>results</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'data'; notifyChange(); }}>data</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.arrayPath = ''; notifyChange(); }}>[ ] Root</button>
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'items'
+                            notifyChange()
+                          }}>items</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData)
+                              selectedNode.loopData.arrayPath = 'data.items'
+                            notifyChange()
+                          }}>data.items</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'results'
+                            notifyChange()
+                          }}>results</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.arrayPath = 'data'
+                            notifyChange()
+                          }}>data</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.arrayPath = ''
+                            notifyChange()
+                          }}>[ ] Root</button
+                        >
                       </div>
                     </div>
 
                     <!-- Live Array Evaluation Preview Box -->
                     {#if loopInfo.currentEvaluation}
-                      <div class="array-eval-box" class:is-valid={loopInfo.currentEvaluation.isValid}>
+                      <div
+                        class="array-eval-box"
+                        class:is-valid={loopInfo.currentEvaluation.isValid}
+                      >
                         {#if loopInfo.currentEvaluation.isValid}
                           <div class="eval-status-row">
                             <span class="eval-badge-success">✓ Valid Array</span>
-                            <span class="eval-count-tag">{loopInfo.currentEvaluation.length} items found</span>
+                            <span class="eval-count-tag"
+                              >{loopInfo.currentEvaluation.length} items found</span
+                            >
                             {#if loopInfo.currentEvaluation.length > (selectedNode.loopData.maxIterations || 1000)}
-                              <span class="eval-limit-warning">⚠️ Limited to {selectedNode.loopData.maxIterations || 1000}</span>
+                              <span class="eval-limit-warning"
+                                >⚠️ Limited to {selectedNode.loopData.maxIterations || 1000}</span
+                              >
                             {/if}
                           </div>
                           {#if loopInfo.currentEvaluation.sampleItem !== undefined}
                             <div class="sample-preview-card">
                               <span class="sample-tag">Item [0] (Preview):</span>
-                              <pre class="sample-preview-code">{JSON.stringify(loopInfo.currentEvaluation.sampleItem, null, 2)}</pre>
+                              <pre class="sample-preview-code">{JSON.stringify(
+                                  loopInfo.currentEvaluation.sampleItem,
+                                  null,
+                                  2
+                                )}</pre>
                             </div>
                           {/if}
                         {:else}
@@ -6930,7 +7262,11 @@
                     <div class="field-row">
                       <div class="field-label-row">
                         <label class="field-label" for="loop-item-var">Item Variable Name:</label>
-                        <span class="field-subnote">Injected as <code>{"{{" + (selectedNode.loopData.itemVar || 'item') + "}}"}</code></span>
+                        <span class="field-subnote"
+                          >Injected as <code
+                            >{'{{' + (selectedNode.loopData.itemVar || 'item') + '}}'}</code
+                          ></span
+                        >
                       </div>
                       <input
                         id="loop-item-var"
@@ -6942,17 +7278,47 @@
                       />
                       <div class="quick-chips-row">
                         <span class="chips-label">Presets:</span>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.itemVar = 'item'; notifyChange(); }}>item</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.itemVar = 'row'; notifyChange(); }}>row</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.itemVar = 'user'; notifyChange(); }}>user</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.itemVar = 'record'; notifyChange(); }}>record</button>
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.itemVar = 'item'
+                            notifyChange()
+                          }}>item</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.itemVar = 'row'
+                            notifyChange()
+                          }}>row</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.itemVar = 'user'
+                            notifyChange()
+                          }}>user</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.itemVar = 'record'
+                            notifyChange()
+                          }}>record</button
+                        >
                       </div>
                     </div>
                   {:else}
                     <!-- Counter / Repeat Mode -->
                     <div class="field-row">
                       <div class="field-label-row">
-                        <label class="field-label" for="loop-repeat-count">Repeat How Many Times (Iterations):</label>
+                        <label class="field-label" for="loop-repeat-count"
+                          >Repeat How Many Times (Iterations):</label
+                        >
                         <span class="field-subnote">Total loop iterations</span>
                       </div>
                       <input
@@ -6967,19 +7333,67 @@
                       />
                       <div class="quick-chips-row">
                         <span class="chips-label">Shortcuts:</span>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 3; notifyChange(); }}>3x</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 5; notifyChange(); }}>5x</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 10; notifyChange(); }}>10x</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 20; notifyChange(); }}>20x</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 50; notifyChange(); }}>50x</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.repeatCount = 100; notifyChange(); }}>100x</button>
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.repeatCount = 3
+                            notifyChange()
+                          }}>3x</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.repeatCount = 5
+                            notifyChange()
+                          }}>5x</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.repeatCount = 10
+                            notifyChange()
+                          }}>10x</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.repeatCount = 20
+                            notifyChange()
+                          }}>20x</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.repeatCount = 50
+                            notifyChange()
+                          }}>50x</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.repeatCount = 100
+                            notifyChange()
+                          }}>100x</button
+                        >
                       </div>
                     </div>
 
                     <div class="field-row">
                       <div class="field-label-row">
-                        <label class="field-label" for="loop-index-var">Counter Variable Name:</label>
-                        <span class="field-subnote">Injected as <code>{"{{" + (selectedNode.loopData.indexVar || 'index') + "}}"}</code> (0, 1, 2...)</span>
+                        <label class="field-label" for="loop-index-var"
+                          >Counter Variable Name:</label
+                        >
+                        <span class="field-subnote"
+                          >Injected as <code
+                            >{'{{' + (selectedNode.loopData.indexVar || 'index') + '}}'}</code
+                          > (0, 1, 2...)</span
+                        >
                       </div>
                       <input
                         id="loop-index-var"
@@ -6991,10 +7405,38 @@
                       />
                       <div class="quick-chips-row">
                         <span class="chips-label">Presets:</span>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.indexVar = 'index'; notifyChange(); }}>index</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.indexVar = 'i'; notifyChange(); }}>i</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.indexVar = 'step'; notifyChange(); }}>step</button>
-                        <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.indexVar = 'count'; notifyChange(); }}>count</button>
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.indexVar = 'index'
+                            notifyChange()
+                          }}>index</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.indexVar = 'i'
+                            notifyChange()
+                          }}>i</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.indexVar = 'step'
+                            notifyChange()
+                          }}>step</button
+                        >
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          on:click={() => {
+                            if (selectedNode.loopData) selectedNode.loopData.indexVar = 'count'
+                            notifyChange()
+                          }}>count</button
+                        >
                       </div>
                     </div>
                   {/if}
@@ -7015,12 +7457,54 @@
                     />
                     <div class="quick-chips-row">
                       <span class="chips-label">Quick limits:</span>
-                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 10; notifyChange(); }}>10</button>
-                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 50; notifyChange(); }}>50</button>
-                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 100; notifyChange(); }}>100</button>
-                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 500; notifyChange(); }}>500</button>
-                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 1000; notifyChange(); }}>1000</button>
-                      <button type="button" class="preset-chip" on:click={() => { if (selectedNode.loopData) selectedNode.loopData.maxIterations = 5000; notifyChange(); }}>5000</button>
+                      <button
+                        type="button"
+                        class="preset-chip"
+                        on:click={() => {
+                          if (selectedNode.loopData) selectedNode.loopData.maxIterations = 10
+                          notifyChange()
+                        }}>10</button
+                      >
+                      <button
+                        type="button"
+                        class="preset-chip"
+                        on:click={() => {
+                          if (selectedNode.loopData) selectedNode.loopData.maxIterations = 50
+                          notifyChange()
+                        }}>50</button
+                      >
+                      <button
+                        type="button"
+                        class="preset-chip"
+                        on:click={() => {
+                          if (selectedNode.loopData) selectedNode.loopData.maxIterations = 100
+                          notifyChange()
+                        }}>100</button
+                      >
+                      <button
+                        type="button"
+                        class="preset-chip"
+                        on:click={() => {
+                          if (selectedNode.loopData) selectedNode.loopData.maxIterations = 500
+                          notifyChange()
+                        }}>500</button
+                      >
+                      <button
+                        type="button"
+                        class="preset-chip"
+                        on:click={() => {
+                          if (selectedNode.loopData) selectedNode.loopData.maxIterations = 1000
+                          notifyChange()
+                        }}>1000</button
+                      >
+                      <button
+                        type="button"
+                        class="preset-chip"
+                        on:click={() => {
+                          if (selectedNode.loopData) selectedNode.loopData.maxIterations = 5000
+                          notifyChange()
+                        }}>5000</button
+                      >
                     </div>
                   </div>
 
@@ -7029,15 +7513,25 @@
                     <span class="vars-callout-title">📦 Variables Available Inside the Loop:</span>
                     <div class="vars-callout-grid">
                       <div class="var-item">
-                        <code>{"{{" + (selectedNode.loopData.mode === 'count' ? (selectedNode.loopData.indexVar || 'index') : (selectedNode.loopData.itemVar || 'item')) + "}}"}</code>
-                        <span>{selectedNode.loopData.mode === 'count' ? 'Current iteration number (0, 1, 2...)' : 'Current element content'}</span>
+                        <code
+                          >{'{{' +
+                            (selectedNode.loopData.mode === 'count'
+                              ? selectedNode.loopData.indexVar || 'index'
+                              : selectedNode.loopData.itemVar || 'item') +
+                            '}}'}</code
+                        >
+                        <span
+                          >{selectedNode.loopData.mode === 'count'
+                            ? 'Current iteration number (0, 1, 2...)'
+                            : 'Current element content'}</span
+                        >
                       </div>
                       <div class="var-item">
-                        <code>{"{{index}}"}</code>
+                        <code>{'{{index}}'}</code>
                         <span>Numeric iteration index (0-indexed)</span>
                       </div>
                       <div class="var-item">
-                        <code>{"{{loop_total}}"}</code>
+                        <code>{'{{loop_total}}'}</code>
                         <span>Total items iterated in this run</span>
                       </div>
                     </div>
@@ -7067,9 +7561,15 @@
                     </div>
                     {#if selectedNode.lastRun.logs && selectedNode.lastRun.logs.length > 0}
                       <div class="console-head-row" style="margin-top: 10px;">
-                        <span class="console-head">Iteration Trace ({selectedNode.lastRun.logs.length}):</span>
+                        <span class="console-head"
+                          >Iteration Trace ({selectedNode.lastRun.logs.length}):</span
+                        >
                       </div>
-                      <pre class="console-logs" style="max-height: 160px; overflow-y: auto;">{selectedNode.lastRun.logs.join('\n')}</pre>
+                      <pre
+                        class="console-logs"
+                        style="max-height: 160px; overflow-y: auto;">{selectedNode.lastRun.logs.join(
+                          '\n'
+                        )}</pre>
                     {/if}
                     {#if selectedNode.lastRun.responseText}
                       <div class="console-head-row" style="margin-top: 10px;">
@@ -7159,6 +7659,35 @@
                       <option value="wait-all">Wait for All Branches (Solid Join)</option>
                       <option value="first-complete">First Complete (Race)</option>
                     </select>
+                  </div>
+                  <div class="field-row">
+                    <label class="field-label" for="merge-payload-mode">Payload Merge Mode:</label>
+                    <select
+                      id="merge-payload-mode"
+                      class="side-method-select"
+                      bind:value={selectedNode.mergeData.payloadMode}
+                      on:change={notifyChange}
+                    >
+                      <option value="pass-active">Pass Active Branch (XOR / Post-Router)</option>
+                      <option value="combine">Combine Objects (Flat Merge)</option>
+                      <option value="append">Append Arrays (Concatenate)</option>
+                      <option value="structured"
+                        >Structured Grouping ({'{'} results: ... {'}'})</option
+                      >
+                    </select>
+                    <div class="merge-help-text">
+                      {#if (selectedNode.mergeData.payloadMode || 'pass-active') === 'pass-active'}
+                        Forwards the winning active branch payload directly on root (ideal after
+                        routers).
+                      {:else if selectedNode.mergeData.payloadMode === 'combine'}
+                        Shallow-merges properties from all active branches into a single root
+                        object.
+                      {:else if selectedNode.mergeData.payloadMode === 'append'}
+                        Flattens and concatenates arrays/lists from all branches into a single list.
+                      {:else}
+                        Wraps branch outputs by port under a formal results object.
+                      {/if}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -8064,8 +8593,14 @@
     height: 48px;
     border-radius: 24px;
     border-color: #10b981;
-    background: radial-gradient(circle at 35% 35%, rgba(16, 185, 129, 0.24), var(--theme-bg-card, #202022));
-    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+    background: radial-gradient(
+      circle at 35% 35%,
+      rgba(16, 185, 129, 0.24),
+      var(--theme-bg-card, #202022)
+    );
+    box-shadow:
+      0 4px 14px rgba(16, 185, 129, 0.25),
+      inset 0 1px 1px rgba(255, 255, 255, 0.2);
   }
 
   /* Merge Compact Node: Purple Join (150x60) */
@@ -8074,8 +8609,14 @@
     height: 60px;
     border-radius: 12px;
     border-color: #8b5cf6;
-    background: radial-gradient(circle at 35% 35%, rgba(139, 92, 246, 0.24), var(--theme-bg-card, #202022));
-    box-shadow: 0 4px 14px rgba(139, 92, 246, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+    background: radial-gradient(
+      circle at 35% 35%,
+      rgba(139, 92, 246, 0.24),
+      var(--theme-bg-card, #202022)
+    );
+    box-shadow:
+      0 4px 14px rgba(139, 92, 246, 0.25),
+      inset 0 1px 1px rgba(255, 255, 255, 0.2);
   }
 
   /* Transform / JSON Mapper Compact Node: Cyan Box (160x60) */
@@ -8084,8 +8625,14 @@
     height: 60px;
     border-radius: 12px;
     border-color: #06b6d4;
-    background: radial-gradient(circle at 35% 35%, rgba(6, 182, 212, 0.22), var(--theme-bg-card, #202022));
-    box-shadow: 0 4px 14px rgba(6, 182, 212, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+    background: radial-gradient(
+      circle at 35% 35%,
+      rgba(6, 182, 212, 0.22),
+      var(--theme-bg-card, #202022)
+    );
+    box-shadow:
+      0 4px 14px rgba(6, 182, 212, 0.25),
+      inset 0 1px 1px rgba(255, 255, 255, 0.2);
   }
 
   /* Router Node: Geometric Diamond / Losango Switch (130x130) */
@@ -8117,7 +8664,9 @@
   }
   .router-diamond-svg polygon {
     filter: drop-shadow(0 4px 16px rgba(245, 158, 11, 0.25));
-    transition: stroke 0.15s ease, filter 0.15s ease;
+    transition:
+      stroke 0.15s ease,
+      filter 0.15s ease;
   }
   .flow-node-router:hover .router-diamond-svg polygon,
   .flow-node-router.is-selected .router-diamond-svg polygon {
@@ -8143,8 +8692,14 @@
     height: 48px;
     border-radius: 24px;
     border-color: #6366f1;
-    background: radial-gradient(circle at 35% 35%, rgba(99, 102, 241, 0.24), var(--theme-bg-card, #202022));
-    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+    background: radial-gradient(
+      circle at 35% 35%,
+      rgba(99, 102, 241, 0.24),
+      var(--theme-bg-card, #202022)
+    );
+    box-shadow:
+      0 4px 14px rgba(99, 102, 241, 0.25),
+      inset 0 1px 1px rgba(255, 255, 255, 0.2);
   }
 
   /* Anchor floating buttons to diamond's left edges (X on top-left, Switch on bottom-left, Input at center-left) */
@@ -8862,7 +9417,9 @@
     cursor: crosshair;
     z-index: 6;
     transform: translate(-50%, -50%) !important;
-    transition: transform 0.15s, box-shadow 0.15s;
+    transition:
+      transform 0.15s,
+      box-shadow 0.15s;
   }
   .node-port:hover {
     transform: translate(-50%, -50%) scale(1.35) !important;
@@ -8898,7 +9455,9 @@
     right: auto;
     bottom: auto;
     transform: translate(-50%, -50%);
-    transition: transform 0.15s, box-shadow 0.15s;
+    transition:
+      transform 0.15s,
+      box-shadow 0.15s;
   }
   .port-multi:hover {
     transform: translate(-50%, -50%) scale(1.35);
@@ -8971,7 +9530,9 @@
     right: auto;
     bottom: auto;
     transform: translate(-50%, -50%);
-    transition: transform 0.15s, box-shadow 0.15s;
+    transition:
+      transform 0.15s,
+      box-shadow 0.15s;
 
     &:hover {
       transform: translate(-50%, -50%) scale(1.35);
@@ -9707,7 +10268,9 @@
     text-align: left;
     cursor: pointer;
     width: 100%;
-    transition: background 0.1s ease, color 0.1s ease;
+    transition:
+      background 0.1s ease,
+      color 0.1s ease;
 
     &:hover,
     &.is-highlighted {
@@ -11810,7 +12373,9 @@
     position: absolute;
     pointer-events: none;
     z-index: 1000;
-    transition: left 0.05s linear, top 0.05s linear;
+    transition:
+      left 0.05s linear,
+      top 0.05s linear;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -11827,5 +12392,33 @@
     margin-left: 12px;
     margin-top: -6px;
     letter-spacing: 0.3px;
+  }
+
+  /* Merge Inspector Styles */
+  .merge-card {
+    background: var(--theme-bg-card, #252526);
+    border: 1px solid var(--theme-b-subtle, #3e3e42);
+    border-radius: 6px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .merge-badge {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--theme-t-bright, #0f172a);
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.08));
+  }
+  .merge-help-text {
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--theme-t-muted, #94a3b8);
+    background: var(--theme-bg-panel, rgba(0, 0, 0, 0.04));
+    border: 1px solid var(--theme-b-subtle, rgba(255, 255, 255, 0.06));
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-top: 4px;
   }
 </style>

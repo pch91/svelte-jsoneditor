@@ -42,7 +42,10 @@ export class ExtensionBridge {
    * Checks if the extension is currently installed and responding in the browser.
    */
   public static async checkInstalled(): Promise<ExtensionStatus> {
-    const win = typeof window !== 'undefined' ? (window as any) : null
+    const win =
+      typeof window !== 'undefined'
+        ? (window as unknown as { browser?: ExtRuntimeApi; chrome?: ExtRuntimeApi })
+        : null
     const extApi: ExtRuntimeApi | null = win?.browser || win?.chrome || null
 
     if (!extApi?.runtime?.sendMessage) {
@@ -55,20 +58,17 @@ export class ExtensionBridge {
       }, 600)
 
       try {
-        extApi.runtime!.sendMessage(
-          { action: 'PING_EXTENSION' },
-          (response) => {
-            clearTimeout(timeout)
-            if (response && response.success) {
-              resolve({
-                isInstalled: true,
-                version: response.version
-              })
-            } else {
-              resolve({ isInstalled: false })
-            }
+        extApi.runtime!.sendMessage({ action: 'PING_EXTENSION' }, (response) => {
+          clearTimeout(timeout)
+          if (response && response.success) {
+            resolve({
+              isInstalled: true,
+              version: response.version
+            })
+          } else {
+            resolve({ isInstalled: false })
           }
-        )
+        })
       } catch {
         clearTimeout(timeout)
         resolve({ isInstalled: false })
@@ -84,7 +84,10 @@ export class ExtensionBridge {
     name: string,
     folderId?: number | string
   ): Promise<boolean> {
-    const win = typeof window !== 'undefined' ? (window as any) : null
+    const win =
+      typeof window !== 'undefined'
+        ? (window as unknown as { browser?: ExtRuntimeApi; chrome?: ExtRuntimeApi })
+        : null
     const extApi: ExtRuntimeApi | null = win?.browser || win?.chrome || null
 
     if (!extApi?.runtime?.sendMessage) return false

@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import {
-  CARD_WIDTH,
-  CARD_HEIGHT,
   CIRCLE_SIZE,
   getNodeWidth,
   getNodeHeight,
@@ -181,7 +179,13 @@ describe('flowGeometry', () => {
     expect(loopIn).toEqual({ x: 200, y: 224, direction: 'left' })
 
     // Transform (160x60)
-    const transformNode: FlowNode = { id: 't1', type: 'transform', title: 'Transform', x: 50, y: 50 }
+    const transformNode: FlowNode = {
+      id: 't1',
+      type: 'transform',
+      title: 'Transform',
+      x: 50,
+      y: 50
+    }
     const transformOut = getOutputPortPoint(transformNode, 'out')
     const transformIn = getInputPortPoint(transformNode)
     expect(transformOut).toEqual({ x: 210, y: 80, direction: 'right' })
@@ -195,4 +199,3 @@ describe('flowGeometry', () => {
     expect(mergeTimeout).toEqual({ x: 75, y: 60, direction: 'bottom' })
   })
 })
-
