@@ -32,8 +32,10 @@
     getBezierMidpoint,
     getNodeHeight,
     getNodeWidth,
+    isCompactNode,
     CARD_WIDTH,
-    CIRCLE_SIZE
+    CIRCLE_SIZE,
+    ROUTER_DIAMOND_POINTS
   } from '../flowGeometry.js'
   import { FLOW_NODE_REGISTRY, variantsOf, categoryOf } from '../flowNodeRegistry.js'
   import { applyMappings, flattenJsonPaths } from '../flowMapper.js'
@@ -1019,8 +1021,57 @@
     }
   }
 
+  // Canvas panning state (drag empty space to pan diagram)
+  let isPanning = false
+  let panHasMoved = false
+
+  function onCanvasPointerDown(e: PointerEvent | MouseEvent) {
+    if (e.button !== 0 && e.button !== 1) return
+    const target = e.target as HTMLElement
+    // Ignore clicks on nodes, ports, connections, floating zoom, remote cursors or interactive inputs
+    if (
+      target.closest(
+        '.flow-node, .connection-group, .flow-floating-zoom, .remote-collaborator-cursor, .port-tooltip, button, input, select, textarea'
+      )
+    ) {
+      return
+    }
+
+    if (!canvasEl) return
+    isPanning = true
+    panHasMoved = false
+    const startX = e.clientX
+    const startY = e.clientY
+    const startScrollLeft = canvasEl.scrollLeft
+    const startScrollTop = canvasEl.scrollTop
+
+    const onPointerMove = (ev: PointerEvent | MouseEvent) => {
+      if (!isPanning || !canvasEl) return
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        panHasMoved = true
+      }
+      canvasEl.scrollLeft = startScrollLeft - dx
+      canvasEl.scrollTop = startScrollTop - dy
+    }
+
+    const onPointerUp = () => {
+      isPanning = false
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('mousemove', onPointerMove)
+      window.removeEventListener('mouseup', onPointerUp)
+    }
+
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('mousemove', onPointerMove)
+    window.addEventListener('mouseup', onPointerUp)
+  }
+
   function onCanvasClick(e: MouseEvent) {
-    if (newlyConnectedConnId) return
+    if (newlyConnectedConnId || panHasMoved) return
     const target = e.target as HTMLElement
     if (
       target === canvasEl ||
@@ -3505,6 +3556,16 @@
     return getInputPortPoint(node, portId)
   }
 
+  function getRelInputPort(node: FlowNode, portId?: string): { relX: number; relY: number } {
+    const pt = getInputPortPoint(node, portId)
+    return { relX: pt.x - node.x, relY: pt.y - node.y }
+  }
+
+  function getRelOutputPort(node: FlowNode, portId?: string): { relX: number; relY: number } {
+    const pt = getOutputPortPoint(node, portId)
+    return { relX: pt.x - node.x, relY: pt.y - node.y }
+  }
+
   function getBezierPath(
     x1OrP1: number | { x: number; y: number; direction?: 'top' | 'right' | 'bottom' | 'left' },
     y1OrP2: number | { x: number; y: number; direction?: 'top' | 'right' | 'bottom' | 'left' },
@@ -3569,7 +3630,7 @@
         type="button"
         class="flow-btn flow-btn-draggable"
         draggable="true"
-        title="REST Block: HTTP Request (GET, POST, etc.)"
+        title="REST Block: The Action Heart (HTTP Request: GET, POST, PUT, DELETE)"
         on:click={() => addNode('rest')}
         on:dragstart={(e) => onNewBlockDragStart(e, 'rest')}
         on:dragend={onNewBlockDragEnd}
@@ -3581,15 +3642,29 @@
 
       <button
         type="button"
+        class="flow-btn flow-btn-draggable flow-btn-transform"
+        draggable="true"
+        title="Data Transform: JSON Schema Mapper or Merge Join (switch type via ↻)"
+        on:click={() => addNode('transform')}
+        on:dragstart={(e) => onNewBlockDragStart(e, 'transform')}
+        on:dragend={onNewBlockDragEnd}
+      >
+        <span class="btn-icon">🔄</span>
+        <span>＋ Data Transform</span>
+        <span class="btn-drag-handle" title="Drag to drop into flow">⋮⋮</span>
+      </button>
+
+      <button
+        type="button"
         class="flow-btn flow-btn-draggable flow-btn-js"
         draggable="true"
-        title="Logic & Code Block: JavaScript or JSON Schema Mapper (switch type directly on the node via ↻)"
+        title="JS Code: Execution sandbox and custom computational logic"
         on:click={() => addNode('js')}
         on:dragstart={(e) => onNewBlockDragStart(e, 'js')}
         on:dragend={onNewBlockDragEnd}
       >
         <span class="btn-icon">⚡</span>
-        <span>＋ Logic & Code</span>
+        <span>＋ JS Code</span>
         <span class="btn-drag-handle" title="Drag to drop into flow">⋮⋮</span>
       </button>
 
@@ -3597,7 +3672,7 @@
         type="button"
         class="flow-btn flow-btn-draggable flow-btn-router"
         draggable="true"
-        title="Flow Control Block: Gateway Router, Loop, Delay or Merge (switch type directly on the node via ↻)"
+        title="Flow Control: Gateway Switch Router, Loop Iterator or Delay (switch type via ↻)"
         on:click={() => addNode('router')}
         on:dragstart={(e) => onNewBlockDragStart(e, 'router')}
         on:dragend={onNewBlockDragEnd}
@@ -3611,7 +3686,7 @@
         type="button"
         class="flow-btn flow-btn-draggable flow-btn-event"
         draggable="true"
-        title="Event / BPMN Block: Start, Terminate, Jump or Receiver (change type directly on the node via ↻)"
+        title="Event / BPMN Block: Start, Terminate, Jump or Receiver (change type via ↻)"
         on:click={() => addNode('event-throw')}
         on:dragstart={(e) => onNewBlockDragStart(e, 'event-throw')}
         on:dragend={onNewBlockDragEnd}
@@ -3820,7 +3895,10 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="flow-canvas"
+        class:is-panning={isPanning}
         bind:this={canvasEl}
+        on:pointerdown={onCanvasPointerDown}
+        on:mousedown={onCanvasPointerDown}
         on:click={onCanvasClick}
         on:dragover={onCanvasDragOver}
         on:drop={onCanvasDrop}
@@ -3970,6 +4048,7 @@
                 {#if node.type !== 'start'}
                   <div
                     class="node-port port-input circle-port-input"
+                    style="left: {getRelInputPort(node).relX}px; top: {getRelInputPort(node).relY}px;"
                     title="Drop connection here"
                     on:mouseup|stopPropagation={() => endConnect(node.id)}
                   ></div>
@@ -4000,6 +4079,7 @@
                 {#if node.type !== 'terminate'}
                   <div
                     class="node-port port-output circle-port-output"
+                    style="left: {getRelOutputPort(node).relX}px; top: {getRelOutputPort(node).relY}px;"
                     title="Click and drag to connect to another block"
                     on:mousedown={(e) => startConnect(e, node.id)}
                   ></div>
@@ -4105,11 +4185,205 @@
                   </div>
                 {/if}
               </div>
-            {:else}
-              <!-- Standard rectangular card node (rest / js) -->
+            {:else if isCompactNode(node.type)}
+              <!-- Compact Specialized Nodes (delay, merge, router, loop) following Event Pattern -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
-                class="flow-node flow-node-{node.type}"
+                class="flow-node flow-node-compact flow-node-{node.type}"
+                class:is-selected={node.id === selectedNodeId}
+                class:is-dragging={node.id === draggingNodeId}
+                class:has-switcher-open={activeCardSwitcherId === node.id}
+                class:status-idle={node.status === 'idle'}
+                class:status-waiting={node.status === 'waiting'}
+                class:status-running={node.status === 'running'}
+                class:status-success={node.status === 'success'}
+                class:status-error={node.status === 'error'}
+                class:status-skipped={node.status === 'skipped'}
+                style="left: {node.x}px; top: {node.y}px;"
+                on:pointerdown={(e) => onNodePointerDown(e, node)}
+                on:mousedown={(e) => onNodePointerDown(e, node)}
+                on:mouseup={(e) => {
+                  if (connectingFromId && connectingFromId !== node.id) {
+                    e.stopPropagation()
+                    endConnect(node.id)
+                  }
+                }}
+                on:click={() => {
+                  if (!newlyConnectedConnId) selectedConnection = null
+                  selectNode(node)
+                }}
+              >
+                <!-- Floating Switch Type Button (top-left ↻) -->
+                <button
+                  type="button"
+                  class="card-switch-btn compact-switch-btn"
+                  class:active={activeCardSwitcherId === node.id}
+                  title="Change block type"
+                  aria-label="Change block type"
+                  on:click|stopPropagation={() => toggleCardSwitcher(node.id)}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="11"
+                    height="11"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
+                    <path d="M21 3v5h-5" />
+                  </svg>
+                </button>
+
+                {#if activeCardSwitcherId === node.id}
+                  <NodeTypeSwitcher
+                    {node}
+                    alignLeft={node.x < 150}
+                    alignBottom={node.y < 60}
+                    on:select={(e) => switchNodeType(node, e.detail)}
+                  />
+                {/if}
+
+                <!-- Action Controls: Delete button on hover/selection (event pattern) -->
+                <button
+                  type="button"
+                  class="compact-delete-btn"
+                  title="Delete block"
+                  aria-label="Delete block"
+                  on:click|stopPropagation={() => deleteNode(node.id)}>×</button
+                >
+
+                <!-- Input Port(s) -->
+                {#if node.type === 'merge' && node.mergeData?.inputs && node.mergeData.inputs.length > 0}
+                  <div class="node-inputs-rack compact-inputs-rack">
+                    {#each node.mergeData.inputs as inp (inp.id)}
+                      {@const inpPt = getInputPortPoint(node, inp.id)}
+                      {@const relY = inpPt.y - node.y}
+                      <div
+                        class="node-port port-input port-multi-input"
+                        style="top: {relY}px; left: 0px;"
+                        title="{inp.label || inp.id} (Input)"
+                        on:mouseup|stopPropagation={() => endConnect(node.id, inp.id)}
+                      >
+                        <span class="port-tooltip input-tip">{inp.label || inp.id}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <div
+                    class="node-port port-input compact-port-input"
+                    style="left: {getRelInputPort(node).relX}px; top: {getRelInputPort(node).relY}px;"
+                    title="Drop connection here"
+                    on:mouseup|stopPropagation={() => endConnect(node.id)}
+                  ></div>
+                {/if}
+
+                <!-- Compact Inner Content -->
+                <div class="compact-body">
+                  {#if node.status === 'running'}
+                    <span class="flow-spinner"></span>
+                  {:else if node.type === 'delay'}
+                    <span class="compact-icon delay-icon">⏳</span>
+                    <div class="node-delay-preview-compact compact-details">
+                      <div class="node-compact-summary">
+                        <span class="compact-main-val" title={node.title}>{node.title || 'Delay'}</span>
+                      </div>
+                      <span class="compact-sub-val">{node.delayData?.delayMs || 1000}ms · {node.delayData?.mode === 'throttle' ? 'Throttle' : 'Delay'}</span>
+                    </div>
+                  {:else if node.type === 'merge'}
+                    <span class="compact-icon merge-icon">🔗</span>
+                    <div class="node-merge-preview-compact compact-details">
+                      <div class="node-compact-summary">
+                        <span class="compact-main-val" title={node.title}>{node.title || 'Wait All'}</span>
+                      </div>
+                      <span class="compact-sub-val">{node.mergeData?.strategy === 'wait-all' ? 'Wait All' : 'First'} ({node.mergeData?.inputs?.length || 2} in)</span>
+                    </div>
+                  {:else if node.type === 'transform'}
+                    <span class="compact-icon transform-icon">🔄</span>
+                    <div class="node-transform-preview-compact compact-details">
+                      <div class="node-compact-summary">
+                        <span class="compact-main-val" title={node.title}>{node.title || 'JSON Mapper'}</span>
+                        {#if node.lastRun?.responseText}
+                          <button
+                            type="button"
+                            class="node-quick-btn compact-editor-btn"
+                            title="Open mapped output in JSON Editor tab"
+                            on:click|stopPropagation={() => onOpenInEditor?.(node.lastRun?.responseText || '', `${node.title || 'Transform'} Output`)}
+                          >↗ Editor</button>
+                        {/if}
+                      </div>
+                      <span class="compact-sub-val">{node.transformData?.mappings?.length ? `${node.transformData.mappings.length} fields` : 'payload ➔ out'}</span>
+                    </div>
+                  {:else if node.type === 'router'}
+                    <div class="router-diamond-wrapper">
+                      <svg class="router-diamond-svg" viewBox="0 0 130 130" width="130" height="130">
+                        <defs>
+                          <radialGradient id="router-grad-{node.id}" cx="35%" cy="35%" r="65%">
+                            <stop offset="0%" stop-color="rgba(245, 158, 11, 0.25)" />
+                            <stop offset="100%" stop-color="var(--theme-bg-card, #202022)" />
+                          </radialGradient>
+                        </defs>
+                        <polygon
+                          points={ROUTER_DIAMOND_POINTS}
+                          fill="url(#router-grad-{node.id})"
+                          stroke="#f59e0b"
+                          stroke-width="1.5"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                      <div class="router-diamond-core node-router-preview-compact compact-details">
+                        <span class="compact-icon router-icon">🔀</span>
+                        <div class="node-compact-summary">
+                          <span class="compact-main-val" title={node.title}>{node.title || 'Switch'}</span>
+                        </div>
+                        <span class="compact-sub-val">{node.routerData?.mode === 'all-matches' ? 'All' : 'First'} ({node.routerData?.rules?.length || 2})</span>
+                      </div>
+                    </div>
+                  {:else if node.type === 'loop'}
+                    <span class="compact-icon loop-icon">🔁</span>
+                    <div class="node-loop-preview-compact compact-details">
+                      <div class="node-compact-summary">
+                        <span class="compact-main-val" title={node.title}>{node.title || 'Loop'}</span>
+                      </div>
+                      <span class="compact-sub-val">{node.loopData?.mode === 'count' ? `${node.loopData?.repeatCount || 5}x` : (node.loopData?.arrayPath || 'items')} · LOOP</span>
+                    </div>
+                  {/if}
+                </div>
+
+                <!-- Output Port(s) -->
+                {#if isMultiPortNode(node)}
+                  <div class="node-ports-rack compact-ports-rack">
+                    {#each getNodePorts(node) as port (port.id)}
+                      {@const pt = getOutputPortPoint(node, port.id)}
+                      {@const relX = pt.x - node.x}
+                      {@const relY = pt.y - node.y}
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <div
+                        class="node-port port-output port-multi slot-{port.slot}"
+                        style="left: {relX}px; top: {relY}px; {port.color ? `border-color: ${port.color};` : ''}"
+                        title="{port.label} ({port.slot.toUpperCase()})"
+                        on:mousedown={(e) => startConnect(e, node.id, port.id)}
+                      >
+                        <span class="port-tooltip slot-tip-{port.slot}">{port.label}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <div
+                    class="node-port port-output compact-port-output"
+                    style="left: {getRelOutputPort(node).relX}px; top: {getRelOutputPort(node).relY}px;"
+                    title="Click and drag to connect to another block"
+                    on:mousedown={(e) => startConnect(e, node.id)}
+                  ></div>
+                {/if}
+              </div>
+            {:else}
+              <!-- Standard Action Card Nodes (rest / js / transform) -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="flow-node flow-node-action flow-node-{node.type}"
                 class:is-selected={node.id === selectedNodeId}
                 class:is-dragging={node.id === draggingNodeId}
                 class:has-switcher-open={activeCardSwitcherId === node.id}
@@ -4130,68 +4404,60 @@
                 }}
               >
                 <!-- Switch Type Button for Cards (top-left ↻) -->
-                {#if node.type !== 'rest'}
-                  <button
-                    type="button"
-                    class="card-switch-btn"
-                    class:active={activeCardSwitcherId === node.id}
-                    title="Change block type"
-                    aria-label="Change block type"
-                    on:click|stopPropagation={() => toggleCardSwitcher(node.id)}
+                <button
+                  type="button"
+                  class="card-switch-btn"
+                  class:active={activeCardSwitcherId === node.id}
+                  title="Change block type"
+                  aria-label="Change block type"
+                  on:click|stopPropagation={() => toggleCardSwitcher(node.id)}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="11"
+                    height="11"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
                   >
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="11"
-                      height="11"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
-                      <path d="M21 3v5h-5" />
-                    </svg>
-                  </button>
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
+                    <path d="M21 3v5h-5" />
+                  </svg>
+                </button>
 
-                  {#if activeCardSwitcherId === node.id}
-                    <NodeTypeSwitcher
-                      {node}
-                      alignLeft={node.x < 150}
-                      alignBottom={node.y < 60}
-                      on:select={(e) => switchNodeType(node, e.detail)}
-                    />
-                  {/if}
+                {#if activeCardSwitcherId === node.id}
+                  <NodeTypeSwitcher
+                    {node}
+                    alignLeft={node.x < 150}
+                    alignBottom={node.y < 60}
+                    on:select={(e) => switchNodeType(node, e.detail)}
+                  />
                 {/if}
 
-                <!-- Input Port(s) -->
-                {#if node.type === 'merge' && node.mergeData?.inputs && node.mergeData.inputs.length > 0}
-                  <div class="node-inputs-rack">
-                    {#each node.mergeData.inputs as inp (inp.id)}
-                      {@const inpPt = getInputPortPoint(node, inp.id)}
-                      {@const relY = inpPt.y - node.y}
-                      <div
-                        class="node-port port-input port-multi-input"
-                        style="top: {relY}px; left: 0;"
-                        title="{inp.label} (Input)"
-                        on:mouseup|stopPropagation={() => endConnect(node.id, inp.id)}
-                      >
-                        <span class="port-tooltip input-tip">{inp.label}</span>
-                      </div>
-                    {/each}
-                  </div>
-                {:else}
-                  <div
-                    class="node-port port-input"
-                    title="Drop connection here to connect"
-                    on:mouseup|stopPropagation={() => endConnect(node.id)}
-                  ></div>
-                {/if}
+                <!-- Input Port -->
+                <div
+                  class="node-port port-input"
+                  style="left: {getRelInputPort(node).relX}px; top: {getRelInputPort(node).relY}px;"
+                  title="Drop connection here to connect"
+                  on:mouseup|stopPropagation={() => endConnect(node.id)}
+                ></div>
 
-                <!-- Node Header -->
+                <!-- Node Header: Visual Identity Banner -->
                 <div class="node-header">
                   <div class="node-title-wrap">
-                    <span class="node-type-icon">{FLOW_NODE_REGISTRY[node.type]?.icon || '📦'}</span>
+                    {#if node.type === 'rest' && node.restData}
+                      <span class="method-tag method-{node.restData.method.toLowerCase()}">
+                        {node.restData.method}
+                      </span>
+                    {:else if node.type === 'js'}
+                      <span class="lang-tag lang-js">⚡ JS</span>
+                    {:else if node.type === 'transform'}
+                      <span class="lang-tag lang-transform">🔄 MAP</span>
+                    {:else}
+                      <span class="node-type-icon">{FLOW_NODE_REGISTRY[node.type]?.icon || '📦'}</span>
+                    {/if}
                     <input
                       class="node-title-input"
                       type="text"
@@ -4208,14 +4474,14 @@
                     >
                     <button
                       type="button"
-                      class="node-tool-btn"
+                      class="node-tool-btn close-btn"
                       title="Delete block"
                       on:click|stopPropagation={() => deleteNode(node.id)}>×</button
                     >
                   </div>
                 </div>
 
-                <!-- Node Body / Summary Preview (Slim 1-2 lines matching JS block) -->
+                <!-- Node Body / Summary Preview -->
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
@@ -4229,9 +4495,6 @@
                 >
                   {#if node.type === 'rest' && node.restData}
                     <div class="node-rest-preview">
-                      <span class="method-tag method-{node.restData.method.toLowerCase()}">
-                        {node.restData.method}
-                      </span>
                       <span class="url-text" title={node.restData.url}>
                         {node.restData.url || 'https://...'}
                       </span>
@@ -4241,19 +4504,6 @@
                         🎯 {node.restData.captures.filter((c) => c.enabled).length} variable(s) captured
                       </div>
                     {/if}
-                  {:else if node.type === 'router' && node.routerData}
-                    <div class="node-router-preview-compact">
-                      <div class="node-compact-summary" title={node.routerData.rules.map((r) => r.label).join(', ')}>
-                        <span class="summary-label">routes:</span>
-                        <span class="summary-val">
-                          {node.routerData.rules.map((r) => r.statusPattern || r.path || 'otherwise').slice(0, 3).join(', ')}{node.routerData.rules.length > 3 ? '...' : ''}
-                        </span>
-                      </div>
-                      <div class="node-sub-meta">
-                        <span class="compact-chip">{node.routerData.mode === 'first-match' ? 'First Match' : 'All Matches'}</span>
-                        <span>· {node.routerData.rules.length} rules</span>
-                      </div>
-                    </div>
                   {:else if node.type === 'js' && node.jsData}
                     <div class="node-js-preview">
                       <code>{node.jsData.code.split('\n').filter(Boolean)[0] || '// JS Code'}</code>
@@ -4268,47 +4518,6 @@
                       <div class="node-compact-summary">
                         <span class="summary-label">map:</span>
                         <span class="summary-val">{node.transformData?.mappings?.length ? `${node.transformData.mappings.length} fields mapped` : 'payload ➔ output'}</span>
-                      </div>
-                      <div class="node-sub-meta">
-                        <span class="compact-chip">JSON Mapper</span>
-                        <span>· Visual 2-Tree</span>
-                      </div>
-                    </div>
-                  {:else if node.type === 'loop'}
-                    <div class="node-loop-preview-compact">
-                      <div class="node-compact-summary">
-                        <span class="summary-label">{node.loopData?.mode === 'count' ? 'repeat:' : 'array:'}</span>
-                        <span class="summary-val">
-                          {node.loopData?.mode === 'count'
-                            ? `${node.loopData?.repeatCount || 5}x [ ${node.loopData?.indexVar || 'index'} ]`
-                            : `${node.loopData?.arrayPath || 'items'} [ ${node.loopData?.itemVar || 'item'} ]`}
-                        </span>
-                      </div>
-                      <div class="node-sub-meta">
-                        <span class="compact-chip">Max {node.loopData?.maxIterations || 1000}</span>
-                        <span>· {node.loopData?.mode === 'count' ? 'contador' : 'for-each'}</span>
-                      </div>
-                    </div>
-                  {:else if node.type === 'delay'}
-                    <div class="node-delay-preview-compact">
-                      <div class="node-compact-summary">
-                        <span class="summary-label">pause:</span>
-                        <span class="summary-val">{node.delayData?.delayMs || 1000}ms {node.delayData?.mode === 'throttle' ? '(rate limit)' : 'delay'}</span>
-                      </div>
-                      <div class="node-sub-meta">
-                        <span class="compact-chip">{node.delayData?.mode === 'throttle' ? 'Throttle' : 'Fixed Delay'}</span>
-                        <span>· Queue buffer</span>
-                      </div>
-                    </div>
-                  {:else if node.type === 'merge'}
-                    <div class="node-merge-preview-compact">
-                      <div class="node-compact-summary">
-                        <span class="summary-label">sync:</span>
-                        <span class="summary-val">{node.mergeData?.strategy === 'wait-all' ? 'Wait All Branches' : 'First Complete'}</span>
-                      </div>
-                      <div class="node-sub-meta">
-                        <span class="compact-chip">{node.mergeData?.inputs?.length || 2} entradas</span>
-                        <span>· Barreira join</span>
                       </div>
                     </div>
                   {/if}
@@ -4330,11 +4539,6 @@
                     >
                       <span class="status-code">{node.lastRun.status}</span>
                       <span class="duration">{node.lastRun.durationMs}ms</span>
-                      {#if node.lastRun.outputSummary}
-                        <span class="summary-text" title={node.lastRun.outputSummary}>
-                          {node.lastRun.outputSummary}
-                        </span>
-                      {/if}
                     </div>
                     {#if node.lastRun.responseText && onOpenInEditor}
                       <button
@@ -4372,6 +4576,7 @@
                 {:else}
                   <div
                     class="node-port port-output"
+                    style="left: {getRelOutputPort(node).relX}px; top: {getRelOutputPort(node).relY}px;"
                     title="Click and drag to connect to another block"
                     on:mousedown={(e) => startConnect(e, node.id)}
                   ></div>
@@ -7521,6 +7726,11 @@
     overflow: auto;
     min-height: 0;
     user-select: none;
+    cursor: grab;
+  }
+  .flow-canvas.is-panning,
+  .flow-canvas.is-panning * {
+    cursor: grabbing !important;
   }
   .flow-zoom-container {
     width: 4000px;
@@ -7758,8 +7968,8 @@
   /* HTML Nodes */
   .flow-node {
     position: absolute;
-    width: 280px;
-    height: 140px;
+    width: 270px;
+    height: 124px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
@@ -7797,26 +8007,354 @@
       0 0 0 2px rgba(56, 189, 248, 0.35),
       var(--theme-shadow-md, 0 6px 16px rgba(0, 0, 0, 0.5));
   }
-  .flow-node-js {
-    border-left: 3px solid #a855f7;
-  }
-  .flow-node-transform {
-    border-left: 3px solid #06b6d4;
+  .flow-node-action {
+    width: 270px;
+    height: 124px;
+    border-radius: 6px;
   }
   .flow-node-rest {
+    width: 270px;
+    height: 124px;
     border-left: 3px solid var(--theme-ac, #3883fa);
   }
-  .flow-node-router {
-    border-left: 3px solid #f59e0b;
+  .flow-node-js {
+    width: 270px;
+    height: 124px;
+    border-left: 3px solid #a855f7;
   }
-  .flow-node-loop {
-    border-left: 3px solid #6366f1;
+
+  /* Compact Specialized Nodes (Delay, Merge, Transform, Router, Loop) */
+  .flow-node-compact {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 12px;
+    background: var(--theme-bg-card, #252526);
+    border: 1.5px solid var(--theme-b-main, #3e3e42);
+    box-shadow: var(--theme-shadow-md, 0 4px 12px rgba(0, 0, 0, 0.35));
+    z-index: 2;
+    user-select: none;
+    cursor: grab;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s,
+      transform 0.15s ease;
   }
+  .flow-node-compact:hover {
+    transform: scale(1.02);
+  }
+  .flow-node-compact.is-selected {
+    border-color: var(--theme-ac, #3883fa) !important;
+    box-shadow:
+      0 0 0 2px rgba(56, 189, 248, 0.4),
+      0 6px 18px rgba(0, 0, 0, 0.5) !important;
+  }
+  .flow-node-compact.is-dragging {
+    opacity: 0.6;
+    cursor: grabbing !important;
+    transform: scale(1.04);
+    z-index: 100;
+  }
+
+  /* Delay Compact Node: Emerald Pill (140x48) */
   .flow-node-delay {
-    border-left: 3px solid #10b981;
+    width: 140px;
+    height: 48px;
+    border-radius: 24px;
+    border-color: #10b981;
+    background: radial-gradient(circle at 35% 35%, rgba(16, 185, 129, 0.24), var(--theme-bg-card, #202022));
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2);
   }
+
+  /* Merge Compact Node: Purple Join (150x60) */
   .flow-node-merge {
-    border-left: 3px solid #8b5cf6;
+    width: 150px;
+    height: 60px;
+    border-radius: 12px;
+    border-color: #8b5cf6;
+    background: radial-gradient(circle at 35% 35%, rgba(139, 92, 246, 0.24), var(--theme-bg-card, #202022));
+    box-shadow: 0 4px 14px rgba(139, 92, 246, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  }
+
+  /* Transform / JSON Mapper Compact Node: Cyan Box (160x60) */
+  .flow-node-transform {
+    width: 160px;
+    height: 60px;
+    border-radius: 12px;
+    border-color: #06b6d4;
+    background: radial-gradient(circle at 35% 35%, rgba(6, 182, 212, 0.22), var(--theme-bg-card, #202022));
+    box-shadow: 0 4px 14px rgba(6, 182, 212, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  }
+
+  /* Router Node: Geometric Diamond / Losango Switch (130x130) */
+  .flow-node-router {
+    width: 130px;
+    height: 130px;
+    padding: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible;
+  }
+  .router-diamond-wrapper {
+    position: relative;
+    width: 130px;
+    height: 130px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .router-diamond-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 130px;
+    height: 130px;
+    pointer-events: none;
+    overflow: visible;
+  }
+  .router-diamond-svg polygon {
+    filter: drop-shadow(0 4px 16px rgba(245, 158, 11, 0.25));
+    transition: stroke 0.15s ease, filter 0.15s ease;
+  }
+  .flow-node-router:hover .router-diamond-svg polygon,
+  .flow-node-router.is-selected .router-diamond-svg polygon {
+    stroke: #fbbf24;
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 16px rgba(245, 158, 11, 0.5));
+  }
+  .router-diamond-core {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    pointer-events: none;
+    max-width: 82px;
+  }
+
+  /* Loop Compact Node: Indigo Pill (150x48) - Matching Delay Style */
+  .flow-node-loop {
+    width: 150px;
+    height: 48px;
+    border-radius: 24px;
+    border-color: #6366f1;
+    background: radial-gradient(circle at 35% 35%, rgba(99, 102, 241, 0.24), var(--theme-bg-card, #202022));
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  }
+
+  /* Anchor floating buttons to diamond's left edges (X on top-left, Switch on bottom-left, Input at center-left) */
+  .flow-node-router .compact-delete-btn {
+    top: 43px;
+    left: 22px;
+    right: auto;
+    transform: translate(-50%, -50%);
+  }
+  .flow-node-router .compact-delete-btn:hover {
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+  .flow-node-router .compact-switch-btn {
+    top: 87px;
+    left: 22px;
+    right: auto;
+    transform: translate(-50%, -50%);
+  }
+  .flow-node-router .compact-switch-btn:hover,
+  .flow-node-router .compact-switch-btn.active {
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+  .flow-node-router .compact-port-input {
+    left: 0px !important;
+    top: 65px !important;
+    transform: translate(-50%, -50%) !important;
+  }
+
+  /* Compact Ports Rack & Inputs Rack (strictly 1:1 aligned with node coordinates) */
+  .compact-ports-rack,
+  .compact-inputs-rack {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    pointer-events: none;
+  }
+  .compact-ports-rack .port-multi,
+  .compact-inputs-rack .port-multi-input {
+    transform: translate(-50%, -50%) !important;
+  }
+
+  /* Compact Inner Anatomy */
+  .compact-body {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    justify-content: center;
+  }
+  .compact-icon {
+    font-size: 18px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .compact-details {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.15;
+    min-width: 0;
+  }
+  .compact-main-val {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--theme-t-bright, #ffffff);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 86px;
+  }
+  .compact-sub-val {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--theme-t-muted, #94a3b8);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  /* Compact Ports */
+  .compact-port-input {
+    border-color: var(--theme-t-muted, #94a3b8);
+  }
+  .compact-port-output {
+    border-color: var(--theme-ac, #3883fa);
+  }
+
+  /* Floating Switch Button for Compact Nodes (positioned on top-left shoulder, clear of ports) */
+  .compact-switch-btn {
+    position: absolute;
+    top: -8px;
+    left: 14px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--theme-bg-panel, #1e1e1e);
+    border: 1px solid var(--theme-b-main, #444);
+    color: var(--theme-t-sub, #aaa);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+    padding: 0;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    transition: all 0.15s ease;
+
+    &:hover,
+    &.active {
+      background: var(--theme-ac, #3883fa);
+      color: #fff;
+      border-color: var(--theme-ac, #3883fa);
+      transform: scale(1.1);
+      box-shadow: 0 0 8px rgba(56, 131, 250, 0.5);
+    }
+  }
+  .flow-node-compact:hover .compact-switch-btn,
+  .flow-node-compact.is-selected .compact-switch-btn,
+  .flow-node-compact.has-switcher-open .compact-switch-btn {
+    display: flex;
+  }
+
+  /* Floating Delete Button for Compact Nodes (positioned on top-right shoulder, clear of ports) */
+  .compact-delete-btn {
+    position: absolute;
+    top: -8px;
+    right: 14px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--theme-bg-panel, #1e1e1e);
+    border: 1px solid var(--theme-b-main, #444);
+    color: var(--theme-t-sub, #aaa);
+    font-size: 12px;
+    line-height: 1;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+    padding: 0;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    transition: all 0.15s ease;
+
+    &:hover {
+      background: #ef4444;
+      color: #fff;
+      border-color: #ef4444;
+      transform: scale(1.1);
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+    }
+  }
+
+  /* Show floating buttons on hover, selection, or when switcher is open (event pattern) */
+  .flow-node-compact:hover .compact-delete-btn,
+  .flow-node-compact.is-selected .compact-delete-btn,
+  .flow-node-compact.has-switcher-open .compact-delete-btn {
+    display: flex;
+  }
+
+  /* Label Badge beneath compact nodes (event pattern) */
+  .compact-label-badge {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    background: var(--theme-bg-panel, #252526);
+    border: 1px solid var(--theme-b-main, #3e3e42);
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--theme-t-bright, #ffffff);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &.badge-router {
+      top: calc(100% + 18px);
+    }
+  }
+
+  /* Language Badges in Action Headers */
+  .lang-tag {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 0 6px;
+    height: 20px;
+    line-height: 20px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .lang-tag.lang-js {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+  }
+  .lang-tag.lang-transform {
+    background: rgba(6, 182, 212, 0.2);
+    color: #22d3ee;
+    border: 1px solid rgba(6, 182, 212, 0.4);
   }
 
   /* Floating switch type button on cards (top-left ↻) */
@@ -8011,15 +8549,11 @@
 
     /* Ports for circle nodes */
     .circle-port-input {
-      top: 50% !important;
-      left: -6px !important;
-      transform: translateY(-50%) !important;
+      border-color: var(--theme-t-muted, #94a3b8);
     }
 
     .circle-port-output {
-      top: 50% !important;
-      right: -6px !important;
-      transform: translateY(-50%) !important;
+      border-color: var(--theme-ac, #3883fa);
     }
 
     /* Floating switch type button (top-left) */
@@ -8327,37 +8861,26 @@
     border: 2px solid var(--theme-ac, #38bdf8);
     cursor: crosshair;
     z-index: 6;
+    transform: translate(-50%, -50%) !important;
     transition: transform 0.15s, box-shadow 0.15s;
   }
   .node-port:hover {
-    transform: translate(-50%, -50%) scale(1.3);
+    transform: translate(-50%, -50%) scale(1.35) !important;
   }
   .port-input {
-    left: -3px;
-    top: 50%;
-    transform: translate(-50%, -50%);
     border-color: var(--theme-t-muted, #94a3b8);
   }
-  .port-input:hover {
-    transform: translate(-50%, -50%) scale(1.3);
-  }
   .port-output {
-    right: -1px;
-    top: 50%;
-    transform: translate(50%, -50%);
     border-color: var(--theme-ac, #3883fa);
-  }
-  .port-output:hover {
-    transform: translate(50%, -50%) scale(1.3);
   }
 
   /* Multi-Port Rack on Node (physical slots: Top, Right, Bottom) */
   .node-ports-rack {
     position: absolute;
-    top: -1px;
-    bottom: -1px;
-    right: -1px;
-    left: -3px;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    left: 0;
     pointer-events: none;
     z-index: 6;
   }
@@ -8427,10 +8950,10 @@
   /* Multi-Input Rack for Merge */
   .node-inputs-rack {
     position: absolute;
-    top: -1px;
-    bottom: -1px;
-    right: -1px;
-    left: -3px;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    left: 0;
     pointer-events: none;
     z-index: 6;
   }
@@ -9954,20 +10477,42 @@
   .node-actions {
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
   }
   .node-tool-btn {
-    background: transparent;
-    border: none;
-    color: var(--theme-t-muted, #94a3b8);
-    font-size: 11px;
-    padding: 2px 4px;
-    border-radius: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--theme-bg-panel, #252526);
+    border: 1px solid var(--theme-b-main, #3e3e42);
+    color: #4ade80;
+    font-size: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
+    padding: 0;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    transition: all 0.15s ease;
   }
   .node-tool-btn:hover {
-    background: var(--theme-bg-hover, rgba(255, 255, 255, 0.1));
-    color: var(--theme-t-bright, #fff);
+    background: #16a34a;
+    color: #ffffff;
+    border-color: #16a34a;
+    transform: scale(1.1);
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  }
+  .node-tool-btn.close-btn {
+    color: var(--theme-t-muted, #94a3b8);
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .node-tool-btn.close-btn:hover {
+    background: #ef4444;
+    color: #ffffff;
+    border-color: #ef4444;
+    transform: scale(1.1);
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
   }
 
   /* Node Body */
@@ -9991,25 +10536,36 @@
   .method-tag {
     font-size: 9px;
     font-weight: 700;
-    padding: 1px 5px;
+    padding: 0 5px;
+    height: 20px;
+    line-height: 20px;
     border-radius: 4px;
     text-transform: uppercase;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .method-get {
     background: rgba(16, 185, 129, 0.15);
-    color: var(--theme-method-get, #047857);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.35);
   }
   .method-post {
-    background: rgba(245, 158, 11, 0.15);
-    color: var(--theme-method-post, #b45309);
+    background: rgba(56, 131, 250, 0.15);
+    color: var(--theme-ac, #3883fa);
+    border: 1px solid rgba(56, 131, 250, 0.35);
   }
-  .method-put {
-    background: rgba(59, 130, 246, 0.15);
-    color: var(--theme-method-put, #1d4ed8);
+  .method-put,
+  .method-patch {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.35);
   }
   .method-delete {
     background: rgba(239, 68, 68, 0.15);
-    color: var(--theme-method-delete, #b91c1c);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.35);
   }
   .url-text {
     font-size: 10px;

@@ -1,9 +1,9 @@
 import type { FlowNode, FlowNodePort, PortSlot } from './flowTypes.js'
 import { FLOW_NODE_REGISTRY } from './flowNodeRegistry.js'
 
-export const CARD_WIDTH = 280
-export const CARD_HEIGHT = 140
-export const CIRCLE_SIZE = 50
+export const CARD_WIDTH = 270
+export const CARD_HEIGHT = 124
+export const CIRCLE_SIZE = 54
 
 export type Direction = 'top' | 'right' | 'bottom' | 'left'
 
@@ -17,13 +17,80 @@ export function isCircleNode(type: string): boolean {
   return type === 'start' || type === 'terminate' || type === 'event-throw' || type === 'event-catch'
 }
 
+export function isCompactNode(type: string): boolean {
+  return type === 'delay' || type === 'merge' || type === 'router' || type === 'loop' || type === 'transform'
+}
+
 export function getNodeWidth(type: string): number {
-  return isCircleNode(type) ? CIRCLE_SIZE : CARD_WIDTH
+  if (isCircleNode(type)) return CIRCLE_SIZE
+  if (type === 'delay') return 140
+  if (type === 'merge') return 150
+  if (type === 'transform') return 160
+  if (type === 'router') return 130
+  if (type === 'loop') return 150
+  if (type === 'js') return 270
+  return 270
 }
 
 export function getNodeHeight(node: FlowNode): number {
   if (isCircleNode(node.type)) return CIRCLE_SIZE
-  return CARD_HEIGHT
+  if (node.type === 'delay') return 48
+  if (node.type === 'merge') return 60
+  if (node.type === 'router') return ROUTER_DIAMOND_SIZE
+  if (node.type === 'loop') return 48
+  if (node.type === 'js') return 124
+  return 124
+}
+
+export const ROUTER_DIAMOND_SIZE = 130
+export const ROUTER_DIAMOND_VERTICES = {
+  top: { x: 65, y: 0 },
+  right: { x: 130, y: 65 },
+  bottom: { x: 65, y: 130 },
+  left: { x: 0, y: 65 }
+}
+export const ROUTER_DIAMOND_POINTS = `${ROUTER_DIAMOND_VERTICES.top.x},${ROUTER_DIAMOND_VERTICES.top.y} ${ROUTER_DIAMOND_VERTICES.right.x},${ROUTER_DIAMOND_VERTICES.right.y} ${ROUTER_DIAMOND_VERTICES.bottom.x},${ROUTER_DIAMOND_VERTICES.bottom.y} ${ROUTER_DIAMOND_VERTICES.left.x},${ROUTER_DIAMOND_VERTICES.left.y}`
+
+/**
+ * Inviolable Geometric Rule: Projects a router port exactly onto the perimeter line
+ * of the diamond polygon. The resulting (relX, relY) is mathematically guaranteed to lie
+ * on the line equation connecting the 4 vertices, ensuring 50% of the port ball is inside
+ * and 50% is outside the object.
+ */
+export function getRouterPortPointOnLine(
+  slot: PortSlot | 'input',
+  idx: number,
+  total: number,
+  step = 16
+): { relX: number; relY: number; direction: Direction } {
+  if (slot === 'input') {
+    return { relX: 0, relY: 65, direction: 'left' }
+  }
+
+  const offset = (idx - (total - 1) / 2) * step
+
+  if (slot === 'top') {
+    return {
+      relX: 65 + offset,
+      relY: Math.abs(offset),
+      direction: 'top'
+    }
+  }
+
+  if (slot === 'bottom') {
+    return {
+      relX: 65 + offset,
+      relY: 130 - Math.abs(offset),
+      direction: 'bottom'
+    }
+  }
+
+  // Middle / Right slot
+  return {
+    relX: 130 - Math.abs(offset),
+    relY: 65 + offset,
+    direction: 'right'
+  }
 }
 
 /**
@@ -50,11 +117,6 @@ export const FIXED_PORT_SLOTS: Record<
 
 /**
  * Calculate the exact canvas coordinate of an output port on a node.
- * Strictly respects physical slots and locks cleanly onto card borders:
- * - Top (x in [150, 225], y = node.y)
- * - Right (x = node.x + 280, y in [48, 120])
- * - Bottom (x in [150, 225], y = node.y + 140)
- * - Circle nodes (x = node.x + CIRCLE_SIZE, y = node.y + CIRCLE_SIZE / 2)
  */
 export function getOutputPortPoint(node: FlowNode, portId?: string): Point {
   if (isCircleNode(node.type)) {
@@ -63,6 +125,47 @@ export function getOutputPortPoint(node: FlowNode, portId?: string): Point {
       y: node.y + CIRCLE_SIZE / 2,
       direction: 'right'
     }
+  }
+
+  // Compact Delay node (140x48)
+  if (node.type === 'delay') {
+    if (portId === 'dropped') {
+      return { x: node.x + 70, y: node.y + 48, direction: 'bottom' }
+    }
+    return {
+      x: node.x + 140,
+      y: node.y + 24,
+      direction: 'right'
+    }
+  }
+
+  // Compact Merge node (150x60)
+  if (node.type === 'merge') {
+    if (portId === 'timeout') {
+      return { x: node.x + 75, y: node.y + 60, direction: 'bottom' }
+    }
+    return {
+      x: node.x + 150,
+      y: node.y + 30,
+      direction: 'right'
+    }
+  }
+
+  // Compact Transform / JSON Mapper node (160x60)
+  if (node.type === 'transform') {
+    return {
+      x: node.x + 160,
+      y: node.y + 30,
+      direction: 'right'
+    }
+  }
+
+  // Compact Loop node (150x48 - matching Delay style) with explicit Body and Done ports
+  if (node.type === 'loop') {
+    if (portId === 'done') {
+      return { x: node.x + 150, y: node.y + 34, direction: 'right' }
+    }
+    return { x: node.x + 150, y: node.y + 14, direction: 'right' }
   }
 
   // Determine ports list
@@ -78,61 +181,57 @@ export function getOutputPortPoint(node: FlowNode, portId?: string): Point {
 
   // Find targeted port
   const targetPort = (portId ? ports.find((p) => p.id === portId) : null) ?? ports[0]
+  const slot: PortSlot = targetPort?.slot ?? 'middle'
 
-  // If port specifies explicit slotIndex (1..10 from sketch)
+  // Diamond Switch Router (130x130): Strictly bound to geometric diamond perimeter equation
+  if (node.type === 'router') {
+    const slotPorts = ports.filter((p) => (p.slot ?? 'middle') === slot)
+    const idx = Math.max(0, slotPorts.findIndex((p) => p.id === targetPort?.id))
+    const total = Math.max(1, slotPorts.length)
+    const pt = getRouterPortPointOnLine(slot, idx, total)
+    return {
+      x: node.x + pt.relX,
+      y: node.y + pt.relY,
+      direction: pt.direction
+    }
+  }
+
+  const w = getNodeWidth(node.type)
+  const h = getNodeHeight(node)
+
+  // If port specifies explicit slotIndex (1..10)
   if (targetPort?.slotIndex && FIXED_PORT_SLOTS[targetPort.slotIndex]) {
     const s = FIXED_PORT_SLOTS[targetPort.slotIndex]
+    const relX = s.direction === 'right' ? w : Math.round((s.relX / 280) * w)
+    const relY = s.direction === 'bottom' ? h : s.direction === 'top' ? 0 : Math.round((s.relY / 140) * h)
     return {
-      x: node.x + s.relX,
-      y: node.y + s.relY,
+      x: node.x + relX,
+      y: node.y + relY,
       direction: s.direction
     }
   }
 
-  const slot: PortSlot = targetPort?.slot ?? 'middle'
   const slotPorts = ports.filter((p) => (p.slot ?? 'middle') === slot)
   const idx = Math.max(0, slotPorts.findIndex((p) => p.id === targetPort?.id))
 
-  // Dynamically assign an unused slot so ports without slotIndex never collide
-  const claimedSlots = new Set(
-    slotPorts
-      .filter((p) => p.id !== targetPort?.id && p.slotIndex && FIXED_PORT_SLOTS[p.slotIndex])
-      .map((p) => p.slotIndex as number)
-  )
-
-  const candidateSlotIndices =
-    slot === 'top' ? [2, 5, 9] : slot === 'middle' ? [1, 4, 7, 8] : [3, 6, 10]
-
-  const availableSlots = candidateSlotIndices.filter((s) => !claimedSlots.has(s))
-  const unassignedBefore = slotPorts
-    .slice(0, idx)
-    .filter((p) => !p.slotIndex || !FIXED_PORT_SLOTS[p.slotIndex]).length
-
-  const assignedSlot = availableSlots[Math.min(unassignedBefore, availableSlots.length - 1)]
-  if (assignedSlot && FIXED_PORT_SLOTS[assignedSlot]) {
-    const s = FIXED_PORT_SLOTS[assignedSlot]
-    return {
-      x: node.x + s.relX,
-      y: node.y + s.relY,
-      direction: s.direction
-    }
-  }
-
-  // Fallback defaults
   if (slot === 'top') {
-    return { x: node.x + 225, y: node.y, direction: 'top' }
+    return { x: node.x + Math.round(w * 0.75), y: node.y, direction: 'top' }
   }
   if (slot === 'bottom') {
-    return { x: node.x + 225, y: node.y + CARD_HEIGHT, direction: 'bottom' }
+    return { x: node.x + Math.round(w * 0.75), y: node.y + h, direction: 'bottom' }
   }
-  return { x: node.x + CARD_WIDTH, y: node.y + 70, direction: 'right' }
+
+  // Multiple ports on right border
+  if (slotPorts.length > 1) {
+    const step = Math.round(h / (slotPorts.length + 1))
+    return { x: node.x + w, y: node.y + step * (idx + 1), direction: 'right' }
+  }
+
+  return { x: node.x + w, y: node.y + Math.round(h / 2), direction: 'right' }
 }
 
 /**
  * Calculate the exact canvas coordinate of an input port on a node.
- * - Standard cards: x = node.x, y = node.y + 70 (centered vertically on left border)
- * - Merge multi-input: x = node.x, y distributed in [50, 120], strictly y >= 48
- * - Circle nodes: x = node.x, y = node.y + CIRCLE_SIZE / 2
  */
 export function getInputPortPoint(node: FlowNode, portId?: string): Point {
   if (isCircleNode(node.type)) {
@@ -143,27 +242,56 @@ export function getInputPortPoint(node: FlowNode, portId?: string): Point {
     }
   }
 
-  // Merge block with multi-inputs
-  if (node.type === 'merge' && node.mergeData?.inputs && node.mergeData.inputs.length > 0) {
-    const inputs = node.mergeData.inputs
-    const idx = Math.max(0, inputs.findIndex((p) => p.id === portId))
-    const ys =
-      inputs.length === 2
-        ? [54, 86]
-        : inputs.length === 3
-          ? [48, 72, 96]
-          : [48, 70, 92, 114]
+  if (node.type === 'delay') {
     return {
       x: node.x,
-      y: node.y + (ys[Math.min(idx, ys.length - 1)] ?? 70),
+      y: node.y + 24,
       direction: 'left'
     }
   }
 
-  // Standard input port on left edge, vertically centered
+  if (node.type === 'merge') {
+    const inputs = node.mergeData?.inputs && node.mergeData.inputs.length > 0
+      ? node.mergeData.inputs
+      : [{ id: 'in_1' }, { id: 'in_2' }]
+    const idx = Math.max(0, inputs.findIndex((p) => p.id === portId))
+    const yOffsets = inputs.length === 2 ? [20, 40] : [15, 30, 45]
+    return {
+      x: node.x,
+      y: node.y + (yOffsets[Math.min(idx, yOffsets.length - 1)] ?? 30),
+      direction: 'left'
+    }
+  }
+
+  if (node.type === 'router') {
+    const pt = getRouterPortPointOnLine('input', 0, 1)
+    return {
+      x: node.x + pt.relX,
+      y: node.y + pt.relY,
+      direction: pt.direction
+    }
+  }
+
+  if (node.type === 'loop') {
+    return {
+      x: node.x,
+      y: node.y + 24,
+      direction: 'left'
+    }
+  }
+
+  if (node.type === 'transform') {
+    return {
+      x: node.x,
+      y: node.y + 30,
+      direction: 'left'
+    }
+  }
+
+  const h = getNodeHeight(node)
   return {
     x: node.x,
-    y: node.y + 70,
+    y: node.y + Math.round(h / 2),
     direction: 'left'
   }
 }

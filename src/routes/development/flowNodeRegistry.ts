@@ -1,7 +1,7 @@
 import type { FlowNodeType, FlowNode, FlowNodePort } from './flowTypes.js'
 import { createDefaultRouterPorts, createDefaultRouterRules } from './flowTypes.js'
 
-export type FlowCategory = 'network' | 'events' | 'logic' | 'control'
+export type FlowCategory = 'network' | 'transform' | 'compute' | 'control' | 'events'
 
 export interface FlowNodeVariantDef {
   type: FlowNodeType
@@ -18,7 +18,7 @@ export interface FlowNodeVariantDef {
 }
 
 export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
-  // --- 🌐 API & Network ---
+  // --- 🌐 API & Network (Action Heart) ---
   rest: {
     type: 'rest',
     category: 'network',
@@ -27,7 +27,7 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
     accent: '#3883fa',
     defaultTitle: 'HTTP Request',
     status: 'stable',
-    height: 140,
+    height: 124,
     createData: () => ({
       restData: {
         method: 'GET',
@@ -44,16 +44,16 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
     getInputPorts: () => [{ id: 'in', label: 'Input', slot: 'middle', color: '#3883fa' }]
   },
 
-  // --- ⚙️ Logic & Code ---
+  // --- ⚡ Compute & Code ---
   js: {
     type: 'js',
-    category: 'logic',
+    category: 'compute',
     label: 'JS Script',
     icon: '⚡',
     accent: '#a855f7',
-    defaultTitle: 'JavaScript Script',
+    defaultTitle: 'Run JS Script',
     status: 'stable',
-    height: 140,
+    height: 110,
     createData: () => ({
       jsData: {
         code: '// JavaScript Code\n// Access variables via pm.environment.get("key")\n// Use route("portId") or out("portId", data) for multi-port routing\n',
@@ -69,15 +69,16 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
     getInputPorts: () => [{ id: 'in', label: 'Input', slot: 'middle', color: '#a855f7' }]
   },
 
+  // --- 🔄 Data Transformation (JSON Mapper & Merge) ---
   transform: {
     type: 'transform',
-    category: 'logic',
+    category: 'transform',
     label: 'JSON Mapper',
     icon: '🔄',
     accent: '#06b6d4',
     defaultTitle: 'JSON Schema Mapper',
     status: 'stable',
-    height: 140,
+    height: 60,
     createData: () => ({
       transformData: {
         sampleInput: '{\n  "id": 1,\n  "name": "Sample"\n}',
@@ -88,7 +89,40 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
     getInputPorts: () => [{ id: 'in', label: 'Input', slot: 'middle', color: '#06b6d4' }]
   },
 
-  // --- 🔀 Flow Control ---
+  merge: {
+    type: 'merge',
+    category: 'transform',
+    label: 'Merge / Join',
+    icon: '🔗',
+    accent: '#8b5cf6',
+    defaultTitle: 'Branch Synchronizer',
+    status: 'future',
+    height: 60,
+    createData: () => ({
+      mergeData: {
+        strategy: 'wait-all',
+        inputs: [
+          { id: 'in_1', label: 'Branch 1', slot: 'middle', color: '#8b5cf6' },
+          { id: 'in_2', label: 'Branch 2', slot: 'middle', color: '#8b5cf6' }
+        ]
+      }
+    }),
+    getOutputPorts: () => [
+      { id: 'joined', label: 'Merged Output', slot: 'middle', slotIndex: 1, color: '#8b5cf6' },
+      { id: 'timeout', label: 'Timeout Fallback', slot: 'bottom', slotIndex: 3, color: '#ef4444' }
+    ],
+    getInputPorts: (node) => {
+      if (node.mergeData?.inputs && node.mergeData.inputs.length > 0) {
+        return node.mergeData.inputs
+      }
+      return [
+        { id: 'in_1', label: 'Branch 1', slot: 'middle', color: '#8b5cf6' },
+        { id: 'in_2', label: 'Branch 2', slot: 'middle', color: '#8b5cf6' }
+      ]
+    }
+  },
+
+  // --- 🔀 Flow Control (Decisions & Loops & Delay) ---
   router: {
     type: 'router',
     category: 'control',
@@ -97,7 +131,7 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
     accent: '#f59e0b',
     defaultTitle: 'Gateway Router',
     status: 'stable',
-    height: 140,
+    height: 130,
     createData: () => ({
       routerData: {
         mode: 'first-match',
@@ -122,7 +156,7 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
     accent: '#6366f1',
     defaultTitle: 'Iterator Loop',
     status: 'future',
-    height: 140,
+    height: 48,
     createData: () => ({
       loopData: {
         arrayPath: 'items',
@@ -146,7 +180,7 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
     accent: '#10b981',
     defaultTitle: 'Time Pause & Throttle',
     status: 'future',
-    height: 140,
+    height: 48,
     createData: () => ({
       delayData: {
         mode: 'delay',
@@ -160,39 +194,6 @@ export const FLOW_NODE_REGISTRY: Record<FlowNodeType, FlowNodeVariantDef> = {
       { id: 'dropped', label: 'Dropped (Queue Overflow)', slot: 'bottom', slotIndex: 3, color: '#ef4444' }
     ],
     getInputPorts: () => [{ id: 'in', label: 'Input', slot: 'middle', color: '#10b981' }]
-  },
-
-  merge: {
-    type: 'merge',
-    category: 'control',
-    label: 'Merge / Join',
-    icon: '🔗',
-    accent: '#8b5cf6',
-    defaultTitle: 'Branch Synchronizer',
-    status: 'future',
-    height: 140,
-    createData: () => ({
-      mergeData: {
-        strategy: 'wait-all',
-        inputs: [
-          { id: 'in_1', label: 'Branch 1', slot: 'middle', color: '#8b5cf6' },
-          { id: 'in_2', label: 'Branch 2', slot: 'middle', color: '#8b5cf6' }
-        ]
-      }
-    }),
-    getOutputPorts: () => [
-      { id: 'joined', label: 'Merged Output', slot: 'middle', slotIndex: 1, color: '#8b5cf6' },
-      { id: 'timeout', label: 'Timeout Fallback', slot: 'bottom', slotIndex: 3, color: '#ef4444' }
-    ],
-    getInputPorts: (node) => {
-      if (node.mergeData?.inputs && node.mergeData.inputs.length > 0) {
-        return node.mergeData.inputs
-      }
-      return [
-        { id: 'in_1', label: 'Branch 1', slot: 'middle', color: '#8b5cf6' },
-        { id: 'in_2', label: 'Branch 2', slot: 'middle', color: '#8b5cf6' }
-      ]
-    }
   },
 
   // --- ⭕ Events (BPMN Circles) ---

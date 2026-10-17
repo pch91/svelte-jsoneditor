@@ -22,7 +22,8 @@ describe('FlowCanvas', () => {
 
     expect(getByText(target, 'Run Flow')).toBeTruthy()
     expect(getByText(target, '＋ REST Block')).toBeTruthy()
-    expect(getByText(target, '＋ Logic & Code')).toBeTruthy()
+    expect(getByText(target, '＋ Data Transform')).toBeTruthy()
+    expect(getByText(target, '＋ JS Code')).toBeTruthy()
     expect(getByText(target, '＋ Flow Control')).toBeTruthy()
     expect(getByText(target, '＋ Event')).toBeTruthy()
     expect(getByText(target, 'Auto Layout')).toBeTruthy()
@@ -34,7 +35,7 @@ describe('FlowCanvas', () => {
     expect(target.querySelectorAll('.conn-line').length).toBe(5)
   })
 
-  it('adds a new JS node when clicking + Logic & Code', async () => {
+  it('adds a new JS node when clicking ＋ JS Code', async () => {
     const target = document.createElement('div')
     document.body.appendChild(target)
 
@@ -52,7 +53,7 @@ describe('FlowCanvas', () => {
       }
     })
 
-    const addJsBtn = getByText(target, '＋ Logic & Code')
+    const addJsBtn = getByText(target, '＋ JS Code')
     await fireEvent.click(addJsBtn)
     await tick()
 
@@ -602,30 +603,30 @@ describe('FlowCanvas', () => {
       }
     })
 
-    // Add JS node via Logic & Code
-    await fireEvent.click(getByText(target, '＋ Logic & Code'))
+    // Add JS node via ＋ JS Code
+    await fireEvent.click(getByText(target, '＋ JS Code'))
     await tick()
 
-  const jsNode = target.querySelector('.flow-node-js') as HTMLElement
-  expect(jsNode).toBeTruthy()
-  // Initially single port output
-  expect(jsNode.querySelector('.node-ports-rack')).toBeNull()
-  expect(jsNode.querySelector('.port-output')).toBeTruthy()
+    const jsNode = target.querySelector('.flow-node-js') as HTMLElement
+    expect(jsNode).toBeTruthy()
+    // Initially single port output
+    expect(jsNode.querySelector('.node-ports-rack')).toBeNull()
+    expect(jsNode.querySelector('.port-output')).toBeTruthy()
 
-  // Open Ports tab on JS Inspector
-  const jsPortsTabBtn = target.querySelector('.side-tab-btn:nth-child(2)') as HTMLButtonElement
-  expect(jsPortsTabBtn.textContent).toContain('Ports (0/10)')
-  await fireEvent.click(jsPortsTabBtn)
-  await tick()
+    // Open Ports tab on JS Inspector
+    const jsPortsTabBtn = target.querySelector('.side-tab-btn:nth-child(2)') as HTMLButtonElement
+    expect(jsPortsTabBtn.textContent).toContain('Ports (0/10)')
+    await fireEvent.click(jsPortsTabBtn)
+    await tick()
 
-  expect(getByText(target, 'JS Dynamic Output Ports')).toBeTruthy()
-  const addTopBtn = getByText(target, '＋ Add Top Port')
-  await fireEvent.click(addTopBtn)
-  await tick()
+    expect(getByText(target, 'JS Dynamic Output Ports')).toBeTruthy()
+    const addTopBtn = getByText(target, '＋ Add Top Port')
+    await fireEvent.click(addTopBtn)
+    await tick()
 
-  expect(jsNode.querySelector('.node-ports-rack')).toBeTruthy()
-  expect(jsNode.querySelectorAll('.port-multi').length).toBe(1)
-})
+    expect(jsNode.querySelector('.node-ports-rack')).toBeTruthy()
+    expect(jsNode.querySelectorAll('.port-multi').length).toBe(1)
+  })
 
   it('supports switching block type on cards via (↻) card switcher button', async () => {
     const target = document.createElement('div')
@@ -642,40 +643,39 @@ describe('FlowCanvas', () => {
       }
     })
 
-    // Add JS block via Logic & Code
-    await fireEvent.click(getByText(target, '＋ Logic & Code'))
+    // Add Transform block via Data Transform
+    await fireEvent.click(getByText(target, '＋ Data Transform'))
     await tick()
 
-    const jsNode = target.querySelector('.flow-node-js') as HTMLElement
-    expect(jsNode).toBeTruthy()
+    const transformNode = target.querySelector('.flow-node-transform') as HTMLElement
+    expect(transformNode).toBeTruthy()
 
     // Find and click the (↻) switch button
-    const switchBtn = jsNode.querySelector('.card-switch-btn') as HTMLButtonElement
+    const switchBtn = transformNode.querySelector('.card-switch-btn') as HTMLButtonElement
     expect(switchBtn).toBeTruthy()
     await fireEvent.click(switchBtn)
     await tick()
 
-    // Switcher popup should be visible with Logic & Code options
+    // Switcher popup should be visible with Data Transform options
     const switcher = target.querySelector('.node-type-switcher') as HTMLElement
     expect(switcher).toBeTruthy()
-    expect(switcher.textContent).toContain('JS Script')
     expect(switcher.textContent).toContain('JSON Mapper')
+    expect(switcher.textContent).toContain('Merge / Join')
 
-    // Click JSON Mapper
-    const mapperBtn = switcher.querySelectorAll('.variant-btn')[1] as HTMLButtonElement
-    expect(mapperBtn.textContent).toContain('JSON Mapper')
-    await fireEvent.click(mapperBtn)
+    // Click Merge / Join
+    const mergeBtn = switcher.querySelectorAll('.variant-btn')[1] as HTMLButtonElement
+    expect(mergeBtn.textContent).toContain('Merge / Join')
+    await fireEvent.click(mergeBtn)
     await tick()
 
-    // Node is now transform / JSON Mapper
-    expect(target.querySelector('.flow-node-js')).toBeNull()
-    const transformNode = target.querySelector('.flow-node-transform') as HTMLElement
-    expect(transformNode).toBeTruthy()
+    // Node is now merge
+    expect(target.querySelector('.flow-node-transform')).toBeNull()
+    const mergeNode = target.querySelector('.flow-node-merge') as HTMLElement
+    expect(mergeNode).toBeTruthy()
     expect(target.querySelector('.node-type-switcher')).toBeNull()
-    expect(transformNode.querySelector('.node-transform-preview-compact')).toBeTruthy()
   })
 
-  it('supports Flow Control type switching between Router, Loop, Delay and Merge', async () => {
+  it('supports Flow Control type switching between Router, Loop and Delay', async () => {
     const target = document.createElement('div')
     document.body.appendChild(target)
 
@@ -707,24 +707,19 @@ describe('FlowCanvas', () => {
     expect(switcher.textContent).toContain('Router')
     expect(switcher.textContent).toContain('Loop')
     expect(switcher.textContent).toContain('Delay')
-    expect(switcher.textContent).toContain('Merge')
 
-    // Select Merge
-    const mergeBtn = Array.from(switcher.querySelectorAll('.variant-btn')).find((b) =>
-      b.textContent?.includes('Merge')
+    // Select Loop
+    const loopBtn = Array.from(switcher.querySelectorAll('.variant-btn')).find((b) =>
+      b.textContent?.includes('Loop')
     ) as HTMLButtonElement
-    expect(mergeBtn).toBeTruthy()
-    await fireEvent.click(mergeBtn)
+    expect(loopBtn).toBeTruthy()
+    await fireEvent.click(loopBtn)
     await tick()
 
-    // Node is now merge
-    const mergeNode = target.querySelector('.flow-node-merge') as HTMLElement
-    expect(mergeNode).toBeTruthy()
-
-    // Merge multi-inputs rack rendered on left edge
-    const inputsRack = mergeNode.querySelector('.node-inputs-rack') as HTMLElement
-    expect(inputsRack).toBeTruthy()
-    expect(inputsRack.querySelectorAll('.port-multi-input').length).toBe(2)
+    // Node is now loop
+    const loopNode = target.querySelector('.flow-node-loop') as HTMLElement
+    expect(loopNode).toBeTruthy()
+    expect(loopNode.querySelector('.node-loop-preview-compact')).toBeTruthy()
   })
 
   it('renders slim compact preview bodies across all block types', async () => {
@@ -750,18 +745,8 @@ describe('FlowCanvas', () => {
     expect(routerNode.querySelector('.node-router-preview-compact')).toBeTruthy()
     expect(routerNode.querySelector('.node-compact-summary')).toBeTruthy()
 
-    // Add Logic & Code block and switch to Mapper
-    await fireEvent.click(getByText(target, '＋ Logic & Code'))
-    await tick()
-
-    const jsNode = target.querySelector('.flow-node-js') as HTMLElement
-    const switchBtn = jsNode.querySelector('.card-switch-btn') as HTMLButtonElement
-    await fireEvent.click(switchBtn)
-    await tick()
-
-    const switcher = target.querySelector('.node-type-switcher') as HTMLElement
-    const mapperBtn = switcher.querySelectorAll('.variant-btn')[1] as HTMLButtonElement
-    await fireEvent.click(mapperBtn)
+    // Add Data Transform block (Mapper)
+    await fireEvent.click(getByText(target, '＋ Data Transform'))
     await tick()
 
     const mapperNode = target.querySelector('.flow-node-transform') as HTMLElement
@@ -808,10 +793,11 @@ describe('FlowCanvas', () => {
     const mapperNode = target.querySelector('.flow-node-transform') as HTMLElement
     expect(mapperNode).toBeTruthy()
 
-    // Click Run block button [▶]
-    const playBtn = mapperNode.querySelector('.node-tool-btn') as HTMLButtonElement
-    expect(playBtn).toBeTruthy()
-    await fireEvent.click(playBtn)
+    // Compact nodes do not have individual play buttons (pipeline execution happens via Run Flow)
+    expect(mapperNode.querySelector('.compact-run-btn')).toBeNull()
+    const runFlowBtn = getByText(target, 'Run Flow')
+    expect(runFlowBtn).toBeTruthy()
+    await fireEvent.click(runFlowBtn)
     await tick()
 
     // Node status should be success and lastRun recorded
@@ -883,10 +869,11 @@ describe('FlowCanvas', () => {
     const loopEl = target.querySelector('.flow-node-loop') as HTMLElement
     expect(loopEl).toBeTruthy()
 
-    // Click [▶] on the Loop block
-    const loopPlayBtn = loopEl.querySelector('.node-tool-btn') as HTMLButtonElement
-    expect(loopPlayBtn).toBeTruthy()
-    await fireEvent.click(loopPlayBtn)
+    // Compact nodes do not have individual play buttons (pipeline execution happens via Run Flow)
+    expect(loopEl.querySelector('.compact-run-btn')).toBeNull()
+    const runFlowBtn = getByText(target, 'Run Flow')
+    expect(runFlowBtn).toBeTruthy()
+    await fireEvent.click(runFlowBtn)
 
     // Wait for the iterations to execute
     await new Promise((r) => setTimeout(r, 100))
@@ -1349,6 +1336,48 @@ describe('FlowCanvas', () => {
     expect(graph.nodes[1].status).toBe('success')
     expect(graph.nodes[1].lastRun?.status).toBe('EVENT_CAUGHT')
   })
+
+  it('allows clicking and dragging empty canvas space to pan the diagram with hand cursor', async () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+
+    const graph = createDefaultFlowGraph()
+    mount(FlowCanvas, {
+      target,
+      props: {
+        flowGraph: graph,
+        environments: {},
+        activeEnvName: '',
+        globalProxy: ''
+      }
+    })
+
+    await tick()
+
+    const canvas = target.querySelector('.flow-canvas') as HTMLElement
+    expect(canvas).toBeTruthy()
+
+    // Initially not panning
+    expect(canvas.classList.contains('is-panning')).toBe(false)
+
+    // Mouse down on empty space in canvas
+    await fireEvent.mouseDown(canvas, { clientX: 200, clientY: 200, button: 0 })
+    await tick()
+
+    // Canvas should enter is-panning state (grabbing hand cursor)
+    expect(canvas.classList.contains('is-panning')).toBe(true)
+
+    // Mouse move drags the viewport
+    await fireEvent.mouseMove(window, { clientX: 150, clientY: 120 })
+    await tick()
+
+    // Releasing the mouse stops panning
+    await fireEvent.mouseUp(window)
+    await tick()
+
+    expect(canvas.classList.contains('is-panning')).toBe(false)
+  })
 })
+
 
 
